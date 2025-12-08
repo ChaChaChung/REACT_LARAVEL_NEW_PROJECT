@@ -1,27 +1,6 @@
 "use strict";
 (self["webpackChunk"] = self["webpackChunk"] || []).push([["resources_js_Pages_Home_tsx"],{
 
-/***/ "./resources/js/Pages/Home.tsx":
-/*!*************************************!*\
-  !*** ./resources/js/Pages/Home.tsx ***!
-  \*************************************/
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-var jsx_runtime_1 = __webpack_require__(/*! react/jsx-runtime */ "./node_modules/react/jsx-runtime.js");
-var Home = function Home() {
-  return (0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, {
-    children: "this is home page"
-  });
-};
-exports["default"] = Home;
-
-/***/ }),
-
 /***/ "./node_modules/react/cjs/react-jsx-runtime.development.js":
 /*!*****************************************************************!*\
   !*** ./node_modules/react/cjs/react-jsx-runtime.development.js ***!
@@ -1373,10 +1352,67 @@ exports.jsxs = jsxs;
 
 
 
-if (false) {} else {
+if (false) // removed by dead control flow
+{} else {
   module.exports = __webpack_require__(/*! ./cjs/react-jsx-runtime.development.js */ "./node_modules/react/cjs/react-jsx-runtime.development.js");
 }
 
+
+/***/ }),
+
+/***/ "./resources/js/Pages/Home.tsx":
+/*!*************************************!*\
+  !*** ./resources/js/Pages/Home.tsx ***!
+  \*************************************/
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+
+var __importDefault = this && this.__importDefault || function (mod) {
+  return mod && mod.__esModule ? mod : {
+    "default": mod
+  };
+};
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+var jsx_runtime_1 = __webpack_require__(/*! react/jsx-runtime */ "./node_modules/react/jsx-runtime.js");
+var axios_1 = __importDefault(__webpack_require__(/*! axios */ "./node_modules/axios/index.js"));
+var Home = function Home() {
+  function deposit() {
+    axios_1["default"].post('/api/gash/deposit', {
+      paidType: 'COPGAM09',
+      amount: 100
+    }).then(function (response) {
+      console.log(response);
+      var form = document.createElement('form');
+      form.method = 'POST';
+      form.action = response.data.data.action_url;
+      form.target = '_blank';
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'data';
+      input.value = response.data.data.form_data;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(function () {
+        document.body.removeChild(form);
+      }, 100);
+    });
+  }
+  return (0, jsx_runtime_1.jsxs)(jsx_runtime_1.Fragment, {
+    children: [(0, jsx_runtime_1.jsx)(jsx_runtime_1.Fragment, {
+      children: "this is home page"
+    }), (0, jsx_runtime_1.jsx)("button", {
+      onClick: function onClick() {
+        deposit();
+      },
+      children: "GASH \u5132\u503C"
+    })]
+  });
+};
+exports["default"] = Home;
 
 /***/ })
 
