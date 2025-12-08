@@ -1,0 +1,56 @@
+# == Build stage: Composer 用來複製 binary ==
+FROM composer:latest AS composer_stage
+
+# == 開發環境主 image ==
+FROM php:8.4-fpm
+# Set timezone early
+ENV TZ=Asia/Taipei
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install system dependencies, PHP extensions, and dev tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git zip unzip libzip-dev libonig-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libxpm-dev \
+    libxml2-dev \
+    nodejs npm gnupg procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure and install PHP extensions, including Xdebug
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j$(nproc) pdo_mysql zip gd bcmath opcache soap \
+    && pecl install xdebug \
+    && docker-php-ext-enable xdebug
+
+
+# Install Composer tool
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+# *** IMPORTANT CHANGE FOR DEVELOPMENT ***
+# We are NOT copying application code here.
+# Instead, your source code will be mounted as a volume via docker-compose.yml.
+# This allows for instant code changes without rebuilding the Docker image.
+
+# Create necessary directories and set initial permissions
+# These directories will likely be mounted, but ensuring they exist and have correct ownership
+# is good for consistency if they're empty on the host
+
+# Create error log file if needed, ensure www-data can write to it
+RUN touch /var/log/php_error.log && chown www-data:www-data /var/log/php_error.log
+
+
+# ==============================
+# 🚀 這裡是重點：建立與宿主機相同 UID/GID 的開發用使用者
+# ==============================
+ARG UID=1000
+ARG GID=1000
+ARG USERNAME=deployer
+
+RUN groupadd -g $GID $USERNAME \
+    && useradd -m -u $UID -g $GID -s /bin/bash $USERNAME \
+    && mkdir -p /var/www/html \
+    && chown -R $USERNAME:$USERNAME /var/www/html
+
+USER $USERNAME
+

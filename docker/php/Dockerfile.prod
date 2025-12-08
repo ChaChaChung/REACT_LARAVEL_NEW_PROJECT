@@ -1,0 +1,69 @@
+# == Build stage: Composer 用來複製 binary ==
+FROM composer:latest AS composer_stage
+
+# == builder 階段 ==
+FROM php:8.4-fpm AS builder
+
+# 安裝系統依賴與 PHP extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl zip unzip libzip-dev libonig-dev \
+    libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libxpm-dev \
+    libxml2-dev \
+    gnupg tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j$(nproc) pdo_mysql zip gd bcmath opcache soap
+
+ENV TZ=Asia/Taipei
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 安裝 Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+# 複製原始碼並指定擁有者，避免後續 chown
+COPY --chown=www-data:www-data . .
+
+# Laravel 安裝 production 相依
+RUN composer install --no-dev --optimize-autoloader
+
+# 建置前端資源（若失敗則跳過）要加回去需要重新安裝 nodejs npm
+# RUN npm ci && npm run build || echo "Frontend build skipped"
+
+# == production 階段 ==
+FROM php:8.4-fpm AS production
+
+# 安裝必要 library 和 extensions（不從 builder 複製）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    supervisor \
+    libzip-dev libpng-dev libjpeg-dev libfreetype6-dev libwebp-dev libxpm-dev \
+    libxml2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install -j$(nproc) pdo_mysql zip gd bcmath opcache soap
+
+ENV TZ=Asia/Taipei
+
+WORKDIR /var/www/html
+
+# 複製建置後專案（使用正確擁有者）
+COPY --chown=www-data:www-data --from=builder /var/www/html /var/www/html
+
+# 建立錯誤 log（如果你有記錄需求）
+RUN touch /var/log/php_error.log && chown www-data:www-data /var/log/php_error.log
+
+# 僅必要資料夾授權，安全又快速
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+
+# 這是為了讓 www-data 啟動的 supervisord 有權限寫入
+RUN mkdir -p /var/log/supervisor /var/run/supervisord && \
+    chown -R www-data:www-data /var/log/supervisor /var/run/supervisord
+
+# 將預設使用者切換為 www-data
+USER www-data
+
+# !! 修改 CMD 以啟動 Supervisor !!
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
