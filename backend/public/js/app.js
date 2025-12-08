@@ -40808,6 +40808,14 @@ var map = {
 	"./Home.tsx": [
 		"./resources/js/Pages/Home.tsx",
 		"resources_js_Pages_Home_tsx"
+	],
+	"./Test": [
+		"./resources/js/Pages/Test.tsx",
+		"resources_js_Pages_Test_tsx"
+	],
+	"./Test.tsx": [
+		"./resources/js/Pages/Test.tsx",
+		"resources_js_Pages_Test_tsx"
 	]
 };
 function webpackAsyncContext(req) {
@@ -41004,7 +41012,7 @@ var app = document.getElementById('app');
 /******/ 		// This function allow to reference async chunks
 /******/ 		__webpack_require__.u = (chunkId) => {
 /******/ 			// return url for filenames not based on template
-/******/ 			if (chunkId === "resources_js_Pages_Home_tsx") return "js/" + chunkId + ".js";
+/******/ 			if ({"resources_js_Pages_Home_tsx":1,"resources_js_Pages_Test_tsx":1}[chunkId]) return "js/" + chunkId + ".js";
 /******/ 			// return url for filenames based on template
 /******/ 			return undefined;
 /******/ 		};

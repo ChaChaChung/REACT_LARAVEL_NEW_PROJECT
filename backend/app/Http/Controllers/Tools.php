@@ -21,16 +21,22 @@ class Tools extends Controller
             throw new Exception('Public key is not configured');
         }
         
+        // 移除所有空白字符
+        $publicKey = preg_replace('/\s+/', '', $publicKey);
+        
         // 確保公鑰格式正確
-        if (strpos($publicKey, '-----BEGIN PUBLIC KEY-----') === false) {
+        if (strpos($publicKey, '-----BEGIN') === false) {
+            // 將 Base64 字符串分成每行 64 字符
+            $formattedKey = chunk_split($publicKey, 64, "\n");
             $publicKey = "-----BEGIN PUBLIC KEY-----\n" . 
-                         chunk_split($publicKey, 64, "\n") . 
+                         $formattedKey . 
                          "-----END PUBLIC KEY-----";
         }
         
         $key = openssl_pkey_get_public($publicKey);
         if (!$key) {
-            throw new Exception('Public key format error: ' . openssl_error_string());
+            $error = openssl_error_string();
+            throw new Exception('Public key format error: ' . $error . "\nKey preview: " . substr($publicKey, 0, 100));
         }
         
         return $key;
@@ -64,10 +70,11 @@ class Tools extends Controller
     /**
      * 使用公鑰加密資料
      * @param string|array $data 要加密的資料
+     * @param bool $enableChunking 是否啟用分塊加密（如果數據太大）
      * @return string Base64 編碼的加密資料
      * @throws Exception
      */
-    public static function rsaEncrypt($data)
+    public static function rsaEncrypt($data, $enableChunking = false)
     {
         $publicKey = self::getPublicKey();
 
@@ -75,21 +82,68 @@ class Tools extends Controller
             throw new Exception('Unable to load public key');
         }
 
-        // 如果是陣列，轉換為 JSON
+        // 如果是陣列，轉換為 JSON（不包含多餘空格）
         if (is_array($data)) {
-            $data = json_encode($data);
+            $data = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+
+        // 檢查數據長度
+        $keyDetails = openssl_pkey_get_details($publicKey);
+        $maxLength = floor($keyDetails['bits'] / 8) - 11; // PKCS1 padding 需要 11 字節
+        
+        if (strlen($data) > $maxLength) {
+            if ($enableChunking) {
+                // 使用分塊加密
+                return self::rsaEncryptChunked($data, $publicKey, $maxLength);
+            } else {
+                openssl_free_key($publicKey);
+                throw new Exception("Data too large for RSA key. Data: " . strlen($data) . " bytes, Max: " . $maxLength . " bytes. Consider using enableChunking=true or request a larger RSA key (2048-bit).");
+            }
         }
 
         $encrypted = '';
-        $result = openssl_public_encrypt($data, $encrypted, $publicKey);
+        // 明確指定使用 PKCS1 padding (OPENSSL_PKCS1_PADDING 是默認值)
+        $result = openssl_public_encrypt($data, $encrypted, $publicKey, OPENSSL_PKCS1_PADDING);
 
         openssl_free_key($publicKey);
 
         if (!$result) {
-            throw new Exception('Encryption failed: ' . openssl_error_string());
+            $error = openssl_error_string();
+            throw new Exception('Encryption failed: ' . $error);
         }
 
         return base64_encode($encrypted);
+    }
+
+    /**
+     * 分塊加密（當數據太大時使用）
+     * ⚠️ 注意：此方法需要對方 API 支持分塊解密
+     * @param string $data 要加密的數據
+     * @param \OpenSSLAsymmetricKey $publicKey 公鑰資源
+     * @param int $maxLength 每塊的最大長度
+     * @return string 格式：CHUNKED:{塊數}:{base64塊1}:{base64塊2}:...
+     * @throws Exception
+     */
+    private static function rsaEncryptChunked($data, $publicKey, $maxLength)
+    {
+        $chunks = str_split($data, $maxLength);
+        $encryptedChunks = [];
+        
+        foreach ($chunks as $chunk) {
+            $encrypted = '';
+            $result = openssl_public_encrypt($chunk, $encrypted, $publicKey, OPENSSL_PKCS1_PADDING);
+            if (!$result) {
+                $error = openssl_error_string();
+                throw new Exception('Chunk encryption failed: ' . $error);
+            }
+
+            $encryptedChunks[] = base64_encode($encrypted);
+        }
+        
+        openssl_free_key($publicKey);
+        
+        // 返回格式：CHUNKED:塊數:塊1:塊2:...
+        return 'CHUNKED:' . count($encryptedChunks) . ':' . implode(':', $encryptedChunks);
     }
 
     /**

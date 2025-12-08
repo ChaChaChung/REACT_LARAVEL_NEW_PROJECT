@@ -131,33 +131,38 @@ class HomeController extends Controller
         // API 請求 URL
         $apiUrl = '/merchantToApi/walletInAndOut';
 
-        // 要加密的資料
+        // 生成批次 ID（使用最短的格式 - 時間戳後 5 位 = 5 字符）
+        // 注意：如果同一秒內有大量請求，可能會重複，建議改用數據庫序列號
+        $batchId = substr(time(), -5);
+
+        // 要加密的資料（使用最短的字段值）
         $cryptoData = array(
             'merchantCode' => config('chacha.hn.merchant_code'),
             'currencyCode' => $request->input('currencyCode'),
-            'amount' => $request->input('amount'),
-            'changeType' => $request->input('changeType'),
+            'amount' => (string)$request->input('amount'),  // 確保是字符串
+            'changeType' => (string)$request->input('changeType'),  // 1 或 2
             'loginName' => $request->input('loginName'),
+            'batchId' => $batchId,
         );
-
-        // 生成批次 ID
-        $batchId = time() . rand(1000, 9999);
-        $cryptoData['batchId'] = $batchId;
+        
+        // 檢查數據大小並警告
+        $jsonData = json_encode($cryptoData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         try {
+            // 調試：檢查數據大小
+            $jsonData = json_encode($cryptoData, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            
             // 使用 RSA 公鑰加密資料
             $encryptedData = Tools::rsaEncrypt($cryptoData);
-            Log::alert(json_encode($encryptedData));
-
             // API 請求參數
-            // $data = [
-            //     'data' => $encryptedData,
-            //     'merchantCode' => config('chacha.hn.merchant_code'),
-            //     'lang' => 'zh-TW',
-            // ];
+            $data = [
+                'data' => $encryptedData,
+                'merchantCode' => config('chacha.hn.merchant_code'),
+            ];
 
             // // 發送 POST 請求
-            // $result = Tools::curlPost($apiUrl, $data);
+            $result = Tools::curlGet($apiUrl, $data);
+            \Log::alert('result => ' . json_encode($result));
 
             return response()->json([
                 // 'message' => $result->message,
