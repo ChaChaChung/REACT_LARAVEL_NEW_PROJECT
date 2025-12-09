@@ -14,23 +14,16 @@ class rsaHelper
     {
         // 取得公鑰
         $publicKey = config('chacha.hn.merchant_public_key');
-        if (empty($publicKey)) {
-            throw new Exception('Public key is not configured');
-        }
-
-        // 移除空白字符
-        $publicKey = preg_replace('/\s+/', '', $publicKey);
         
-        // 如果已經有 BEGIN/END 標記，直接返回
-        if (strpos($publicKey, '-----BEGIN') !== false) {
+        // 如果已經有 BEGIN/END 標記，直接回傳
+        if (strpos($publicKey, '-----BEGIN')) {
             return $publicKey;
         }
         
-        // 添加 BEGIN/END 標記
-        $formattedKey = chunk_split($publicKey, 64, "\n");
-        return "-----BEGIN PUBLIC KEY-----\n" . 
-               $formattedKey . 
-               "-----END PUBLIC KEY-----";
+        // 加入 BEGIN/END 標記
+        $formattedKey = "-----BEGIN PUBLIC KEY-----\n" . chunk_split($publicKey, 64, "\n") . "-----END PUBLIC KEY-----";
+
+        return $formattedKey;
     }
 
     /**
@@ -43,7 +36,7 @@ class rsaHelper
     {
         // 格式化公鑰
         $publicKey = self::formatPublicKey();
-        
+
         // 載入公鑰
         $key = openssl_pkey_get_public($publicKey);
         if (!$key) {
@@ -61,16 +54,21 @@ class rsaHelper
         // RSA (PKCS1 Padding) 可加密長度 = (金鑰位元數 / 8) - 11 bytes
         $maxEncryptSize = ($keySize / 8) - 11;
 
+        // 初始化加密後的資料
         $encryptedTotal = '';
 
         // 將資料切片
         $dataChunks = str_split($data, $maxEncryptSize);
 
+        // 將切片後的資料執行迴圈，針對每一小片進行加密
         foreach ($dataChunks as $chunk) {
+            // 初始化切片後的加密資料
             $partialEncrypted = '';
+
             // 針對每一小片進行加密
             $result = openssl_public_encrypt($chunk, $partialEncrypted, $key, OPENSSL_PKCS1_PADDING);
 
+            // 判斷如果加密失敗，拋出例外
             if (!$result) {
                 openssl_free_key($key);
                 throw new Exception('分段加密失敗: ' . openssl_error_string());
