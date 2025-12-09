@@ -48,7 +48,7 @@ class HNController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Encryption failed',
+                'message' => 'Request failed',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -84,7 +84,7 @@ class HNController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Encryption failed',
+                'message' => 'Request failed',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -120,7 +120,7 @@ class HNController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Encryption failed',
+                'message' => 'Request failed',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -136,21 +136,20 @@ class HNController extends Controller
         // API 請求 URL
         $apiUrl = '/merchantToApi/walletInAndOut';
 
-        $batchId = (string)time();
-
-        // 要加密的資料（使用最短的字段值）
+        // 要加密的資料
         $cryptoData = array(
             'merchantCode' => config('chacha.hn.merchant_code'),
+            'batchId' => (string) time() . substr(strval(rand(10000, 19999)), 1, 4),
             'currencyCode' => $request->input('currencyCode'),
-            'amount' => (string)$request->input('amount'),
-            'changeType' => (string)$request->input('changeType'),  // 1 轉入 2 轉出
+            'amount' => (string) $request->input('amount'),
+            'changeType' => (string) $request->input('changeType'),  // 1 轉入 2 轉出
             'loginName' => $request->input('loginName'),
-            'batchId' => $batchId,
         );
 
         try {
             // 使用 RSA 公鑰加密資料
             $encryptedData = rsaHelper::encrypt($cryptoData);
+
             // API 請求參數
             $data = [
                 'data' => $encryptedData,
@@ -159,7 +158,6 @@ class HNController extends Controller
 
             // 發送 GET 請求
             $result = curlHelper::curlGet($apiUrl, $data);
-            Log::alert('result => ' . json_encode($result));
 
             return response()->json([
                 'code' => $result->code,
@@ -167,7 +165,7 @@ class HNController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Encryption failed',
+                'message' => 'Request failed',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -183,7 +181,7 @@ class HNController extends Controller
         // API 請求 URL
         $apiUrl = '/merchantToApi/getUserBlance';
 
-        // 要加密的資料（使用最短的字段值）
+        // 要加密的資料
         $cryptoData = array(
             'merchantCode' => config('chacha.hn.merchant_code'),
             'loginName' => $request->input('loginName'),
@@ -192,6 +190,7 @@ class HNController extends Controller
         try {
             // 使用 RSA 公鑰加密資料
             $encryptedData = rsaHelper::encrypt($cryptoData);
+
             // API 請求參數
             $data = [
                 'data' => $encryptedData,
@@ -208,7 +207,7 @@ class HNController extends Controller
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Encryption failed',
+                'message' => 'Request failed',
                 'error' => $e->getMessage()
             ], 500);
         }
