@@ -7,7 +7,7 @@ use App\Helpers\rsaHelper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
-class HomeController extends Controller
+class HNController extends Controller
 {
     /**
      * 取得登入長連接
@@ -42,6 +42,7 @@ class HomeController extends Controller
             $result = curlHelper::curlPost($apiUrl, $data);
 
             return response()->json([
+                'code' => $result->code,
                 'message' => $result->message,
                 'data' => $result->data,
             ]);
@@ -77,6 +78,7 @@ class HomeController extends Controller
             $result = curlHelper::curlPost($apiUrl, $data);
 
             return response()->json([
+                'code' => $result->code,
                 'message' => $result->message,
                 'data' => $result->data,
             ]);
@@ -112,6 +114,7 @@ class HomeController extends Controller
             $result = curlHelper::curlPost($apiUrl, $data);
 
             return response()->json([
+                'code' => $result->code,
                 'message' => $result->message,
                 'data' => $result->data,
             ]);
@@ -154,14 +157,54 @@ class HomeController extends Controller
                 'merchantCode' => config('chacha.hn.merchant_code'),
             ];
 
-            // // 發送 POST 請求
+            // 發送 GET 請求
             $result = curlHelper::curlGet($apiUrl, $data);
             Log::alert('result => ' . json_encode($result));
 
             return response()->json([
-                // 'message' => $result->message,
-                // 'data' => $result->data,
-                'message' => 'success',
+                'code' => $result->code,
+                'message' => $result->message,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Encryption failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 取得用戶餘額
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function getUserBlance(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = '/merchantToApi/getUserBlance';
+
+        // 要加密的資料（使用最短的字段值）
+        $cryptoData = array(
+            'merchantCode' => config('chacha.hn.merchant_code'),
+            'loginName' => $request->input('loginName'),
+        );
+
+        try {
+            // 使用 RSA 公鑰加密資料
+            $encryptedData = rsaHelper::encrypt($cryptoData);
+            // API 請求參數
+            $data = [
+                'data' => $encryptedData,
+                'merchantCode' => config('chacha.hn.merchant_code'),
+            ];
+
+            // 發送 GET 請求
+            $result = curlHelper::curlGet($apiUrl, $data);
+
+            return response()->json([
+                'code' => $result->code,
+                'message' => $result->message,
+                'data' => $result->data,
             ]);
         } catch (\Exception $e) {
             return response()->json([

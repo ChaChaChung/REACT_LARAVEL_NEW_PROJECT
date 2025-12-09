@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\GashController;
-use App\Http\Controllers\HomeController;
+use App\Http\Controllers\HNController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -20,10 +20,11 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::post('/requestHomeUrl', [HomeController::class, 'requestHomeUrl']);
-Route::post('/getGameRecordDetail', [HomeController::class, 'getGameRecordDetail']);
-Route::post('/getBalanceReportLogList', [HomeController::class, 'getBalanceReportLogList']);
-Route::post('/walletInAndOut', [HomeController::class, 'walletInAndOut']);
+Route::post('/requestHomeUrl', [HNController::class, 'requestHomeUrl']);
+Route::post('/getGameRecordDetail', [HNController::class, 'getGameRecordDetail']);
+Route::post('/getBalanceReportLogList', [HNController::class, 'getBalanceReportLogList']);
+Route::post('/walletInAndOut', [HNController::class, 'walletInAndOut']);
+Route::post('/getUserBlance', [HNController::class, 'getUserBlance']);
 
 Route::prefix('gash')->group(function () {
     Route::post('/deposit', [GashController::class, 'deposit']);
