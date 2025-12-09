@@ -20,12 +20,12 @@ class curlHelper
      * 發送 POST 請求
      * @param string $url 請求的 URL
      * @param array $data 發送的資料
-     * @param int $timeout 超時時間（秒，預設 30）
      * @return object 回應的物件
      */
-    public static function curlPost($url, $data, $timeout = 30)
+    public static function curlPost($url, $data)
     {
-        $ch = curl_init();
+        // 初始化 cURL
+        $curl = curl_init();
 
         // 轉換資料為 JSON
         $jsonData = is_array($data) ? json_encode($data) : $data;
@@ -34,21 +34,23 @@ class curlHelper
         $headers = ['Content-Type: application/json'];
 
         // 設定 cURL 選項
-        curl_setopt($ch, CURLOPT_URL, self::getServer() . $url);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+        curl_setopt($curl, CURLOPT_URL, self::getServer() . $url);
+        curl_setopt($curl, CURLOPT_POST, true);
+        curl_setopt($curl, CURLOPT_POSTFIELDS, $jsonData);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_TIMEOUT, 30);
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, 2);
 
         // 執行請求
-        $response = curl_exec($ch);
+        $response = curl_exec($curl);
 
+        // 將回應轉換為 JSON
         $response = json_decode($response);
 
-        curl_close($ch);
+        // 關閉 cURL 連線
+        curl_close($curl);
 
         // 如果 $response 是 null 或其他類型，創建一個新的物件
         if (!isset($response) || empty($response)) {
@@ -70,14 +72,23 @@ class curlHelper
     {
         // 將 data 轉換為 URL 查詢參數
         $queryString = http_build_query($data);
-        $fullUrl = self::getServer() . $url . '?' . $queryString;
-        $curl = curl_init($fullUrl);
+
+        // 初始化 cURL
+        $curl = curl_init();
+
+        // 設定 cURL 選項
+        curl_setopt($curl, CURLOPT_URL, self::getServer() . $url . '?' . $queryString);
         curl_setopt($curl, CURLOPT_HEADER, false);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_TIMEOUT, 30);
+
+        // 執行請求
         $response = curl_exec($curl);
 
+        // 將回應轉換為 JSON
         $response = json_decode($response);
+
+        // 關閉 cURL 連線
         curl_close($curl);
 
         return $response;
