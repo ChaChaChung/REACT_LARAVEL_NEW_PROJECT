@@ -32,6 +32,9 @@ Route::prefix('hn')->group(function () {
 Route::prefix('vg')->group(function () {
     Route::post('/signUp', [VGController::class, 'signUp']);
     Route::post('/signIn', [VGController::class, 'signIn']);
+    Route::post('/points', [VGController::class, 'points']);
+    Route::post('/balance', [VGController::class, 'balance']);
+    Route::post('/pointsLog', [VGController::class, 'pointsLog']);
     Route::post('/betRecord', [VGController::class, 'betRecord']);
     Route::post('/betLimit', [VGController::class, 'betLimit']);
     Route::get('/limitList', [VGController::class, 'limitList']);
