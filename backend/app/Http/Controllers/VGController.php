@@ -36,12 +36,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data ?? [],
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -83,12 +78,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -113,7 +103,7 @@ class VGController extends Controller
         // 要加密的資料
         $cryptoData = array(
             'agent' => config('chacha.vg.agent'),
-            'loginname' => $request->input('loginname'),
+            'loginnames' => $request->input('loginname'),
             'amount' => $request->input('amount'),
             'sid' => $sid,
             'status' => $request->input('status')
@@ -130,10 +120,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'balance' => $result->balance,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -169,12 +156,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'balance' => $result->balance,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -199,7 +181,7 @@ class VGController extends Controller
             'starttime' => $request->input('starttime'),
             'endtime' => $request->input('endtime'),
             'page_num' => $request->input('page_num'),
-            'page_size' => $request->input('page_size'),
+            'page_size2' => $request->input('page_size'),
             'status' => $request->input('status')
         );
 
@@ -214,12 +196,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -259,12 +236,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -301,11 +273,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -339,12 +307,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
@@ -378,12 +341,7 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
-            return response()->json([
-                'code' => $result->code,
-                'message' => $result->message,
-                'data' => $result->data,
-                'TraceId' => $result->TraceId,
-            ]);
+            return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Request failed',
