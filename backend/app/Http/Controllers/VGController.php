@@ -236,6 +236,23 @@ class VGController extends Controller
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data);
 
+            // 轉換遊戲結果
+            if ($result->code === 1000 && isset($result->data) && $result->data->total_counts > 0) {
+                $betDetails = array();
+                foreach ($result->data->betdetail as $bet) {
+                    $betDetail = new \StdClass();
+                    $betDetail->account = $bet->username;
+                    $betDetail->bet = $bet->bet;
+                    $betDetail->validbet = $bet->valid;
+                    $betDetail->winlose = $bet->win;
+                    $betDetail->orderno = $bet->betid;
+                    $betDetail->orderdate = \Carbon\Carbon::parse($bet->bettime)->timezone('Asia/Taipei')->format('Y-m-d H:i:s');
+
+                    $betDetails[] = $betDetail;
+                    $result->data->transferedBetDetail = $betDetails;
+                }
+            }
+
             return response()->json($result);
         } catch (\Exception $e) {
             return response()->json([
