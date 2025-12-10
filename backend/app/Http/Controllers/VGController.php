@@ -27,7 +27,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -74,7 +74,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -121,7 +121,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -160,7 +160,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -205,7 +205,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -250,7 +250,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -292,7 +292,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -330,7 +330,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
@@ -369,7 +369,7 @@ class VGController extends Controller
 
         try {
             // 使用 MD5 加密資料
-            $encryptedData = md5Helper::generateSignature($cryptoData);
+            $encryptedData = md5Helper::encrypt($cryptoData);
 
             // API 請求參數
             $data = $cryptoData;
