@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\GashController;
 use App\Http\Controllers\HNController;
+use App\Http\Controllers\VGController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -20,11 +21,22 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::post('/requestHomeUrl', [HNController::class, 'requestHomeUrl']);
-Route::post('/getGameRecordDetail', [HNController::class, 'getGameRecordDetail']);
-Route::post('/getBalanceReportLogList', [HNController::class, 'getBalanceReportLogList']);
-Route::post('/walletInAndOut', [HNController::class, 'walletInAndOut']);
-Route::post('/getUserBlance', [HNController::class, 'getUserBlance']);
+Route::prefix('hn')->group(function () {
+    Route::post('/requestHomeUrl', [HNController::class, 'requestHomeUrl']);
+    Route::post('/getGameRecordDetail', [HNController::class, 'getGameRecordDetail']);
+    Route::post('/getBalanceReportLogList', [HNController::class, 'getBalanceReportLogList']);
+    Route::post('/walletInAndOut', [HNController::class, 'walletInAndOut']);
+    Route::post('/getUserBlance', [HNController::class, 'getUserBlance']);
+});
+
+Route::prefix('vg')->group(function () {
+    Route::post('/signUp', [VGController::class, 'signUp']);
+    Route::post('/signIn', [VGController::class, 'signIn']);
+    Route::post('/betRecord', [VGController::class, 'betRecord']);
+    Route::post('/betLimit', [VGController::class, 'betLimit']);
+    Route::get('/limitList', [VGController::class, 'limitList']);
+    Route::get('/tableList', [VGController::class, 'tableList']);
+});
 
 Route::prefix('gash')->group(function () {
     Route::post('/deposit', [GashController::class, 'deposit']);

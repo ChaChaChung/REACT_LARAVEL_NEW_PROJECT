@@ -9,14 +9,6 @@ class curlHelper
     const GET = 'GET';
 
     /**
-     * 取得 API 伺服器 URL
-     */
-    private static function getServer()
-    {
-        return config('chacha.hn.api_url');
-    }
-
-    /**
      * 發送 POST 請求
      * @param string $url 請求的 URL
      * @param array $data 發送的資料
@@ -34,7 +26,7 @@ class curlHelper
         $headers = ['Content-Type: application/json'];
 
         // 設定 cURL 選項
-        curl_setopt($curl, CURLOPT_URL, self::getServer() . $url);
+        curl_setopt($curl, CURLOPT_URL, $url);
         curl_setopt($curl, CURLOPT_POST, true);
         curl_setopt($curl, CURLOPT_POSTFIELDS, $jsonData);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -77,7 +69,7 @@ class curlHelper
         $curl = curl_init();
 
         // 設定 cURL 選項
-        curl_setopt($curl, CURLOPT_URL, self::getServer() . $url . '?' . $queryString);
+        curl_setopt($curl, CURLOPT_URL, $url . '?' . $queryString);
         curl_setopt($curl, CURLOPT_HEADER, false);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_TIMEOUT, 30);

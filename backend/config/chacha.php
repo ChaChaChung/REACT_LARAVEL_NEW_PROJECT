@@ -4,9 +4,16 @@
 return [
     'hn' => [
         'api_url' => env('HN_API_URL'),
-        'merchant_code' => env('MERCHANT_CODE'),
-        'merchant_public_key' => env('MERCHANT_PUBLIC_KEY'),
-        'merchant_private_key' => env('MERCHANT_PRIVATE_KEY'),
+        'merchant_code' => env('HN_MERCHANT_CODE'),
+        'merchant_public_key' => env('HN_MERCHANT_PUBLIC_KEY'),
+        'merchant_private_key' => env('HN_MERCHANT_PRIVATE_KEY'),
+    ],
+
+    'vg' => [
+        'api_url' => env('VG_API_URL'),
+        'agent' => env('VG_AGENT'),
+        'api_key' => env('VG_API_KEY'),
+        'user_suffix' => env('VG_USER_SUFFIX'),
     ],
 
     'gash' => [

@@ -17,7 +17,7 @@ class HNController extends Controller
     public function requestHomeUrl(Request $request)
     {
         // API 請求 URL
-        $apiUrl = '/thirdApi/requestHomeUrl';
+        $apiUrl = config('chacha.vg.api_url') . '/thirdApi/requestHomeUrl';
 
         // 要加密的資料
         $cryptoData = array(
@@ -62,7 +62,7 @@ class HNController extends Controller
     public function getGameRecordDetail(Request $request)
     {
         // API 請求 URL
-        $apiUrl = '/merchantReport/getAllOrder';
+        $apiUrl = config('chacha.vg.api_url') . '/merchantReport/getAllOrder';
 
         try {
             // API 請求參數
@@ -98,7 +98,7 @@ class HNController extends Controller
     public function getBalanceReportLogList(Request $request)
     {
         // API 請求 URL
-        $apiUrl = '/merchantReport/getBalanceReportLogList';
+        $apiUrl = config('chacha.vg.api_url') . '/merchantReport/getBalanceReportLogList';
 
         try {
             // API 請求參數
@@ -134,7 +134,7 @@ class HNController extends Controller
     public function walletInAndOut(Request $request)
     {
         // API 請求 URL
-        $apiUrl = '/merchantToApi/walletInAndOut';
+        $apiUrl = config('chacha.vg.api_url') . '/merchantToApi/walletInAndOut';
 
         // 要加密的資料
         $cryptoData = array(
@@ -179,7 +179,7 @@ class HNController extends Controller
     public function getUserBlance(Request $request)
     {
         // API 請求 URL
-        $apiUrl = '/merchantToApi/getUserBlance';
+        $apiUrl = config('chacha.vg.api_url') . '/merchantToApi/getUserBlance';
 
         // 要加密的資料
         $cryptoData = array(
