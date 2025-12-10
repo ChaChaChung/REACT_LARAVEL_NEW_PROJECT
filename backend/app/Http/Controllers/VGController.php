@@ -39,7 +39,7 @@ class VGController extends Controller
             return response()->json([
                 'code' => $result->code,
                 'message' => $result->message,
-                'data' => $result->data,
+                'data' => $result->data ?? [],
                 'TraceId' => $result->TraceId,
             ]);
         } catch (\Exception $e) {
