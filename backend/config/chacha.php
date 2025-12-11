@@ -16,6 +16,12 @@ return [
         'user_suffix' => env('VG_USER_SUFFIX'),
     ],
 
+    'fg' => [
+        'api_url' => env('FG_API_URL'),
+        'merchantname' => env('FG_MERCHANT_NAME'),
+        'merchantcode' => env('FG_MERCHANT_CODE'),
+    ],
+
     'gash' => [
         'api_url' => env('GASH_API_URL'),
         'cid' => env('GASH_CID'),

@@ -3,6 +3,7 @@
 use App\Http\Controllers\GashController;
 use App\Http\Controllers\HNController;
 use App\Http\Controllers\VGController;
+use App\Http\Controllers\FGController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -39,6 +40,11 @@ Route::prefix('vg')->group(function () {
     Route::post('/betLimit', [VGController::class, 'betLimit']);
     Route::get('/limitList', [VGController::class, 'limitList']);
     Route::get('/tableList', [VGController::class, 'tableList']);
+});
+
+Route::prefix('fg')->group(function () {
+    Route::post('/signUp', [FGController::class, 'signUp']);
+    Route::post('/checkPlayerExists', [FGController::class, 'checkPlayerExists']);
 });
 
 Route::prefix('gash')->group(function () {

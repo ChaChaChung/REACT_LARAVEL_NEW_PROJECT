@@ -12,23 +12,39 @@ class curlHelper
      * 發送 POST 請求
      * @param string $url 請求的 URL
      * @param array $data 發送的資料
+     * @param array $headers 請求的 headers
      * @return object 回應的物件
      */
-    public static function curlPost($url, $data)
+    public static function curlPost($url, $data, $headers = [])
     {
         // 初始化 cURL
         $curl = curl_init();
 
-        // 轉換資料為 JSON
-        $jsonData = is_array($data) ? json_encode($data) : $data;
+        // 判斷 headers 是否為空，如果為空，則設定預設 headers
+        if (empty($headers)) {
+            $headers = ['Content-Type: application/json'];
+        }
 
-        // 預設 headers
-        $headers = ['Content-Type: application/json'];
+        // 判斷 headers 是否為 JSON
+        $isJson = false;
+        foreach ($headers as $header) {
+            if (stripos($header, 'Content-Type: application/json') !== false) {
+                $isJson = true;
+                break;
+            }
+        }
+
+        // 判斷是否為 JSON，如果是則轉換為 JSON，否則轉換為 Form Data 格式
+        if ($isJson) {
+            $postData = is_array($data) ? json_encode($data) : $data;
+        } else {
+            $postData = is_array($data) ? http_build_query($data) : $data;
+        }
 
         // 設定 cURL 選項
         curl_setopt($curl, CURLOPT_URL, $url);
         curl_setopt($curl, CURLOPT_POST, true);
-        curl_setopt($curl, CURLOPT_POSTFIELDS, $jsonData);
+        curl_setopt($curl, CURLOPT_POSTFIELDS, $postData);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_TIMEOUT, 30);
         curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
