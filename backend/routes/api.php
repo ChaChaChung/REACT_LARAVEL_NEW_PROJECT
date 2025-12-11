@@ -44,7 +44,12 @@ Route::prefix('vg')->group(function () {
 
 Route::prefix('fg')->group(function () {
     Route::post('/signUp', [FGController::class, 'signUp']);
+    Route::post('/clearPlayerSession', [FGController::class, 'clearPlayerSession']);
+    Route::post('/points', [FGController::class, 'points']);
+    Route::post('/balance', [FGController::class, 'balance']);
     Route::post('/checkPlayerExists', [FGController::class, 'checkPlayerExists']);
+    Route::post('/pointsLog', [FGController::class, 'pointsLog']);
+    Route::post('/checkUnsettled', [FGController::class, 'checkUnsettled']);
 });
 
 Route::prefix('gash')->group(function () {
