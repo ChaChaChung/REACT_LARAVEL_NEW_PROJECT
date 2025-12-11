@@ -214,6 +214,478 @@ class FGController extends Controller
     }
 
     /**
+     * 4.1 分頁採集數據
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPage(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
+        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.2 帶時間的分頁採集數據 (時間範圍不超過兩天)
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPageWithTime(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
+        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 判斷 start_time 和 end_time 是否同時存在
+        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+            throw new \Exception('End time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+            throw new \Exception('Start time is required');
+        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+            if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                throw new \Exception('Time range must be less than two days');
+            }
+            // 將 start_time 和 end_time 加到 API 請求 URL 中
+            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.3 v3_1 版分頁採集 chess (結構增加 total_bets)
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPageTotalBets(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3_1/agent/log_by_page';
+        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 判斷 start_time 和 end_time 是否同時存在
+        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+            throw new \Exception('End time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+            throw new \Exception('Start time is required');
+        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+            if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                throw new \Exception('Time range must be less than two days');
+            }
+            // 將 start_time 和 end_time 加到 API 請求 URL 中
+            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.4 分頁採集活動數據
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPageActivity(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page/gt/activity';
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.5 根據時間獲取遊戲總的紀錄數 (時間範圍不能超過一天)
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function getGameLogCount(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_count';
+        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+
+        // 判斷 start_time 和 end_time 是否同時存在
+        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+            throw new \Exception('End time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+            throw new \Exception('Start time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
+            throw new \Exception('Start time and end time are required');
+        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過一天
+            if ($request->input('end_time') - $request->input('start_time') > 86400) {
+                throw new \Exception('Time range must be less than one day');
+            }
+            // 將 start_time 和 end_time 加到 API 請求 URL 中
+            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.6 捕獵排行派彩
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function hunterRankingPayout(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/fish/player_rank';
+        $apiUrl .= '/game_id/' . $request->input('game_id');
+        
+        // 判斷傳入的參數是 rank_type 還是 id
+        if ($request->input('rank_type') !== null) {
+            // 0: 代理帳號對應貨幣類型上週榜 [不區分代理] 1:代理上周榜 2: 代理帳號對應貨幣類型上週挑戰榜 [不區分代理] 3: 代理上周挑戰榜
+            $rankTypeArray = array(0, 1, 2, 3);
+
+            // 判斷 rank_type 是否在 rankTypeArray 中
+            if (!in_array($request->input('rank_type'), $rankTypeArray)) {
+                throw new \Exception('rank_type must be 0, 1, 2 or 3');
+            }
+
+            // 將 rank_type 加到 API 請求 URL 中
+            $apiUrl .= '/rank_type/' . $request->input('rank_type');
+
+            // 如果 rank_type 為 1 或 3，則 get_agent 參數才有意義
+            if ($request->input('rank_type') === 1 || $request->input('rank_type') === 3) {
+                if ($request->input('get_agent') !== null) {
+                    // 0: 拉取代理帳號直属的代理榜 1: 允許總社拉取直属和下級代理的資料，下級代理帳號不允許該項操作
+                    $getAgentArray = array(0, 1);
+
+                    // 判斷 get_agent 是否在 getAgentArray 中
+                    if (!in_array($request->input('get_agent'), $getAgentArray)) {
+                        throw new \Exception('get_agent must be 0 or 1');
+                    }
+                    // 將 get_agent 加到 API 請求 URL 中
+                    $apiUrl .= '/get_agent/' . $request->input('get_agent');
+                }
+            }
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.8 獲取遊戲詳情頁面跳轉路徑
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logDetailUrl(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_detail_url';
+        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+        $apiUrl .= '/id/' . $request->input('id');
+
+        // 判斷參數是否有傳入 member_code
+        if ($request->input('member_code') !== null) {
+            $apiUrl .= '/member_code/' . $request->input('member_code');
+        }
+
+        // 將語言加入 API 請求 URL
+        $apiUrl .= '/language/zh-cn';
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.9 獲取捕獵遊戲進出房間金額紀錄
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPageHunterLogout(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/v3/agent/log_by_page/gt/fish_logout';
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.10 獲取玩家匯總數據
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPagePlayerStat(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/player_summary/gt/player_stat';
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.11 v3_1 版獲取玩家匯總數據
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPagePlayerStatGt(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3_1/agent/player_summary/gt/player_stat';
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.12 獲取 JP 獎池
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function jackpot()
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/jp';
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 4.13 拉取代理小時匯總數據 (時間範圍不超過兩天)
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function logByPageGtStat(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
+        $apiUrl .= '/gt/' . $request->input('gt'); // agent_stat: 四類遊戲 agent_hunter_stat: 捕獵 agent_chess_stat: 棋牌 agent_slot_stat: 老虎機 agent_arcade_stat: 水果機
+
+        // 判斷傳入的參數是 page_key 還是 id
+        if ($request->input('page_key') !== null) {
+            $apiUrl .= '/page_key/' . $request->input('page_key');
+        } else if ($request->input('id') !== null) {
+            $apiUrl .= '/id/' . $request->input('id');
+        }
+
+        // 判斷 start_time 和 end_time 是否同時存在
+        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+            throw new \Exception('End time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+            throw new \Exception('Start time is required');
+        } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
+            throw new \Exception('Start time and end time are required');
+        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+            if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                throw new \Exception('Time range must be less than two days');
+            }
+            // 將 start_time 和 end_time 加到 API 請求 URL 中
+            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * 5.1 創建用戶
      * @param Request $request 請求物件
      * @return \Illuminate\Http\JsonResponse 回應物件

@@ -50,6 +50,19 @@ Route::prefix('fg')->group(function () {
     Route::post('/appLoginQRCode', [FGController::class, 'appLoginQRCode']); // 3.5 APP 登入二維碼
     Route::post('/launchLobby', [FGController::class, 'launchLobby']); // 3.7 啟動大廳
 
+    Route::post('/logByPage', [FGController::class, 'logByPage']); // 4.1 分頁採集數據
+    Route::post('/logByPageWithTime', [FGController::class, 'logByPageWithTime']); // 4.2 帶時間的分頁採集數據 (時間範圍不超過兩天)
+    Route::post('/logByPageTotalBets', [FGController::class, 'logByPageTotalBets']); // 4.3 v3_1 版分頁採集 chess (結構增加 total_bets)
+    Route::post('/logByPageActivity', [FGController::class, 'logByPageActivity']); // 4.4 分頁採集活動數據
+    Route::post('/getGameLogCount', [FGController::class, 'getGameLogCount']); // 4.5 根據時間獲取遊戲總的紀錄數 (時間範圍不能超過一天)
+    Route::post('/hunterRankingPayout', [FGController::class, 'hunterRankingPayout']); // 4.6 捕獵排行派彩
+    Route::post('/logDetailUrl', [FGController::class, 'logDetailUrl']); // 4.8 獲取遊戲詳情頁面跳轉路徑
+    Route::post('/logByPageHunterLogout', [FGController::class, 'logByPageHunterLogout']); // 4.9 獲取捕獵遊戲進出房間金額紀錄
+    Route::post('/logByPagePlayerStat', [FGController::class, 'logByPagePlayerStat']); // 4.10 獲取玩家匯總數據
+    Route::post('/logByPagePlayerStatGt', [FGController::class, 'logByPagePlayerStatGt']); // 4.11 v3_1 版獲取玩家匯總數據
+    Route::post('/jackpot', [FGController::class, 'jackpot']); // 4.12 獲取 JP 獎池
+    Route::post('/logByPageGtStat', [FGController::class, 'logByPageGtStat']); // 4.13 拉取代理小時匯總數據 (時間範圍不超過兩天)
+
     Route::post('/signUp', [FGController::class, 'signUp']); // 5.1 註冊用戶
     Route::post('/clearPlayerSession', [FGController::class, 'clearPlayerSession']); // 5.2 刪除玩家會話
     Route::post('/points', [FGController::class, 'points']); // 5.3 存取玩家籌碼
