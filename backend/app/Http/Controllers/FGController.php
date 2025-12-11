@@ -65,7 +65,7 @@ class FGController extends Controller
      * @param Request $request 請求物件
      * @return \Illuminate\Http\JsonResponse 回應物件
      */
-    public function launcFreehGame(Request $request)
+    public function launchFreeGame(Request $request)
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/launch_free_game';
@@ -381,7 +381,7 @@ class FGController extends Controller
      * @param Request $request 請求物件
      * @return \Illuminate\Http\JsonResponse 回應物件
      */
-    public function getGameLogCount(Request $request)
+    public function logByCount(Request $request)
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_count';
