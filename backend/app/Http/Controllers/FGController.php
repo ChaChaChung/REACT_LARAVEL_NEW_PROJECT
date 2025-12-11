@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Helpers\curlHelper;
+use App\Helpers\commonHelper;
 
 class FGController extends Controller
 {
@@ -236,6 +237,199 @@ class FGController extends Controller
 
         // 要傳送的資料
         $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.1 啟動遊戲
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function launchGame(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/launch_game';
+
+        // 要傳送的資料
+        $data = array(
+            'game_code' => $request->input('game_code'),
+            'game_type' => 'h5',
+            'language' => 'zh-cn',
+            'ip' => CommonHelper::getIP(),
+            // 'return_url' => $return_url,
+            // 'owner_id' => $owner_id,
+        );
+
+        // 判斷傳入的參數是 open_id 還是 member_code
+        if ($request->input('open_id') !== null) {
+            $data['open_id'] = $request->input('open_id');
+        } else {
+            $data['member_code'] = $request->input('member_code');
+        }
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.2 啟動試玩遊戲
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function launcFreehGame(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/launch_free_game';
+
+        // 要傳送的資料
+        $data = array(
+            'game_code' => $request->input('game_code'),
+            'game_type' => 'h5',
+            'language' => 'zh-cn',
+            'ip' => CommonHelper::getIP(),
+            // 'return_url' => $return_url
+        );
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.3 獲取遊戲列表
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function gameList()
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/games/game_type/h5/language/zh-cn';
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.4 APP 大廳下載二維碼
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function appDownloadQRCode()
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/app/download';
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.5 APP 登入二維碼
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function appLoginQRCode(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/app/get_token_qr';
+
+        // 判斷傳入的參數是 open_id 還是 member_code
+        if ($request->input('open_id') !== null) {
+            $apiUrl .= '/' . $request->input('open_id');
+        } else {
+            $apiUrl .= '/member_code/' . $request->input('member_code');
+        }
+
+        // 要傳送的資料
+        $data = array();
+
+        try {
+            // 發送 POST 請求
+            $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Request failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * 3.7 啟動大廳
+     * @param Request $request 請求物件
+     * @return \Illuminate\Http\JsonResponse 回應物件
+     */
+    public function launchLobby(Request $request)
+    {
+        // API 請求 URL
+        $apiUrl = config('chacha.fg.api_url') . '/v3/launch_lobby';
+
+        // 要傳送的資料
+        $data = array(
+            'language' => 'zh-cn',
+            'lobby_code' => 'chess',
+            'ip' => CommonHelper::getIP(),
+            // 'owner_id' => $owner_id
+        );
+
+        // 判斷傳入的參數是 open_id 還是 member_code
+        if ($request->input('open_id') !== null) {
+            $data['open_id'] = $request->input('open_id');
+        } else {
+            $data['member_code'] = $request->input('member_code');
+        }
 
         try {
             // 發送 POST 請求

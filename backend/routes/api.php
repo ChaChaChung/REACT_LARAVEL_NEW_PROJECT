@@ -50,6 +50,12 @@ Route::prefix('fg')->group(function () {
     Route::post('/checkPlayerExists', [FGController::class, 'checkPlayerExists']);
     Route::post('/pointsLog', [FGController::class, 'pointsLog']);
     Route::post('/checkUnsettled', [FGController::class, 'checkUnsettled']);
+    Route::post('/launchGame', [FGController::class, 'launchGame']);
+    Route::post('/launchFreeGame', [FGController::class, 'launchFreeGame']);
+    Route::post('/gameList', [FGController::class, 'gameList']);
+    Route::post('/appDownloadQRCode', [FGController::class, 'appDownloadQRCode']);
+    Route::post('/appLoginQRCode', [FGController::class, 'appLoginQRCode']);
+    Route::post('/launchLobby', [FGController::class, 'launchLobby']);
 });
 
 Route::prefix('gash')->group(function () {
