@@ -13,7 +13,6 @@ class FGController extends Controller
     public function __construct()
     {
         $this->headers = [
-            'Accept: application/json',
             'Content-Type: application/x-www-form-urlencoded',
             "merchantname: " . config('chacha.fg.merchantname'),
             "merchantcode: " . config('chacha.fg.merchantcode'),
@@ -43,13 +42,18 @@ class FGController extends Controller
     
             // 判斷傳入的參數是 open_id 還是 member_code
             if ($request->input('open_id') !== null) {
-                $data['open_id'] = $request->input('open_id');
+                $data['openid'] = $request->input('open_id');
             } else {
                 $data['member_code'] = $request->input('member_code');
             }
 
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            // 判斷是否成功，如果成功，則將 game_url 和 token 拼接成 full_game_url
+            if ($result->code === 0) {
+                $result->data->full_game_url = $result->data->game_url . '&token=' . $result->data->token;
+            }
 
             return response()->json($result);
         } catch (\Exception $e) {
@@ -82,6 +86,11 @@ class FGController extends Controller
 
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
+
+            // 判斷是否成功，如果成功，則將 game_url 和 token 拼接成 full_game_url
+            if ($result->code === 0) {
+                $result->data->full_game_url = $result->data->game_url . '&token=' . $result->data->token;
+            }
 
             return response()->json($result);
         } catch (\Exception $e) {
@@ -196,7 +205,7 @@ class FGController extends Controller
     
             // 判斷傳入的參數是 open_id 還是 member_code
             if ($request->input('open_id') !== null) {
-                $data['open_id'] = $request->input('open_id');
+                $data['openid'] = $request->input('open_id');
             } else {
                 $data['member_code'] = $request->input('member_code');
             }
