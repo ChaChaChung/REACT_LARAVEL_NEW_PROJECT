@@ -30,24 +30,24 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/launch_game';
 
-        // 要傳送的資料
-        $data = array(
-            'game_code' => $request->input('game_code'),
-            'game_type' => 'h5',
-            'language' => 'zh-cn',
-            'ip' => CommonHelper::getIP(),
-            // 'return_url' => $return_url,
-            // 'owner_id' => $owner_id,
-        );
-
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $data['open_id'] = $request->input('open_id');
-        } else {
-            $data['member_code'] = $request->input('member_code');
-        }
-
         try {
+            // 要傳送的資料
+            $data = array(
+                'game_code' => $request->input('game_code'),
+                'game_type' => 'h5',
+                'language' => 'zh-cn',
+                'ip' => CommonHelper::getIP(),
+                // 'return_url' => $return_url,
+                // 'owner_id' => $owner_id,
+            );
+    
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $data['open_id'] = $request->input('open_id');
+            } else {
+                $data['member_code'] = $request->input('member_code');
+            }
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -70,16 +70,16 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/launch_free_game';
 
-        // 要傳送的資料
-        $data = array(
-            'game_code' => $request->input('game_code'),
-            'game_type' => 'h5',
-            'language' => 'zh-cn',
-            'ip' => CommonHelper::getIP(),
-            // 'return_url' => $return_url
-        );
-
         try {
+            // 要傳送的資料
+            $data = array(
+                'game_code' => $request->input('game_code'),
+                'game_type' => 'h5',
+                'language' => 'zh-cn',
+                'ip' => CommonHelper::getIP(),
+                // 'return_url' => $return_url
+            );
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -101,10 +101,10 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/games/game_type/h5/language/zh-cn';
 
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -126,10 +126,10 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/app/download';
 
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -152,17 +152,17 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/app/get_token_qr';
 
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $apiUrl .= '/' . $request->input('open_id');
-        } else {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $apiUrl .= '/' . $request->input('open_id');
+            } else {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+    
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -176,7 +176,7 @@ class FGController extends Controller
     }
 
     /**
-     * 3.7 啟動大廳
+     * 3.7 啟動大廳 (用不到)
      * @param Request $request 請求物件
      * @return \Illuminate\Http\JsonResponse 回應物件
      */
@@ -185,22 +185,22 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/launch_lobby';
 
-        // 要傳送的資料
-        $data = array(
-            'language' => 'zh-cn',
-            'lobby_code' => 'chess',
-            'ip' => CommonHelper::getIP(),
-            // 'owner_id' => $owner_id
-        );
-
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $data['open_id'] = $request->input('open_id');
-        } else {
-            $data['member_code'] = $request->input('member_code');
-        }
-
         try {
+            // 要傳送的資料
+            $data = array(
+                'language' => 'zh-cn',
+                'lobby_code' => 'chess',
+                'ip' => CommonHelper::getIP(),
+                // 'owner_id' => $owner_id
+            );
+    
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $data['open_id'] = $request->input('open_id');
+            } else {
+                $data['member_code'] = $request->input('member_code');
+            }
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -222,19 +222,21 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
-        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+    
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+    
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -256,33 +258,35 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
-        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 判斷 start_time 和 end_time 是否同時存在
-        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
-            throw new \Exception('End time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
-            throw new \Exception('Start time is required');
-        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
-            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
-            if ($request->input('end_time') - $request->input('start_time') > 172800) {
-                throw new \Exception('Time range must be less than two days');
-            }
-            // 將 start_time 和 end_time 加到 API 請求 URL 中
-            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+    
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 判斷 start_time 和 end_time 是否同時存在
+            if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+                throw new \Exception('End time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+                throw new \Exception('Start time is required');
+            } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+                // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+                if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                    throw new \Exception('Time range must be less than two days');
+                }
+                // 將 start_time 和 end_time 加到 API 請求 URL 中
+                $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -304,33 +308,35 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3_1/agent/log_by_page';
-        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 判斷 start_time 和 end_time 是否同時存在
-        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
-            throw new \Exception('End time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
-            throw new \Exception('Start time is required');
-        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
-            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
-            if ($request->input('end_time') - $request->input('start_time') > 172800) {
-                throw new \Exception('Time range must be less than two days');
-            }
-            // 將 start_time 和 end_time 加到 API 請求 URL 中
-            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+    
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 判斷 start_time 和 end_time 是否同時存在
+            if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+                throw new \Exception('End time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+                throw new \Exception('Start time is required');
+            } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+                // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+                if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                    throw new \Exception('Time range must be less than two days');
+                }
+                // 將 start_time 和 end_time 加到 API 請求 URL 中
+                $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -353,17 +359,17 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page/gt/activity';
 
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -385,28 +391,30 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_count';
-        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
-
-        // 判斷 start_time 和 end_time 是否同時存在
-        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
-            throw new \Exception('End time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
-            throw new \Exception('Start time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
-            throw new \Exception('Start time and end time are required');
-        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
-            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過一天
-            if ($request->input('end_time') - $request->input('start_time') > 86400) {
-                throw new \Exception('Time range must be less than one day');
-            }
-            // 將 start_time 和 end_time 加到 API 請求 URL 中
-            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+
+            // 判斷 start_time 和 end_time 是否同時存在
+            if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+                throw new \Exception('End time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+                throw new \Exception('Start time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
+                throw new \Exception('Start time and end time are required');
+            } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+                // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過一天
+                if ($request->input('end_time') - $request->input('start_time') > 86400) {
+                    throw new \Exception('Time range must be less than one day');
+                }
+                // 將 start_time 和 end_time 加到 API 請求 URL 中
+                $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -428,41 +436,43 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/fish/player_rank';
-        $apiUrl .= '/game_id/' . $request->input('game_id');
-        
-        // 判斷傳入的參數是 rank_type 還是 id
-        if ($request->input('rank_type') !== null) {
-            // 0: 代理帳號對應貨幣類型上週榜 [不區分代理] 1:代理上周榜 2: 代理帳號對應貨幣類型上週挑戰榜 [不區分代理] 3: 代理上周挑戰榜
-            $rankTypeArray = array(0, 1, 2, 3);
-
-            // 判斷 rank_type 是否在 rankTypeArray 中
-            if (!in_array($request->input('rank_type'), $rankTypeArray)) {
-                throw new \Exception('rank_type must be 0, 1, 2 or 3');
-            }
-
-            // 將 rank_type 加到 API 請求 URL 中
-            $apiUrl .= '/rank_type/' . $request->input('rank_type');
-
-            // 如果 rank_type 為 1 或 3，則 get_agent 參數才有意義
-            if ($request->input('rank_type') === 1 || $request->input('rank_type') === 3) {
-                if ($request->input('get_agent') !== null) {
-                    // 0: 拉取代理帳號直属的代理榜 1: 允許總社拉取直属和下級代理的資料，下級代理帳號不允許該項操作
-                    $getAgentArray = array(0, 1);
-
-                    // 判斷 get_agent 是否在 getAgentArray 中
-                    if (!in_array($request->input('get_agent'), $getAgentArray)) {
-                        throw new \Exception('get_agent must be 0 or 1');
-                    }
-                    // 將 get_agent 加到 API 請求 URL 中
-                    $apiUrl .= '/get_agent/' . $request->input('get_agent');
-                }
-            }
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // 將 game_id 加到 API 請求 URL 中
+            $apiUrl .= '/game_id/' . $request->input('game_id');
+            
+            // 判斷傳入的參數是 rank_type 還是 id
+            if ($request->input('rank_type') !== null) {
+                // 0: 代理帳號對應貨幣類型上週榜 [不區分代理] 1:代理上周榜 2: 代理帳號對應貨幣類型上週挑戰榜 [不區分代理] 3: 代理上周挑戰榜
+                $rankTypeArray = array(0, 1, 2, 3);
+    
+                // 判斷 rank_type 是否在 rankTypeArray 中
+                if (!in_array($request->input('rank_type'), $rankTypeArray)) {
+                    throw new \Exception('rank_type must be 0, 1, 2 or 3');
+                }
+    
+                // 將 rank_type 加到 API 請求 URL 中
+                $apiUrl .= '/rank_type/' . $request->input('rank_type');
+    
+                // 如果 rank_type 為 1 或 3，則 get_agent 參數才有意義
+                if ($request->input('rank_type') === 1 || $request->input('rank_type') === 3) {
+                    if ($request->input('get_agent') !== null) {
+                        // 0: 拉取代理帳號直属的代理榜 1: 允許總社拉取直属和下級代理的資料，下級代理帳號不允許該項操作
+                        $getAgentArray = array(0, 1);
+    
+                        // 判斷 get_agent 是否在 getAgentArray 中
+                        if (!in_array($request->input('get_agent'), $getAgentArray)) {
+                            throw new \Exception('get_agent must be 0 or 1');
+                        }
+                        // 將 get_agent 加到 API 請求 URL 中
+                        $apiUrl .= '/get_agent/' . $request->input('get_agent');
+                    }
+                }
+            }
+    
+            // 要傳送的資料
+            $data = array();
+    
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -484,21 +494,24 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_detail_url';
-        $apiUrl .= '/gt/' . $request->input('gt'); // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
-        $apiUrl .= '/id/' . $request->input('id');
-
-        // 判斷參數是否有傳入 member_code
-        if ($request->input('member_code') !== null) {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
-        // 將語言加入 API 請求 URL
-        $apiUrl .= '/language/zh-cn';
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // hunter: 捕獵 chess: 棋牌 slot: 老虎機 arcade: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+            // 將 id 加到 API 請求 URL 中
+            $apiUrl .= '/id/' . $request->input('id');
+    
+            // 判斷參數是否有傳入 member_code
+            if ($request->input('member_code') !== null) {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+    
+            // 將語言加入 API 請求 URL
+            $apiUrl .= '/language/zh-cn';
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -519,19 +532,19 @@ class FGController extends Controller
     public function logByPageHunterLogout(Request $request)
     {
         // API 請求 URL
-        $apiUrl = config('chacha.fg.api_url') . '/v3/v3/agent/log_by_page/gt/fish_logout';
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 要傳送的資料
-        $data = array();
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page/gt/fish_logout';
 
         try {
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -552,19 +565,19 @@ class FGController extends Controller
     public function logByPagePlayerStat(Request $request)
     {
         // API 請求 URL
-        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/player_summary/gt/player_stat';
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 要傳送的資料
-        $data = array();
+        $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page/gt/player_stat';
 
         try {
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+    
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -585,19 +598,19 @@ class FGController extends Controller
     public function logByPagePlayerStatGt(Request $request)
     {
         // API 請求 URL
-        $apiUrl = config('chacha.fg.api_url') . '/v3_1/agent/player_summary/gt/player_stat';
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 要傳送的資料
-        $data = array();
+        $apiUrl = config('chacha.fg.api_url') . '/v3_1/agent/log_by_page/gt/player_stat';
 
         try {
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -619,10 +632,10 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/jp';
 
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -644,35 +657,37 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/agent/log_by_page';
-        $apiUrl .= '/gt/' . $request->input('gt'); // agent_stat: 四類遊戲 agent_hunter_stat: 捕獵 agent_chess_stat: 棋牌 agent_slot_stat: 老虎機 agent_arcade_stat: 水果機
-
-        // 判斷傳入的參數是 page_key 還是 id
-        if ($request->input('page_key') !== null) {
-            $apiUrl .= '/page_key/' . $request->input('page_key');
-        } else if ($request->input('id') !== null) {
-            $apiUrl .= '/id/' . $request->input('id');
-        }
-
-        // 判斷 start_time 和 end_time 是否同時存在
-        if ($request->input('start_time') !== null && $request->input('end_time') === null) {
-            throw new \Exception('End time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
-            throw new \Exception('Start time is required');
-        } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
-            throw new \Exception('Start time and end time are required');
-        } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
-            // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
-            if ($request->input('end_time') - $request->input('start_time') > 172800) {
-                throw new \Exception('Time range must be less than two days');
-            }
-            // 將 start_time 和 end_time 加到 API 請求 URL 中
-            $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
-        }
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // agent_stat: 四類遊戲 agent_hunter_stat: 捕獵 agent_chess_stat: 棋牌 agent_slot_stat: 老虎機 agent_arcade_stat: 水果機
+            $apiUrl .= '/gt/' . $request->input('gt');
+    
+            // 判斷傳入的參數是 page_key 還是 id
+            if ($request->input('page_key') !== null) {
+                $apiUrl .= '/page_key/' . $request->input('page_key');
+            } else if ($request->input('id') !== null) {
+                $apiUrl .= '/id/' . $request->input('id');
+            }
+
+            // 判斷 start_time 和 end_time 是否同時存在
+            if ($request->input('start_time') !== null && $request->input('end_time') === null) {
+                throw new \Exception('End time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') !== null) {
+                throw new \Exception('Start time is required');
+            } else if ($request->input('start_time') === null && $request->input('end_time') === null) {
+                throw new \Exception('Start time and end time are required');
+            } else if ($request->input('start_time') !== null && $request->input('end_time') !== null) {
+                // start_time 和 end_time 都存在，判斷 end_time 與 start_time 的時間差是否不超過兩天
+                if ($request->input('end_time') - $request->input('start_time') > 172800) {
+                    throw new \Exception('Time range must be less than two days');
+                }
+                // 將 start_time 和 end_time 加到 API 請求 URL 中
+                $apiUrl .= '/start_time/' . $request->input('start_time') . '/end_time/' . $request->input('end_time');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -695,13 +710,13 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/players';
 
-        // 要傳送的資料
-        $data = array(
-            'member_code' => $request->input('member_code'),
-            'password' => $request->input('password')
-        );
-
         try {
+            // 要傳送的資料
+            $data = array(
+                'member_code' => $request->input('member_code'),
+                'password' => $request->input('password')
+            );
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -724,17 +739,17 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player_sessions';
 
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $apiUrl .= '/' . $request->input('open_id');
-        } else {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $apiUrl .= '/' . $request->input('open_id');
+            } else {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -757,14 +772,14 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player_uchips';
 
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $apiUrl .= '/' . $request->input('open_id');
-        } else {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
         try {
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $apiUrl .= '/' . $request->input('open_id');
+            } else {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+
             // 驗證參數
             if ($request->input('amount') === null) {
                 throw new \Exception('Amount is required');
@@ -801,17 +816,17 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player_chips';
 
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $apiUrl .= '/' . $request->input('open_id');
-        } else {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $apiUrl .= '/' . $request->input('open_id');
+            } else {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -833,12 +848,14 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player_names';
-        $apiUrl .= '/' . $request->input('member_code');
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // 將 member_code 加到 API 請求 URL 中
+            $apiUrl .= '/' . $request->input('member_code');
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -860,12 +877,14 @@ class FGController extends Controller
     {
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player_uchips_check';
-        $apiUrl .= '/' . $request->input('external_transaction_id');
-
-        // 要傳送的資料
-        $data = array();
 
         try {
+            // 將 external_transaction_id 加到 API 請求 URL 中
+            $apiUrl .= '/' . $request->input('external_transaction_id');
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
@@ -893,17 +912,17 @@ class FGController extends Controller
         // API 請求 URL
         $apiUrl = config('chacha.fg.api_url') . '/v3/player/unsettled';
 
-        // 判斷傳入的參數是 open_id 還是 member_code
-        if ($request->input('open_id') !== null) {
-            $apiUrl .= '/' . $request->input('open_id');
-        } else {
-            $apiUrl .= '/member_code/' . $request->input('member_code');
-        }
-
-        // 要傳送的資料
-        $data = array();
-
         try {
+            // 判斷傳入的參數是 open_id 還是 member_code
+            if ($request->input('open_id') !== null) {
+                $apiUrl .= '/' . $request->input('open_id');
+            } else {
+                $apiUrl .= '/member_code/' . $request->input('member_code');
+            }
+    
+            // 要傳送的資料
+            $data = array();
+
             // 發送 POST 請求
             $result = curlHelper::curlPost($apiUrl, $data, $this->headers);
 
