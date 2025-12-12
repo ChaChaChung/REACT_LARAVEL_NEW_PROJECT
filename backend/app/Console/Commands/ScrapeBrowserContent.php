@@ -201,6 +201,7 @@ class ScrapeBrowserContent extends Command
                     // 監聽網路請求，捕獲 API 調用
                     // 這可以獲取頁面載入時發送的 AJAX/Fetch 請求數據
                     const networkRequests = [];
+                    // 註冊監聽器，告訴 Puppeteer 在收到 API 請求時，執行以下操作
                     page.on('response', async (response) => {
                         const url = response.url();
                         // 只捕獲包含 '/api/' 且狀態為 200 的請求
@@ -237,85 +238,6 @@ class ScrapeBrowserContent extends Command
                     // 等待額外 5 秒，確保動態內容完全載入
                     await new Promise(resolve => setTimeout(resolve, 5000));
 
-                    // 滾動頁面以觸發懶載入（lazy loading）
-                    // 許多現代網站使用懶載入技術，只有當元素進入視窗時才載入內容
-                    console.log('📜 Scrolling to trigger lazy loading...');
-                    await page.evaluate(() => {
-                        return new Promise((resolve) => {
-                            let totalHeight = 0;
-                            const distance = 100;  // 每次滾動 100 像素
-                            const timer = setInterval(() => {
-                                const scrollHeight = document.body.scrollHeight;
-                                window.scrollBy(0, distance);
-                                totalHeight += distance;
-
-                                // 如果已滾動到底部，停止滾動
-                                if(totalHeight >= scrollHeight){
-                                    clearInterval(timer);
-                                    resolve();
-                                }
-                            }, 100);  // 每 100 毫秒滾動一次
-                        });
-                    });
-
-                    // 滾動完成後再等待 2 秒，讓懶載入的內容有時間載入
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-
-                    console.log('📊 Extracting data from page...');
-
-                    // 在瀏覽器頁面中執行 JavaScript 來提取數據
-                    // page.evaluate() 在瀏覽器上下文中執行，可以訪問 DOM
-                    const extractedData = await page.evaluate(() => {
-                        // 提取表格數據
-                        // 尋找所有 <table> 元素，提取表頭和行數據
-                        const tables = Array.from(document.querySelectorAll('table')).map(table => {
-                            // 提取表頭（從 thead th 或第一行的 td）
-                            const headers = Array.from(table.querySelectorAll('thead th, tr:first-child td')).map(th => th.innerText.trim());
-                            // 提取數據行（從 tbody tr 或除第一行外的所有 tr）
-                            const rows = Array.from(table.querySelectorAll('tbody tr, tr:not(:first-child)')).map(tr => {
-                                return Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim());
-                            });
-
-                            return { headers, rows };
-                        }).filter(table => table.headers.length > 0);  // 過濾掉沒有表頭的表格
-
-                        // 提取列表數據
-                        // 尋找所有 <ul> 和 <ol> 元素，提取列表項內容
-                        const lists = Array.from(document.querySelectorAll('ul, ol')).map(list => {
-                            return Array.from(list.querySelectorAll('li')).map(li => li.innerText.trim());
-                        }).filter(list => list.length > 0);  // 過濾掉空列表
-
-                        // 尋找包含特定關鍵字的數據元素
-                        // 這用於找到可能包含重要數據的元素（如 "record", "chess", "data" 等）
-                        const dataElements = Array.from(document.querySelectorAll('*')).filter(el => {
-                            const text = el.innerText || '';
-                            const className = el.className || '';
-                            const id = el.id || '';
-
-                            // 過濾條件：文本長度適中，且包含特定關鍵字
-                            return (text.length > 10 && text.length < 10000) && 
-                                (text.includes('record') || text.includes('chess') || 
-                                    className.includes('record') || className.includes('data') ||
-                                    id.includes('record') || id.includes('data'));
-                        }).map(el => ({
-                            tag: el.tagName,
-                            class: el.className,
-                            id: el.id,
-                            text: el.innerText.substring(0, 200) + (el.innerText.length > 200 ? '...' : '')  // 限制文本長度
-                        }));
-
-                        // 返回提取的所有數據
-                        return {
-                            type: 'page_analysis',
-                            url: window.location.href,
-                            title: document.title,
-                            tables: tables,
-                            lists: lists,
-                            dataElements: dataElements.slice(0, 10),  // 限制數據元素數量為 10 個
-                            pageText: document.body.innerText.substring(0, 1000) + '...'  // 頁面文本的前 1000 字符
-                        };
-                    });
-
                     // 截圖（用於調試和驗證）
                     // fullPage: true 表示截取整個頁面，而不只是可見區域
                     await page.screenshot({ 
@@ -329,7 +251,6 @@ class ScrapeBrowserContent extends Command
                     const result = {
                         timestamp: new Date().toISOString(),  // 時間戳
                         url: '$url',  // 目標 URL
-                        extractedData: extractedData,  // 從頁面提取的數據
                         networkRequests: networkRequests,  // 捕獲的 API 請求
                         success: true  // 成功標記
                     };
@@ -337,8 +258,6 @@ class ScrapeBrowserContent extends Command
                     // 將結果保存為 JSON 文件
                     fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
                     console.log('💾 Results saved to: scraped_result.json');
-                    console.log('📊 Extracted tables:', extractedData.tables?.length || 0);
-                    console.log('📋 Extracted lists:', extractedData.lists?.length || 0);
                     console.log('📡 API calls captured:', networkRequests.length);
 
                     return result;
@@ -441,14 +360,10 @@ class ScrapeBrowserContent extends Command
         }
 
         // 提取數據和 API 請求
-        $extractedData = $result['extractedData'];
         $networkRequests = $result['networkRequests'] ?? [];
 
         // 顯示數據分析結果
         $this->info("📊 Analysis Results:");
-        $this->info("   Tables found: " . count($extractedData['tables'] ?? []));
-        $this->info("   Lists found: " . count($extractedData['lists'] ?? []));
-        $this->info("   Data elements found: " . count($extractedData['dataElements'] ?? []));
         $this->info("   API calls captured: " . count($networkRequests));
 
         // 生成時間戳，用於文件名
