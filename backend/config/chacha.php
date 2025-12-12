@@ -29,4 +29,11 @@ return [
         'trans_key_i' => env('GASH_TRANS_KEY_I'),
         'trans_key_ii' => env('GASH_TRANS_KEY_II'),
     ],
+
+    'agent' => [
+        'auth' => env('AGENT_AUTH'),
+        'bg_language_key' => env('AGENT_BG_LANGUAGE_KEY', 'zh-cn'),
+        'phpsessid' => env('AGENT_PHPSESSID'),
+        'token' => env('AGENT_TOKEN'),
+    ],
 ];
