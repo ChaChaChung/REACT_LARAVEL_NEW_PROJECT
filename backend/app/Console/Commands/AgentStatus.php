@@ -8,9 +8,23 @@ use Exception;
 
 class AgentStatus extends Command
 {
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
     protected $signature = 'agent:status';
+
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
     protected $description = 'Check Agent login status and cookie validity';
 
+    /**
+     * Execute the console command.
+     */
     public function handle(AgentLoginService $agentService)
     {
         $this->info('=== Agent Status Check ===');
@@ -26,7 +40,7 @@ class AgentStatus extends Command
         
         return 0;
     }
-    
+
     private function checkEnvironmentVariables()
     {
         $this->info('1. Checking environment configuration...');
