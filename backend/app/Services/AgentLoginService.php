@@ -14,9 +14,9 @@ class AgentLoginService extends Service
     {
         // 從配置文件中獲取 cookie 信息
         $this->cookies = [
-            'auth' => config('chacha.agent.auth', 'CWbbK08XWTe0hf'),
-            'bg_languageKey' => config('chacha.agent.bg_language_key', 'zh-cn'), 
-            'token' => config('chacha.agent.token', '')
+            'auth' => config('chacha.agent.auth'),
+            'bg_languageKey' => config('chacha.agent.bg_language_key'), 
+            'token' => config('chacha.agent.token')
         ];
     }
     
