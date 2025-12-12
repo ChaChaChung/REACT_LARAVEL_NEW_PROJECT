@@ -33,7 +33,6 @@ return [
     'agent' => [
         'auth' => env('AGENT_AUTH'),
         'bg_language_key' => env('AGENT_BG_LANGUAGE_KEY', 'zh-cn'),
-        'phpsessid' => env('AGENT_PHPSESSID'),
         'token' => env('AGENT_TOKEN'),
     ],
 ];

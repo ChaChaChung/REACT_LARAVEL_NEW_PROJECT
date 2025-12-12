@@ -2,8 +2,6 @@
 
 ## 📋 **正確的文件說明**
 
-由於您已經刪除了 API 路由和 Controller，**現在只使用 Console Commands**。以下是正確的使用指南：
-
 ---
 
 ## 🚀 **快速開始（3 步驟）**
@@ -31,15 +29,9 @@ ls storage/app/scraped_data/
 ```
 backend/
 ├── app/
-│   ├── Services/
-│   │   └── AgentLoginService.php          # 核心認證服務
 │   └── Console/Commands/
 │       ├── AgentStatus.php                # 狀態檢查
-│       ├── ScrapeBrowserContent.php       # 瀏覽器自動化
-│       ├── ScrapePageContent.php          # HTML 解析
-│       ├── ScrapeGameLogApi.php           # 遊戲日誌專用
-│       ├── SmartApiScraper.php            # 智能 API 發現
-│       └── TestApiEndpoint.php            # API 測試
+│       └── ScrapeBrowserContent.php       # 瀏覽器自動化
 ├── config/
 │   └── chacha.php                         # 配置文件
 └── storage/app/scraped_data/              # 數據保存目錄
@@ -54,7 +46,6 @@ backend/
 ```env
 AGENT_AUTH=CWbbK08XWTe0hf
 AGENT_BG_LANGUAGE_KEY=zh-cn
-AGENT_PHPSESSID=你的完整PHPSESSID值
 AGENT_TOKEN=你的完整Token值
 ```
 
@@ -96,9 +87,7 @@ php artisan agent:scrape-browser "https://agent2.chichengwld.com/#/record/chessR
 
 **選項：**
 ```bash
---selector=".table"      # 指定元素選擇器
---wait=10000            # 等待時間（毫秒）
---output=csv            # 輸出格式（json/csv）
+--output=csv # 輸出格式（json/csv）
 ```
 
 **優點：**
@@ -116,9 +105,7 @@ php artisan agent:scrape-browser "https://agent2.chichengwld.com/#/record/chessR
 storage/app/scraped_data/
 ├── browser_scrape_full_*.json    # 瀏覽器爬取完整結果
 ├── screenshot_*.png              # 頁面截圖
-├── table_*.csv                   # 提取的表格數據
 ├── api_calls_*.json              # 捕獲的 API 調用
-└── html_scrape_*.json            # HTML 解析結果
 ```
 
 ---
@@ -169,6 +156,3 @@ storage/app/scraped_data/
 **立即開始：** `php artisan agent:status` 🚀
 
 ---
-
-*最後更新：2025-12-12*  
-*狀態：✅ 只使用 Console Commands，API 路由已移除*

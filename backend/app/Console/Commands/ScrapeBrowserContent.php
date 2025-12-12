@@ -12,6 +12,7 @@ class ScrapeBrowserContent extends Command
      * The name and signature of the console command.
      *
      * @var string
+     * --output 輸出格式（json/csv）
      */
     protected $signature = 'agent:scrape-browser {url} {--output=json}';
 
@@ -88,14 +89,18 @@ class ScrapeBrowserContent extends Command
         
         return true;
     }
-    
+
+    /**
+     * Create the Puppeteer script.
+     * @param string $url
+     * @return string
+     */
     private function createPuppeteerScript($url)
     {
         $this->info('2. Creating browser automation script...');
         
         // 從 .env 獲取 cookie 值
         $auth = env('AGENT_AUTH', '');
-        $phpsessid = env('AGENT_PHPSESSID', '');
         $token = env('AGENT_TOKEN', '');
         $bgLang = env('AGENT_BG_LANGUAGE_KEY', 'zh-cn');
         
@@ -150,7 +155,6 @@ class ScrapeBrowserContent extends Command
                 // 設定 cookies
                 const cookies = [];
                 if ('$auth') cookies.push({ name: 'auth', value: '$auth', domain: 'agent2.chichengwld.com' });
-                if ('$phpsessid') cookies.push({ name: 'PHPSESSID', value: '$phpsessid', domain: 'agent2.chichengwld.com' });
                 if ('$token') cookies.push({ name: 'token', value: '$token', domain: 'agent2.chichengwld.com' });
                 if ('$bgLang') cookies.push({ name: 'bg_languageKey', value: '$bgLang', domain: 'agent2.chichengwld.com' });
                 
