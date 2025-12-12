@@ -16,14 +16,12 @@ class AgentLoginService extends Service
         $this->cookies = [
             'auth' => config('chacha.agent.auth', 'CWbbK08XWTe0hf'),
             'bg_languageKey' => config('chacha.agent.bg_language_key', 'zh-cn'), 
-            'PHPSESSID' => config('chacha.agent.phpsessid', ''),
             'token' => config('chacha.agent.token', '')
         ];
     }
     
     /**
      * 發送帶有 cookie 的請求
-     *
      * @param string $endpoint
      * @param string $method
      * @param array|string|null $data
@@ -114,7 +112,6 @@ class AgentLoginService extends Service
     
     /**
      * 建構 cookie 字串
-     *
      * @return string
      */
     private function buildCookieString()
@@ -130,7 +127,6 @@ class AgentLoginService extends Service
     
     /**
      * 驗證登入狀態
-     *
      * @return bool
      */
     public function checkLoginStatus()
@@ -163,7 +159,6 @@ class AgentLoginService extends Service
     
     /**
      * 獲取特定頁面內容
-     *
      * @param string $endpoint
      * @return array
      */
@@ -173,20 +168,7 @@ class AgentLoginService extends Service
     }
     
     /**
-     * 發送 POST 請求（例如：提交表單）
-     *
-     * @param string $endpoint
-     * @param array|string $data
-     * @return array
-     */
-    public function postData($endpoint, $data)
-    {
-        return $this->makeRequest($endpoint, 'POST', $data);
-    }
-    
-    /**
      * 更新 cookies（當獲得新的認證信息時）
-     *
      * @param array $newCookies
      * @return void
      */
@@ -195,24 +177,9 @@ class AgentLoginService extends Service
         $this->cookies = array_merge($this->cookies, $newCookies);
         Log::info('AgentLogin: Cookies updated', ['cookie_names' => array_keys($newCookies)]);
     }
-    
-    /**
-     * 發送帶有自定義標頭的請求
-     *
-     * @param string $endpoint
-     * @param array $headers
-     * @param string $method
-     * @param array|string|null $data
-     * @return array
-     */
-    public function makeRequestWithHeaders($endpoint, $headers = [], $method = 'GET', $data = null)
-    {
-        return $this->makeRequest($endpoint, $method, $data, $headers);
-    }
 
     /**
      * 獲取當前使用的 cookies
-     *
      * @return array
      */
     public function getCookies()
@@ -222,7 +189,6 @@ class AgentLoginService extends Service
     
     /**
      * 清理回應內容的編碼問題
-     *
      * @param string $response
      * @return string
      */
@@ -267,28 +233,5 @@ class AgentLoginService extends Service
             // 最後的備用方案：移除所有非 ASCII 字符
             return preg_replace('/[^\x20-\x7E\r\n\t]/', '?', $response);
         }
-    }
-    
-    /**
-     * 安全地將內容編碼為 JSON
-     *
-     * @param string $content
-     * @return string
-     */
-    public function safeJsonEncode($content)
-    {
-        // 清理內容
-        $cleanContent = $this->cleanResponseEncoding($content);
-        
-        // 嘗試 JSON 編碼
-        $encoded = json_encode($cleanContent, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
-        
-        if ($encoded === false) {
-            Log::error('AgentLogin: JSON encode failed', ['json_error' => json_last_error_msg()]);
-            // 備用方案：使用 base64 編碼
-            return base64_encode($cleanContent);
-        }
-        
-        return $encoded;
     }
 }

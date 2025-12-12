@@ -14,6 +14,7 @@ class ScrapeBrowserContent extends Command
     /**
      * 命令簽名和參數定義
      * @var string
+     * 執行方式：php artisan agent:scrape-browser {url}
      * {url} - 要爬取的目標網址（必需參數）
      */
     protected $signature = 'agent:scrape-browser {url}';
@@ -32,7 +33,7 @@ class ScrapeBrowserContent extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        
+
         $this->info('=== Browser Content Scraper ===');
         $this->info("Target URL: {$url}");
         
@@ -40,19 +41,19 @@ class ScrapeBrowserContent extends Command
         if (!$this->checkNodeJs()) {
             return 1;
         }
-        
+
         // 創建 Puppeteer 腳本
         $scriptPath = $this->createPuppeteerScript($url);
-        
+
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
-        
+
         // 如果執行成功，處理爬取的數據
         if ($result) {
             $this->processScrapedData($result);
             return 0;
         }
-        
+
         return 1;
     }
     
@@ -128,7 +129,7 @@ class ScrapeBrowserContent extends Command
                 // 啟動無頭瀏覽器（headless mode）
                 // 使用多個 Chrome 參數來優化性能和穩定性
                 const browser = await puppeteer.launch({
-                    headless: 'new',  // 使用新的 headless 模式
+                    headless: 'new', // 使用新的 headless 模式
                     args: [
                         // 安全性相關參數（用於容器環境）
                         '--no-sandbox',
