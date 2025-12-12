@@ -83,7 +83,6 @@ class ScrapeBrowserContent extends Command
         
         // 從 .env 獲取 cookie 值
         $auth = env('AGENT_AUTH', '');
-        $phpsessid = env('AGENT_PHPSESSID', '');
         $token = env('AGENT_TOKEN', '');
         $bgLang = env('AGENT_BG_LANGUAGE_KEY', 'zh-cn');
         
@@ -138,7 +137,6 @@ async function scrapeContent() {
         // 設定 cookies
         const cookies = [];
         if ('$auth') cookies.push({ name: 'auth', value: '$auth', domain: 'agent2.chichengwld.com' });
-        if ('$phpsessid') cookies.push({ name: 'PHPSESSID', value: '$phpsessid', domain: 'agent2.chichengwld.com' });
         if ('$token') cookies.push({ name: 'token', value: '$token', domain: 'agent2.chichengwld.com' });
         if ('$bgLang') cookies.push({ name: 'bg_languageKey', value: '$bgLang', domain: 'agent2.chichengwld.com' });
         

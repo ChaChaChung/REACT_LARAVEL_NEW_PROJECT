@@ -33,7 +33,6 @@ class AgentStatus extends Command
         
         $requiredEnvs = [
             'AGENT_AUTH' => env('AGENT_AUTH'),
-            'AGENT_PHPSESSID' => env('AGENT_PHPSESSID'),
             'AGENT_TOKEN' => env('AGENT_TOKEN'),
             'AGENT_BG_LANGUAGE_KEY' => env('AGENT_BG_LANGUAGE_KEY', 'zh-cn')
         ];
@@ -54,7 +53,6 @@ class AgentStatus extends Command
             $this->line('');
             $this->warn('⚠️  Missing configuration. Please add to your .env file:');
             $this->line('AGENT_AUTH=your_auth_value');
-            $this->line('AGENT_PHPSESSID=your_phpsessid');
             $this->line('AGENT_TOKEN=your_token');
             $this->line('AGENT_BG_LANGUAGE_KEY=zh-cn');
             $this->line('');

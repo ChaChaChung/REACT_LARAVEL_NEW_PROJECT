@@ -14,12 +14,11 @@ php artisan agent:status
 ```
 
 ### 2️⃣ **開始爬取數據**
+
+#### **本地環境：**
 ```bash
 # 方法一：瀏覽器自動化（推薦，直接爬畫面）
 php artisan agent:scrape-browser "https://agent2.chichengwld.com/#/record/chessRecord"
-
-# 方法二：HTML 結構解析（快速）
-php artisan agent:scrape-content "/record/chessRecord"
 
 # 方法三：智能 API 發現
 php artisan agent:smart-scrape
@@ -60,7 +59,6 @@ backend/
 ```env
 AGENT_AUTH=CWbbK08XWTe0hf
 AGENT_BG_LANGUAGE_KEY=zh-cn
-AGENT_PHPSESSID=你的完整PHPSESSID值
 AGENT_TOKEN=你的完整Token值
 ```
 
@@ -87,8 +85,6 @@ document.cookie.split(';').forEach(cookie => {
 |------|------|----------|
 | `agent:status` | 檢查登入狀態 | 開始前檢查 |
 | `agent:scrape-browser` | 瀏覽器自動化爬取 | **推薦：直接爬畫面** |
-| `agent:scrape-content` | HTML 結構解析 | 快速嘗試 |
-| `agent:smart-scrape` | 智能 API 發現 | 尋找 API 端點 |
 
 ---
 
@@ -114,49 +110,6 @@ php artisan agent:scrape-browser "https://agent2.chichengwld.com/#/record/chessR
 - ✅ 自動執行 JavaScript
 - ✅ 無需尋找 API
 - ✅ 生成截圖驗證
-
----
-
-### 📄 **方法二：HTML 結構解析**
-
-**解析 HTML 結構，提取表格、列表等數據**
-
-```bash
-php artisan agent:scrape-content "/record/chessRecord"
-```
-
-**選項：**
-```bash
---selector="table"      # CSS 選擇器
---output=csv           # 輸出格式
---wait-js              # 提示可能需要 JS
-```
-
-**優點：**
-- ✅ 速度最快
-- ✅ 無需外部依賴
-- ⚠️ 不適合純 SPA 應用
-
----
-
-### 🔍 **方法三：智能 API 發現**
-
-**自動測試所有發現的 API 端點**
-
-```bash
-php artisan agent:smart-scrape
-```
-
-**選項：**
-```bash
---endpoint="/api/endpoint"  # 測試特定端點
---full-session              # 建立完整會話
-```
-
-**優點：**
-- ✅ 自動發現可用 API
-- ✅ 測試多種認證方法
-- ✅ 提供詳細分析
 
 ---
 

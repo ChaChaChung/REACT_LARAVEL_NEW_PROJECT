@@ -12,11 +12,6 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // 爬蟲任務
-        $schedule->command('scrape:news-browser')
-            ->everyMinute()
-            ->withoutOverlapping()
-            ->onOneServer();
     }
 
     /**

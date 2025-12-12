@@ -16,7 +16,6 @@ class AgentLoginService extends Service
         $this->cookies = [
             'auth' => config('chacha.agent.auth', 'CWbbK08XWTe0hf'),
             'bg_languageKey' => config('chacha.agent.bg_language_key', 'zh-cn'), 
-            'PHPSESSID' => config('chacha.agent.phpsessid', ''),
             'token' => config('chacha.agent.token', '')
         ];
     }
