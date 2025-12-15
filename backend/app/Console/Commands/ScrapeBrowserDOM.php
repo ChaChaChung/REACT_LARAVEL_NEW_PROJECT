@@ -15,14 +15,12 @@ class ScrapeBrowserDOM extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-dom {url} {--selector=} {--wait-for=} {--lang-switch=} {--lang-item=}
+     * 執行方式：php artisan agent:scrape-dom {url} {--lang-switch=} {--lang-item=}
      * {url} - 要爬取的目標網址（必需參數）
-     * {--selector=} - 可選的 CSS 選擇器，用於指定要提取的元素
-     * {--wait-for=} - 可選的選擇器，等待該元素出現後才開始提取
      * {--lang-switch=} - 可選的語言切換按鈕選擇器，點擊後再提取數據
      * {--lang-item=} - 可選的語言菜單項選擇器（如果提供了，會先點擊按鈕展開菜單，再點擊此項）
      */
-    protected $signature = 'agent:scrape-dom {url} {--selector=} {--wait-for=} {--lang-switch=} {--lang-item=}';
+    protected $signature = 'agent:scrape-dom {url} {--lang-switch=} {--lang-item=}';
 
     /**
      * 命令描述
@@ -38,19 +36,11 @@ class ScrapeBrowserDOM extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $selector = $this->option('selector');
-        $waitFor = $this->option('wait-for');
         $langSwitch = $this->option('lang-switch');
         $langItem = $this->option('lang-item');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
-        if ($selector) {
-            $this->info("Target Selector: {$selector}");
-        }
-        if ($waitFor) {
-            $this->info("Wait For Selector: {$waitFor}");
-        }
         if ($langSwitch) {
             $this->info("Language Switch Button: {$langSwitch}");
         }
@@ -64,7 +54,7 @@ class ScrapeBrowserDOM extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $selector, $waitFor, $langSwitch, $langItem);
+        $scriptPath = $this->createPuppeteerScript($url, $langSwitch, $langItem);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -124,13 +114,11 @@ class ScrapeBrowserDOM extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取數據）
      * @param string $url 要爬取的目標網址
-     * @param string|null $selector 可選的 CSS 選擇器
-     * @param string|null $waitFor 可選的等待選擇器
      * @param string|null $langSwitch 可選的語言切換按鈕選擇器
      * @param string|null $langItem 可選的語言菜單項選擇器
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $selector = null, $waitFor = null, $langSwitch = null, $langItem = null)
+    private function createPuppeteerScript($url, $langSwitch = null, $langItem = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -140,8 +128,6 @@ class ScrapeBrowserDOM extends Command
         $bgLang = env('AGENT_BG_LANGUAGE_KEY', 'zh-cn');
 
         // 將選擇器轉義，以便在 JavaScript 中使用
-        $selectorJs = $selector ? json_encode($selector) : 'null';
-        $waitForJs = $waitFor ? json_encode($waitFor) : 'null';
         $langSwitchJs = $langSwitch ? json_encode($langSwitch) : 'null';
         $langItemJs = $langItem ? json_encode($langItem) : 'null';
 
@@ -221,18 +207,6 @@ class ScrapeBrowserDOM extends Command
                         timeout: 30000
                     });
 
-                    // 如果指定了等待選擇器，等待該元素出現
-                    const waitForSelector = $waitForJs;
-                    if (waitForSelector) {
-                        console.log('⏳ Waiting for selector:', waitForSelector);
-                        try {
-                            await page.waitForSelector(waitForSelector, { timeout: 10000 });
-                            console.log('✅ Element found:', waitForSelector);
-                        } catch (e) {
-                            console.log('⚠️  Selector not found:', waitForSelector);
-                        }
-                    }
-
                     // 等待額外時間，確保動態內容完全載入
                     await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -293,7 +267,7 @@ class ScrapeBrowserDOM extends Command
                     console.log('📄 Extracting DOM content...');
 
                     // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 數據
-                    const domData = await page.evaluate((targetSelector) => {
+                    const domData = await page.evaluate(() => {
                         // 先處理表格數據（在對象字面量外）
                         const allTables = Array.from(document.querySelectorAll('table'));
                         const tableHeaders = {}; // 存儲每個表格的表頭
@@ -461,13 +435,8 @@ class ScrapeBrowserDOM extends Command
                                 keywords: document.querySelector('meta[name="keywords"]')?.content || null,
                             },
                             
-                            // 提取所有文本內容（可選：只提取特定選擇器）
-                            textContent: targetSelector 
-                                ? (() => {
-                                    const element = document.querySelector(targetSelector);
-                                    return element ? element.textContent.trim() : null;
-                                })()
-                                : document.body.innerText.trim(),
+                            // 提取所有文本內容
+                            textContent: document.body.innerText.trim(),
                             
                             // 提取所有連結
                             links: Array.from(document.querySelectorAll('a[href]')).map(a => ({
@@ -503,27 +472,6 @@ class ScrapeBrowserDOM extends Command
                                 }))
                             })),
                             
-                            // 提取特定選擇器的數據（如果提供了選擇器）
-                            selectedElements: targetSelector ? (() => {
-                                const elements = document.querySelectorAll(targetSelector);
-                                return Array.from(elements).map((el, index) => ({
-                                    index: index,
-                                    tagName: el.tagName.toLowerCase(),
-                                    textContent: el.textContent.trim(),
-                                    innerHTML: el.innerHTML,
-                                    attributes: Array.from(el.attributes).reduce((acc, attr) => {
-                                        acc[attr.name] = attr.value;
-                                        return acc;
-                                    }, {}),
-                                    // 提取子元素
-                                    children: Array.from(el.children).map(child => ({
-                                        tagName: child.tagName.toLowerCase(),
-                                        textContent: child.textContent.trim(),
-                                        className: child.className || null,
-                                        id: child.id || null
-                                    }))
-                                }));
-                            })() : null,
                             
                             // 提取所有具有 data-* 屬性的元素
                             dataAttributes: Array.from(document.querySelectorAll('*')).filter(el => {
@@ -578,7 +526,7 @@ class ScrapeBrowserDOM extends Command
                         };
                         
                         return result;
-                    }, $selectorJs);
+                    });
 
                     // 截圖
                     await page.screenshot({ 
@@ -591,8 +539,6 @@ class ScrapeBrowserDOM extends Command
                     const result = {
                         timestamp: new Date().toISOString(),
                         url: '$url',
-                        selector: $selectorJs,
-                        waitFor: $waitForJs,
                         langSwitch: $langSwitchJs,
                         langItem: $langItemJs,
                         metadata: {
@@ -604,7 +550,6 @@ class ScrapeBrowserDOM extends Command
                                 images: '所有圖片數組，每個對象包含 src, alt, title, width, height',
                                 tables: '所有表格數組，每個表格包含：tableIndex, headers（表頭）, data（結構化數據，推薦使用）, rawRows（原始數組格式）',
                                 forms: '所有表單數組，每個表單包含 action, method, inputs',
-                                selectedElements: '特定選擇器提取的元素（如果提供了selector參數）',
                                 dataAttributes: '所有帶有 data-* 屬性的元素',
                                 classes: '所有帶有 class 的元素',
                                 jsonLd: 'JSON-LD 結構化數據',
@@ -746,12 +691,6 @@ class ScrapeBrowserDOM extends Command
         // 保存完整結果
         $fullResultPath = storage_path("app/scraped_data/dom_scrape_full_{$timestamp}.json");
         Storage::put("scraped_data/dom_scrape_full_{$timestamp}.json", json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-        // 如果提取了特定選擇器的數據，單獨保存
-        if (!empty($domData['selectedElements'])) {
-            Storage::put("scraped_data/dom_selected_elements_{$timestamp}.json", json_encode($domData['selectedElements'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            $this->info("📌 Selected elements saved separately");
-        }
 
         // 保存連結數據
         if (!empty($domData['links'])) {
