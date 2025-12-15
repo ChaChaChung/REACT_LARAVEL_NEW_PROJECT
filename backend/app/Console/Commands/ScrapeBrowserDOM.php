@@ -226,6 +226,164 @@ class ScrapeBrowserDOM extends Command
 
                     // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 數據
                     const domData = await page.evaluate((targetSelector) => {
+                        // 先處理表格數據（在對象字面量外）
+                        const allTables = Array.from(document.querySelectorAll('table'));
+                        const tableHeaders = {}; // 存儲每個表格的表頭
+                        
+                        // 第一遍：識別表頭表格（通常包含 th 標籤或 class 包含 header）
+                        allTables.forEach((table, index) => {
+                            const rows = Array.from(table.querySelectorAll('tr'));
+                            const tableClass = table.className || '';
+                            const isHeaderTable = tableClass.includes('header') || 
+                                                 tableClass.includes('Header') ||
+                                                 rows.some(row => row.querySelectorAll('th').length > 0);
+                            
+                            if (isHeaderTable && rows.length > 0) {
+                                // 提取表頭
+                                const headerRow = rows[0];
+                                const headerCells = headerRow.querySelectorAll('th, td');
+                                if (headerCells.length > 0) {
+                                    const headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                                    // 將表頭存儲，供後續表格使用
+                                    tableHeaders[index] = headers;
+                                }
+                            }
+                        });
+                        
+                        // 處理表格的函數
+                        function processTable(table, tableIndex) {
+                            const rows = Array.from(table.querySelectorAll('tr'));
+                            const tableClass = table.className || '';
+                            const isHeaderTable = tableClass.includes('header') || 
+                                                 tableClass.includes('Header') ||
+                                                 rows.some(row => row.querySelectorAll('th').length > 0);
+                            
+                            let headerRow = null;
+                            let dataStartIndex = 0;
+                            
+                            // 如果是表頭表格，只提取表頭，不提取數據
+                            if (isHeaderTable) {
+                                if (rows[0]) {
+                                    const headerCells = rows[0].querySelectorAll('th, td');
+                                    headerRow = Array.from(headerCells).map((cell, idx) => {
+                                        const text = cell.textContent.trim();
+                                        return text || 'column_' + idx;
+                                    });
+                                }
+                                // 表頭表格通常沒有數據行
+                                dataStartIndex = rows.length;
+                            } else {
+                                // 數據表格：嘗試找到對應的表頭
+                                // 1. 檢查前面的表格是否有表頭
+                                let foundHeader = null;
+                                for (let i = tableIndex - 1; i >= 0; i--) {
+                                    if (tableHeaders[i]) {
+                                        foundHeader = tableHeaders[i];
+                                        break;
+                                    }
+                                }
+                                
+                                // 2. 如果找到表頭，使用它
+                                if (foundHeader) {
+                                    headerRow = foundHeader;
+                                    dataStartIndex = 0; // 所有行都是數據
+                                } else {
+                                    // 3. 否則檢查第一行是否包含 th（標準表頭）
+                                    if (rows[0]) {
+                                        const firstRowCells = rows[0].querySelectorAll('th, td');
+                                        const hasTh = rows[0].querySelectorAll('th').length > 0;
+                                        
+                                        if (hasTh) {
+                                            headerRow = Array.from(firstRowCells).map((cell, idx) => {
+                                                const text = cell.textContent.trim();
+                                                return text || 'column_' + idx;
+                                            });
+                                            dataStartIndex = 1;
+                                        }
+                                    }
+                                    
+                                    // 4. 如果還是沒有表頭，檢查第一行是否看起來像表頭
+                                    if (!headerRow && rows.length > 0) {
+                                        const firstRowCells = rows[0].querySelectorAll('td');
+                                        const firstRowTexts = Array.from(firstRowCells).map(cell => cell.textContent.trim());
+                                        
+                                        // 檢查第一行是否看起來像數據（包含數字、日期等）
+                                        const looksLikeData = firstRowTexts.some(text => {
+                                            return /^\d+$/.test(text) || // 純數字
+                                                   /^\d{4}-\d{2}-\d{2}/.test(text) || // 日期
+                                                   /^\d+\.\d+$/.test(text); // 小數
+                                        });
+                                        
+                                        if (!looksLikeData && firstRowTexts.length > 0) {
+                                            // 第一行看起來像表頭
+                                            headerRow = firstRowTexts.map((text, idx) => text || 'column_' + idx);
+                                            dataStartIndex = 1;
+                                        } else {
+                                            // 第一行看起來像數據，創建默認字段名
+                                            if (firstRowCells.length > 0) {
+                                                headerRow = Array.from(firstRowCells).map((_, idx) => 'column_' + (idx + 1));
+                                            } else {
+                                                headerRow = [];
+                                            }
+                                            dataStartIndex = 0;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // 將數據行轉換為對象數組
+                            const dataRows = rows.slice(dataStartIndex).map((row, rowIndex) => {
+                                const cells = Array.from(row.querySelectorAll('td'));
+                                const rowData = {};
+                                
+                                if (headerRow && headerRow.length > 0) {
+                                    headerRow.forEach((header, colIndex) => {
+                                        // 清理字段名（移除特殊字符，用於 JSON key）
+                                        // 保留中文字符和基本字符
+                                        let cleanHeader = header
+                                            .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                            .replace(/^_+|_+$/g, '');
+                                        
+                                        // 如果清理後為空，使用索引
+                                        if (!cleanHeader) {
+                                            cleanHeader = 'column_' + colIndex;
+                                        }
+                                        
+                                        // 確保字段名唯一（如果重複，添加索引）
+                                        let finalHeader = cleanHeader;
+                                        let counter = 1;
+                                        while (rowData.hasOwnProperty(finalHeader)) {
+                                            finalHeader = cleanHeader + '_' + counter;
+                                            counter++;
+                                        }
+                                        
+                                        rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                    });
+                                }
+                                
+                                // 添加原始行索引
+                                rowData._rowIndex = rowIndex;
+                                
+                                return rowData;
+                            });
+                            
+                            return {
+                                tableIndex: tableIndex,
+                                tableId: table.id || null,
+                                tableClass: table.className || null,
+                                isHeaderTable: isHeaderTable,
+                                headers: headerRow || [],
+                                headerCount: headerRow ? headerRow.length : 0,
+                                rowCount: dataRows.length,
+                                // 原始格式（保留以備用）
+                                rawRows: rows.slice(dataStartIndex).map(row => 
+                                    Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim())
+                                ),
+                                // 結構化數據（推薦使用）
+                                data: dataRows
+                            };
+                        }
+                        
                         const result = {
                             // 基本頁面信息
                             pageInfo: {
@@ -259,17 +417,8 @@ class ScrapeBrowserDOM extends Command
                                 height: img.naturalHeight || null
                             })),
                             
-                            // 提取所有表格數據
-                            tables: Array.from(document.querySelectorAll('table')).map((table, index) => {
-                                const rows = Array.from(table.querySelectorAll('tr'));
-                                return {
-                                    index: index,
-                                    headers: rows[0] ? Array.from(rows[0].querySelectorAll('th, td')).map(cell => cell.textContent.trim()) : [],
-                                    rows: rows.slice(1).map(row => 
-                                        Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim())
-                                    )
-                                };
-                            }),
+                            // 提取所有表格數據（轉換為對象數組，字段名對應表頭）
+                            tables: allTables.map((table, tableIndex) => processTable(table, tableIndex)),
                             
                             // 提取所有表單數據
                             forms: Array.from(document.querySelectorAll('form')).map((form, index) => ({
@@ -376,6 +525,24 @@ class ScrapeBrowserDOM extends Command
                         url: '$url',
                         selector: $selectorJs,
                         waitFor: $waitForJs,
+                        metadata: {
+                            description: 'DOM 爬取結果數據結構說明',
+                            dataStructure: {
+                                pageInfo: '頁面基本信息（標題、URL、meta標籤）',
+                                textContent: '頁面文本內容',
+                                links: '所有連結數組，每個對象包含 text, href, title',
+                                images: '所有圖片數組，每個對象包含 src, alt, title, width, height',
+                                tables: '所有表格數組，每個表格包含：tableIndex, headers（表頭）, data（結構化數據，推薦使用）, rawRows（原始數組格式）',
+                                forms: '所有表單數組，每個表單包含 action, method, inputs',
+                                selectedElements: '特定選擇器提取的元素（如果提供了selector參數）',
+                                dataAttributes: '所有帶有 data-* 屬性的元素',
+                                classes: '所有帶有 class 的元素',
+                                jsonLd: 'JSON-LD 結構化數據',
+                                metaTags: '所有 meta 標籤',
+                                statistics: '頁面元素統計信息'
+                            },
+                            note: '表格數據建議使用 tables[].data 字段，這是結構化的對象數組，每個對象的鍵對應表頭名稱'
+                        },
                         domData: domData,
                         success: true
                     };
@@ -487,6 +654,21 @@ class ScrapeBrowserDOM extends Command
         $this->info("   Images: " . ($statistics['totalImages'] ?? 0));
         $this->info("   Tables: " . ($statistics['totalTables'] ?? 0));
         $this->info("   Forms: " . ($statistics['totalForms'] ?? 0));
+        
+        // 顯示表格詳細信息
+        if (!empty($domData['tables'])) {
+            $this->line("");
+            $this->info("📋 Tables Details:");
+            foreach ($domData['tables'] as $tableIndex => $table) {
+                $this->info("   Table #{$tableIndex}:");
+                $this->info("      - Headers: " . implode(', ', array_slice($table['headers'] ?? [], 0, 5)) . (count($table['headers'] ?? []) > 5 ? '...' : ''));
+                $this->info("      - Rows: " . ($table['rowCount'] ?? 0));
+                $this->info("      - Fields: " . count($table['headers'] ?? []));
+                if (!empty($table['data'])) {
+                    $this->info("      - ✅ Structured data available (use tables[{$tableIndex}].data)");
+                }
+            }
+        }
 
         // 生成時間戳
         $timestamp = date('Y-m-d_H-i-s');
@@ -513,9 +695,28 @@ class ScrapeBrowserDOM extends Command
             $this->info("🖼️  Images saved separately");
         }
 
-        // 保存表格數據
+        // 保存表格數據（包含原始和結構化格式）
         if (!empty($domData['tables'])) {
+            // 保存完整表格信息（包含原始和結構化數據）
             Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($domData['tables'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            
+            // 為每個表格單獨保存結構化數據（推薦使用）
+            foreach ($domData['tables'] as $tableIndex => $table) {
+                if (!empty($table['data'])) {
+                    $tableFileName = "scraped_data/dom_table_{$tableIndex}_structured_{$timestamp}.json";
+                    Storage::put($tableFileName, json_encode([
+                        'tableIndex' => $table['tableIndex'],
+                        'tableId' => $table['tableId'] ?? null,
+                        'tableClass' => $table['tableClass'] ?? null,
+                        'headers' => $table['headers'],
+                        'rowCount' => $table['rowCount'],
+                        'description' => '此文件包含結構化的表格數據，每行數據都是對象，字段名對應表頭。',
+                        'data' => $table['data']
+                    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                    $this->info("   📋 Table {$tableIndex} structured data saved");
+                }
+            }
+            
             $this->info("📊 Tables saved separately");
         }
 
