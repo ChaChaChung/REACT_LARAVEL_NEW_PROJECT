@@ -8,19 +8,16 @@ use Illuminate\Support\Facades\Storage;
 
 /**
  * 瀏覽器 DOM 內容爬蟲命令
- * 此命令示範如何從網頁的 DOM 元素中提取數據
  */
 class ScrapeBrowserDOM extends Command
 {
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-dom {url} {--lang-switch=} {--lang-item=}
+     * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
-     * {--lang-switch=} - 可選的語言切換按鈕選擇器，點擊後再提取數據
-     * {--lang-item=} - 可選的語言菜單項選擇器（如果提供了，會先點擊按鈕展開菜單，再點擊此項）
      */
-    protected $signature = 'agent:scrape-dom {url} {--lang-switch=} {--lang-item=}';
+    protected $signature = 'agent:scrape-dom {url}';
 
     /**
      * 命令描述
@@ -36,25 +33,17 @@ class ScrapeBrowserDOM extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $langSwitch = $this->option('lang-switch');
-        $langItem = $this->option('lang-item');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
-        if ($langSwitch) {
-            $this->info("Language Switch Button: {$langSwitch}");
-        }
-        if ($langItem) {
-            $this->info("Language Menu Item: {$langItem}");
-        }
-        
+
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
             return 1;
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $langSwitch, $langItem);
+        $scriptPath = $this->createPuppeteerScript($url);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -114,11 +103,9 @@ class ScrapeBrowserDOM extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取數據）
      * @param string $url 要爬取的目標網址
-     * @param string|null $langSwitch 可選的語言切換按鈕選擇器
-     * @param string|null $langItem 可選的語言菜單項選擇器
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $langSwitch = null, $langItem = null)
+    private function createPuppeteerScript($url)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -126,10 +113,6 @@ class ScrapeBrowserDOM extends Command
         $auth = env('AGENT_AUTH', '');
         $token = env('AGENT_TOKEN', '');
         $bgLang = env('AGENT_BG_LANGUAGE_KEY', 'zh-cn');
-
-        // 將選擇器轉義，以便在 JavaScript 中使用
-        $langSwitchJs = $langSwitch ? json_encode($langSwitch) : 'null';
-        $langItemJs = $langItem ? json_encode($langItem) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -209,60 +192,6 @@ class ScrapeBrowserDOM extends Command
 
                     // 等待額外時間，確保動態內容完全載入
                     await new Promise(resolve => setTimeout(resolve, 2000));
-
-                    // 如果指定了語言切換選擇器，點擊語言切換按鈕
-                    const langSwitchSelector = $langSwitchJs;
-                    const langItemSelector = $langItemJs;
-                    
-                    if (langSwitchSelector) {
-                        console.log('🌐 Switching language...');
-                        try {
-                            // 等待語言切換按鈕出現
-                            await page.waitForSelector(langSwitchSelector, { timeout: 10000 });
-                            console.log('✅ Language switch button found:', langSwitchSelector);
-                            
-                            // 點擊語言切換按鈕（展開下拉菜單）
-                            await page.click(langSwitchSelector);
-                            console.log('✅ Language switch button clicked');
-                            
-                            // 如果指定了語言菜單項選擇器，點擊菜單項
-                            if (langItemSelector) {
-                                // 等待下拉菜單展開
-                                await new Promise(resolve => setTimeout(resolve, 500));
-                                
-                                // 等待語言菜單項出現
-                                await page.waitForSelector(langItemSelector, { timeout: 5000 });
-                                console.log('✅ Language menu item found:', langItemSelector);
-                                
-                                // 點擊語言菜單項
-                                await page.click(langItemSelector);
-                                console.log('✅ Language menu item clicked');
-                                
-                                // 等待菜單關閉
-                                await new Promise(resolve => setTimeout(resolve, 500));
-                            }
-                            
-                            // 等待頁面內容更新（可能是異步加載）
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 等待網路空閒，確保內容已加載
-                            await page.waitForNavigation({ 
-                                waitUntil: 'networkidle2', 
-                                timeout: 10000 
-                            }).catch(() => {
-                                // 如果沒有導航，繼續執行
-                                console.log('⚠️  No navigation detected, continuing...');
-                            });
-                            
-                            // 額外等待，確保動態內容已更新
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            console.log('✅ Language switched successfully');
-                        } catch (e) {
-                            console.log('⚠️  Failed to switch language:', e.message);
-                            console.log('   Continuing with original language...');
-                        }
-                    }
 
                     console.log('📄 Extracting DOM content...');
 
@@ -539,8 +468,6 @@ class ScrapeBrowserDOM extends Command
                     const result = {
                         timestamp: new Date().toISOString(),
                         url: '$url',
-                        langSwitch: $langSwitchJs,
-                        langItem: $langItemJs,
                         metadata: {
                             description: 'DOM 爬取結果數據結構說明',
                             dataStructure: {
