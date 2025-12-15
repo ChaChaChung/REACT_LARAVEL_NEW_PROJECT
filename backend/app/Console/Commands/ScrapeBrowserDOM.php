@@ -373,23 +373,7 @@ class ScrapeBrowserDOM extends Command
 
                             // 提取所有表格資料（轉換為對象數組，字段名對應表頭）
                             tables: allTables.map((table, tableIndex) => processTable(table, tableIndex)),
-                            
-                            // 提取所有表單資料
-                            forms: Array.from(document.querySelectorAll('form')).map((form, index) => ({
-                                index: index,
-                                action: form.action || null,
-                                method: form.method || 'get',
-                                inputs: Array.from(form.querySelectorAll('input, select, textarea')).map(input => ({
-                                    type: input.type || input.tagName.toLowerCase(),
-                                    name: input.name || null,
-                                    id: input.id || null,
-                                    value: input.value || null,
-                                    placeholder: input.placeholder || null,
-                                    required: input.required || false
-                                }))
-                            })),
-                            
-                            
+
                             // 提取所有具有 data-* 屬性的元素
                             dataAttributes: Array.from(document.querySelectorAll('*')).filter(el => {
                                 // 檢查元素是否有任何 data-* 屬性
@@ -434,7 +418,6 @@ class ScrapeBrowserDOM extends Command
                             // 統計信息
                             statistics: {
                                 totalTables: document.querySelectorAll('table').length,
-                                totalForms: document.querySelectorAll('form').length,
                                 totalScripts: document.querySelectorAll('script').length,
                                 totalStyles: document.querySelectorAll('style, link[rel="stylesheet"]').length
                             }
@@ -463,7 +446,6 @@ class ScrapeBrowserDOM extends Command
                     console.log('💾 Results saved to: scraped_result.json');
                     console.log('📊 DOM elements extracted:');
                     console.log('   - Tables:', domData.statistics.totalTables);
-                    console.log('   - Forms:', domData.statistics.totalForms);
 
                     return result;
                 } catch (error) {
@@ -560,8 +542,7 @@ class ScrapeBrowserDOM extends Command
         $this->info("📊 DOM Extraction Results:");
         $this->info("   Page Title: " . ($domData['pageInfo']['title'] ?? 'N/A'));
         $this->info("   Tables: " . ($statistics['totalTables'] ?? 0));
-        $this->info("   Forms: " . ($statistics['totalForms'] ?? 0));
-        
+
         // 顯示表格詳細信息
         if (!empty($domData['tables'])) {
             $this->line("");
