@@ -73,7 +73,21 @@ class CompareTableData extends Command
             return 1;
         }
 
-        $this->info("   Date Range: {$dateRange['start']} to {$dateRange['end']}");
+        // 顯示日期範圍
+        if (isset($dateRange['original_eastern_start']) && isset($dateRange['original_eastern_end'])) {
+            $this->info("   Eastern Time Range: {$dateRange['original_eastern_start']} to {$dateRange['original_eastern_end']}");
+            $this->info("   Taipei Time Range: {$dateRange['start_taipei']} to {$dateRange['end_taipei']}");
+            $this->info("   UTC Time Range: {$dateRange['start_utc']} to {$dateRange['end_utc']}");
+        } elseif (isset($dateRange['original_eastern'])) {
+            $this->info("   Eastern Time: {$dateRange['original_eastern']}");
+            if (isset($dateRange['taipei_time'])) {
+                $this->info("   Taipei Time: {$dateRange['taipei_time']}");
+            }
+            $this->info("   UTC Time Range: {$dateRange['start_utc']} to {$dateRange['end_utc']}");
+        } else {
+            $this->info("   Date Range (UTC): " . date('Y-m-d H:i:s', $dateRange['start']) . " to " . date('Y-m-d H:i:s', $dateRange['end']));
+        }
+        $this->info("   Timestamps: {$dateRange['start']} to {$dateRange['end']}");
 
         // 3. 調用 API 獲取資料
         $this->info('3. Fetching data from API...');
@@ -138,35 +152,71 @@ class CompareTableData extends Command
      */
     private function extractDateRange($domData)
     {
-        // 方法1: 從 URL 中提取日期
-        $url = $domData['pageInfo']['url'] ?? '';
-        if (preg_match('/date[=:]([0-9\-]+)/i', $url, $matches)) {
-            $dateStr = $matches[1];
-            $timestamp = strtotime($dateStr);
-            if ($timestamp) {
-                return [
-                    'start' => $timestamp,
-                    'end' => $timestamp + 86400 - 1 // 當天結束時間
-                ];
+        // 方法1: 從表單中提取日期（優先）
+        $formDates = $domData['formDates'] ?? [];
+        
+        // 查找開始和結束日期
+        $startDate = null;
+        $endDate = null;
+        
+        foreach ($formDates as $key => $value) {
+            $keyLower = strtolower($key);
+            if (($keyLower === 'start_date' || strpos($keyLower, 'start') !== false || strpos($keyLower, 'begin') !== false || strpos($keyLower, 'from') !== false) && !empty($value)) {
+                $startDate = $value;
+            }
+            if (($keyLower === 'end_date' || strpos($keyLower, 'end') !== false || strpos($keyLower, 'to') !== false || strpos($keyLower, 'until') !== false) && !empty($value)) {
+                $endDate = $value;
+            }
+        }
+        
+        // 如果找到日期範圍
+        if ($startDate || $endDate) {
+            // 如果只有一個日期，使用同一天
+            if (!$startDate && $endDate) {
+                $startDate = $endDate;
+            }
+            if (!$endDate && $startDate) {
+                $endDate = $startDate;
+            }
+            
+            if ($startDate && $endDate) {
+                // 假設表單中的日期是美東時間，轉換為台北時間再轉 UTC
+                return $this->convertDateRangeEasternToUTC($startDate, $endDate);
+            }
+        }
+        
+        // 如果表單中只有單個日期輸入
+        foreach ($formDates as $key => $value) {
+            if (!empty($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
+                return $this->convertEasternTimeToUTC($value);
             }
         }
 
-        // 方法2: 從文本內容中提取日期
+        // 方法2: 從 URL 中提取日期
+        $url = $domData['pageInfo']['url'] ?? '';
+        if (preg_match('/date[=:]([0-9\-]+)/i', $url, $matches)) {
+            $dateStr = $matches[1];
+            // 假設是美東時間
+            return $this->convertEasternTimeToUTC($dateStr);
+        }
+
+        // 方法3: 從文本內容中提取日期（優先查找美東時間）
         $textContent = $domData['textContent'] ?? '';
+        
+        // 查找美東時間模式：美东时间: YYYY-MM-DD HH:MM:SS 或類似格式（使用 # 作為分隔符）
+        if (preg_match('#美[东東]时间[:\s]+(\d{4}[-/]\d{2}[-/]\d{2}[\s]+\d{2}:\d{2}:\d{2})#i', $textContent, $matches)) {
+            $dateTimeStr = str_replace('/', '-', $matches[1]);
+            return $this->convertEasternTimeToUTC($dateTimeStr);
+        }
         
         // 查找日期模式：YYYY-MM-DD 或 YYYY/MM/DD（使用 # 作為分隔符避免與 / 衝突）
         if (preg_match('#(\d{4}[-/]\d{2}[-/]\d{2})#i', $textContent, $matches)) {
             $dateStr = str_replace('/', '-', $matches[1]);
-            $timestamp = strtotime($dateStr);
-            if ($timestamp) {
-                return [
-                    'start' => $timestamp,
-                    'end' => $timestamp + 86400 - 1
-                ];
-            }
+            // 假設是美東時間
+            return $this->convertEasternTimeToUTC($dateStr);
         }
 
-        // 方法3: 從表格資料中提取日期（查找時間欄位）
+        // 方法4: 從表格資料中提取日期（查找時間欄位）
         $tables = $domData['tables'] ?? [];
         foreach ($tables as $table) {
             $data = $table['data'] ?? [];
@@ -174,16 +224,13 @@ class CompareTableData extends Command
                 // 查找包含時間的欄位
                 foreach ($row as $key => $value) {
                     if (preg_match('/time|時間|date|日期/i', $key) && !empty($value)) {
-                        // 嘗試解析日期時間
-                        $timestamp = strtotime($value);
-                        if ($timestamp) {
-                            // 使用當天的開始和結束時間
-                            $startOfDay = strtotime(date('Y-m-d 00:00:00', $timestamp));
-                            $endOfDay = strtotime(date('Y-m-d 23:59:59', $timestamp));
-                            return [
-                                'start' => $startOfDay,
-                                'end' => $endOfDay
-                            ];
+                        // 嘗試解析日期時間（假設是美東時間）
+                        if (preg_match('/(\d{4}[-/]\d{2}[-/]\d{2}[\s]+\d{2}:\d{2}:\d{2})/', $value, $timeMatches)) {
+                            $dateTimeStr = str_replace('/', '-', $timeMatches[1]);
+                            return $this->convertEasternTimeToUTC($dateTimeStr);
+                        } elseif (preg_match('/(\d{4}[-/]\d{2}[-/]\d{2})/', $value, $dateMatches)) {
+                            $dateStr = str_replace('/', '-', $dateMatches[1]);
+                            return $this->convertEasternTimeToUTC($dateStr);
                         }
                     }
                 }
@@ -194,6 +241,105 @@ class CompareTableData extends Command
     }
 
     /**
+     * 將美東時間的日期範圍轉換為 UTC 時間戳
+     * @param string $startDate 開始日期 (格式: YYYY-MM-DD)
+     * @param string $endDate 結束日期 (格式: YYYY-MM-DD)
+     * @return array|null 返回 ['start' => timestamp, 'end' => timestamp] 或 null
+     */
+    private function convertDateRangeEasternToUTC($startDate, $endDate)
+    {
+        try {
+            $easternTz = new \DateTimeZone('America/New_York');
+            $taipeiTz = new \DateTimeZone('Asia/Taipei');
+            $utcTz = new \DateTimeZone('UTC');
+            
+            // 開始日期（美東時間 00:00:00 -> 台北時間 -> UTC）
+            $startEastern = new \DateTime($startDate . ' 00:00:00', $easternTz);
+            $startEastern->setTimezone($taipeiTz);
+            $startTaipei = $startEastern->format('Y-m-d H:i:s');
+            $startEastern->setTimezone($utcTz);
+            
+            // 結束日期（美東時間 23:59:59 -> 台北時間 -> UTC）
+            $endEastern = new \DateTime($endDate . ' 23:59:59', $easternTz);
+            $endEastern->setTimezone($taipeiTz);
+            $endTaipei = $endEastern->format('Y-m-d H:i:s');
+            $endEastern->setTimezone($utcTz);
+            
+            return [
+                'start' => $startEastern->getTimestamp(),
+                'end' => $endEastern->getTimestamp(),
+                'original_eastern_start' => $startDate,
+                'original_eastern_end' => $endDate,
+                'start_taipei' => $startTaipei,
+                'end_taipei' => $endTaipei,
+                'start_utc' => $startEastern->format('Y-m-d H:i:s'),
+                'end_utc' => $endEastern->format('Y-m-d H:i:s'),
+            ];
+        } catch (\Exception $e) {
+            $this->warn('Failed to convert date range: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 將美東時間轉換為台北時間，然後轉換為 UTC 時間戳
+     * @param string $easternTime 美東時間字串 (格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
+     * @return array|null 返回 ['start' => timestamp, 'end' => timestamp] 或 null
+     */
+    private function convertEasternTimeToUTC($easternTime)
+    {
+        try {
+            // 創建時區
+            $easternTz = new \DateTimeZone('America/New_York'); // 美東時間
+            $taipeiTz = new \DateTimeZone('Asia/Taipei'); // 台北時間
+            $utcTz = new \DateTimeZone('UTC');
+            
+            // 如果只有日期，加上時間
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $easternTime)) {
+                $easternTime .= ' 00:00:00';
+            }
+            
+            // 解析美東時間
+            $dateTime = new \DateTime($easternTime, $easternTz);
+            
+            // 轉換為台北時間
+            $dateTime->setTimezone($taipeiTz);
+            $taipeiTime = $dateTime->format('Y-m-d H:i:s');
+            
+            // 獲取當天的開始時間（美東時間 00:00:00 -> 台北時間 -> UTC）
+            $startEastern = new \DateTime($easternTime, $easternTz);
+            // 如果輸入只有日期，使用 00:00:00
+            if (!preg_match('/\d{2}:\d{2}:\d{2}/', $easternTime)) {
+                $startEastern->setTime(0, 0, 0);
+            }
+            $startEastern->setTimezone($taipeiTz);
+            $startTaipei = $startEastern->format('Y-m-d H:i:s');
+            $startEastern->setTimezone($utcTz);
+            
+            // 獲取當天的結束時間（美東時間 23:59:59 -> 台北時間 -> UTC）
+            $endEastern = new \DateTime($easternTime, $easternTz);
+            $endEastern->setTime(23, 59, 59);
+            $endEastern->setTimezone($taipeiTz);
+            $endTaipei = $endEastern->format('Y-m-d H:i:s');
+            $endEastern->setTimezone($utcTz);
+            
+            return [
+                'start' => $startEastern->getTimestamp(),
+                'end' => $endEastern->getTimestamp(),
+                'original_eastern' => $easternTime,
+                'taipei_time' => $taipeiTime,
+                'start_taipei' => $startTaipei,
+                'end_taipei' => $endTaipei,
+                'start_utc' => $startEastern->format('Y-m-d H:i:s'),
+                'end_utc' => $endEastern->format('Y-m-d H:i:s'),
+            ];
+        } catch (\Exception $e) {
+            $this->warn('Failed to convert Eastern time: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 調用 API 獲取資料
      * @param string $gt 遊戲類型
      * @param array $dateRange 日期範圍
@@ -201,9 +347,7 @@ class CompareTableData extends Command
      */
     private function fetchApiData($gt, $dateRange)
     {
-        try {
-            $controller = new FGController();
-            
+        try {            
             // 創建請求物件
             $request = Request::create('/api/fg/logByPageTotalBets', 'POST', [
                 'gt' => $gt,
@@ -227,14 +371,9 @@ class CompareTableData extends Command
                 }
                 
                 // 調用控制器方法
-                $response = $controller->logByPageTotalBets($request);
+                $response = app(FGController::class)->logByPageTotalBets($request);
                 $result = json_decode($response->getContent(), true);
-                
-                // 調試：顯示完整響應（僅第一次）
-                // if ($pageKey === null) {
-                //     $this->line('   API Response: ' . json_encode($result, JSON_UNESCAPED_UNICODE));
-                // }
-                
+
                 // 解析 code，將可轉換的數值視為整數比較
                 $code = null;
                 if (isset($result['code'])) {
@@ -312,22 +451,24 @@ class CompareTableData extends Command
         // 從網頁表格中提取資料
         $webpageRecords = [];
         foreach ($tables as $table) {
-            $data = $table['data'] ?? [];
+            // 總下注金額
             $totalBets = 0;
-            foreach ($data as $row) {
-                // 提取關鍵欄位：玩家ID、有效投注、輸贏
+            // 有效投注金額
+            $allBets = 0;
+            // 輸贏金額
+            $allAwards = 0;
+            foreach ($table['data'] as $row) {
+                // 提取關鍵欄位：總下注金額、有效投注、輸贏
                 $playerAccount = $row['player_account']?? null;
-                $totalBets += $row['place_a_bet']?? 0;
-                $validBet = $this->extractValidBet($row);
-                $winLoss = $this->extractWinLoss($row);
-                
                 if ($playerAccount) {
+                    $totalBets += $row['place_a_bet']?? 0;
+                    $allBets += $row['Valid_coding']?? 0;
+                    $allAwards += $row['bonus']?? 0;
                     $webpageRecords[$playerAccount] = [
                         'player_account' => $playerAccount,
                         'total_bets' => $totalBets,
-                        'valid_bet' => $validBet,
-                        'win_loss' => $winLoss,
-                        'raw_data' => $row,
+                        'all_bets' => $allBets,
+                        'all_awards' => $allAwards
                     ];
                 }
             }
@@ -336,17 +477,24 @@ class CompareTableData extends Command
 
         // 建立 API 資料索引（以 player_id 為 key）
         $apiRecords = [];
+        // 總下注金額
         $totalBets = 0;
+        // 有效投注金額
+        $allBets = 0;
+        // 輸贏金額
+        $allAwards = 0;
         foreach ($apiData as $record) {
+            // 提取關鍵欄位：總下注金額、有效投注、輸贏
             $player_name = $record['player_name']?? null;
             if ($player_name) {
                 $totalBets += $record['total_bets']?? 0;
+                $allBets += $record['all_bets']?? 0;
+                $allAwards += $record['all_awards']?? 0;
                 $apiRecords[$player_name] = [
                     'player_account' => $player_name,
                     'total_bets' => $totalBets,
-                    'valid_bet' => $record['valid_bet'] ?? $record['validBet'] ?? $record['total_bets'] ?? 0,
-                    'win_loss' => $record['win_loss'] ?? $record['winLoss'] ?? $record['payout'] ?? 0,
-                    'raw_data' => $record,
+                    'all_bets' => $allBets,
+                    'all_awards' => $allAwards
                 ];
             }
         }
@@ -361,10 +509,10 @@ class CompareTableData extends Command
                 $apiRecord = $apiRecords[$playerAccount];
                 
                 // 比對有效投注和輸贏（允許小數點誤差）
-                $validBetMatch = abs($webpageRecord['valid_bet'] - $apiRecord['valid_bet']) < 0.01;
-                $winLossMatch = abs($webpageRecord['win_loss'] - $apiRecord['win_loss']) < 0.01;
+                $validBetMatch = abs($webpageRecord['all_bets'] - $apiRecord['all_bets']) < 0.01;
+                $allAwardsMatch = abs($webpageRecord['all_awards'] - $apiRecord['all_awards']) < 0.01;
                 
-                if ($validBetMatch && $winLossMatch) {
+                if ($validBetMatch && $allAwardsMatch) {
                     $results['matched'][] = [
                         'player_account' => $playerAccount,
                         'webpage' => $webpageRecord,
@@ -377,15 +525,20 @@ class CompareTableData extends Command
                         'webpage' => $webpageRecord,
                         'api' => $apiRecord,
                         'differences' => [
-                            'valid_bet' => [
-                                'webpage' => $webpageRecord['valid_bet'],
-                                'api' => $apiRecord['valid_bet'],
-                                'diff' => $webpageRecord['valid_bet'] - $apiRecord['valid_bet'],
+                            'total_bets' => [
+                                'webpage' => $webpageRecord['total_bets'],
+                                'api' => $apiRecord['total_bets'],
+                                'diff' => $webpageRecord['total_bets'] - $apiRecord['total_bets'],
                             ],
-                            'win_loss' => [
-                                'webpage' => $webpageRecord['win_loss'],
-                                'api' => $apiRecord['win_loss'],
-                                'diff' => $webpageRecord['win_loss'] - $apiRecord['win_loss'],
+                            'all_bets' => [
+                                'webpage' => $webpageRecord['all_bets'],
+                                'api' => $apiRecord['all_bets'],
+                                'diff' => $webpageRecord['all_bets'] - $apiRecord['all_bets'],
+                            ],
+                            'all_awards' => [
+                                'webpage' => $webpageRecord['all_awards'],
+                                'api' => $apiRecord['all_awards'],
+                                'diff' => $webpageRecord['all_awards'] - $apiRecord['all_awards'],
                             ],
                         ],
                     ];
@@ -406,61 +559,6 @@ class CompareTableData extends Command
     }
 
     /**
-     * 從表格行中提取玩家ID
-     * @param array $row 表格行資料
-     * @return string|null
-     */
-    private function extractPlayerId($row)
-    {
-        // 嘗試多種可能的欄位名稱
-        $possibleKeys = ['playerID', 'player_id', '玩家ID', '玩家账号', 'player account', 'playerAccount'];
-        
-        foreach ($possibleKeys as $key) {
-            if (isset($row[$key]) && !empty($row[$key])) {
-                return (string)$row[$key];
-            }
-        }
-        
-        return null;
-    }
-
-    /**
-     * 從表格行中提取有效投注
-     * @param array $row 表格行資料
-     * @return float
-     */
-    private function extractValidBet($row)
-    {
-        $possibleKeys = ['有效打码', 'Valid coding', 'valid_bet', 'validBet', 'total_bets', 'totalBets'];
-        
-        foreach ($possibleKeys as $key) {
-            if (isset($row[$key]) && !empty($row[$key])) {
-                return (float)str_replace(',', '', $row[$key]);
-            }
-        }
-        
-        return 0.0;
-    }
-
-    /**
-     * 從表格行中提取輸贏
-     * @param array $row 表格行資料
-     * @return float
-     */
-    private function extractWinLoss($row)
-    {
-        $possibleKeys = ['收支', 'income and expenditure', 'win_loss', 'winLoss', 'payout', 'profit'];
-        
-        foreach ($possibleKeys as $key) {
-            if (isset($row[$key]) && !empty($row[$key])) {
-                return (float)str_replace(',', '', $row[$key]);
-            }
-        }
-        
-        return 0.0;
-    }
-
-    /**
      * 顯示比對結果
      * @param array $result 比對結果
      */
@@ -472,21 +570,6 @@ class CompareTableData extends Command
         $this->info("   API Records: " . $result['summary']['total_api']);
         $this->info("   ✅ Matched: " . $result['summary']['matched_count']);
         $this->info("   ❌ Mismatched: " . $result['summary']['mismatched_count']);
-        $this->info("   📄 Webpage Only: " . count($result['webpage_only']));
-        $this->info("   🔌 API Only: " . count($result['api_only']));
-
-        if (!empty($result['mismatched'])) {
-            $this->line("");
-            $this->warn("⚠️  Mismatched Records:");
-            foreach (array_slice($result['mismatched'], 0, 10) as $mismatch) {
-                $this->line("   Player ID: " . $mismatch['player_id']);
-                $this->line("      Valid Bet - Webpage: {$mismatch['differences']['valid_bet']['webpage']}, API: {$mismatch['differences']['valid_bet']['api']}, Diff: {$mismatch['differences']['valid_bet']['diff']}");
-                $this->line("      Win/Loss - Webpage: {$mismatch['differences']['win_loss']['webpage']}, API: {$mismatch['differences']['win_loss']['api']}, Diff: {$mismatch['differences']['win_loss']['diff']}");
-            }
-            if (count($result['mismatched']) > 10) {
-                $this->line("   ... and " . (count($result['mismatched']) - 10) . " more");
-            }
-        }
     }
 
     /**
@@ -502,15 +585,25 @@ class CompareTableData extends Command
         $saveData = [
             'timestamp' => date('Y-m-d H:i:s'),
             'date_range' => [
-                'start' => date('Y-m-d H:i:s', $dateRange['start']),
-                'end' => date('Y-m-d H:i:s', $dateRange['end']),
+                'start_timestamp' => $dateRange['start'],
+                'end_timestamp' => $dateRange['end'],
+                'start_utc' => isset($dateRange['start_utc']) ? $dateRange['start_utc'] : date('Y-m-d H:i:s', $dateRange['start']),
+                'end_utc' => isset($dateRange['end_utc']) ? $dateRange['end_utc'] : date('Y-m-d H:i:s', $dateRange['end']),
             ],
+        ];
+        
+        // 如果有原始美東時間，也保存
+        if (isset($dateRange['original_eastern'])) {
+            $saveData['date_range']['original_eastern'] = $dateRange['original_eastern'];
+        }
+        
+        $saveData = array_merge($saveData, [
             'summary' => $result['summary'],
             'matched' => $result['matched'],
             'mismatched' => $result['mismatched'],
             'webpage_only' => $result['webpage_only'],
             'api_only' => $result['api_only'],
-        ];
+        ]);
 
         Storage::put("scraped_data/{$filename}", json_encode($saveData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->info("💾 Comparison result saved to: scraped_data/{$filename}");

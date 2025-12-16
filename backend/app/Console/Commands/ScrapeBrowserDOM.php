@@ -359,6 +359,30 @@ class ScrapeBrowserDOM extends Command
                             };
                         }
                         
+                        // 提取表單中的日期輸入值
+                        const formDates = {};
+                        const dateInputs = document.querySelectorAll('input[type="date"], input[type="text"][placeholder*="date"], input[type="text"][placeholder*="日期"], input[name*="date"], input[name*="日期"]');
+                        dateInputs.forEach(input => {
+                            const name = input.name || input.id || input.placeholder || 'unknown';
+                            const value = input.value || '';
+                            if (value) {
+                                formDates[name] = value;
+                            }
+                        });
+                        
+                        // 也查找日期範圍輸入（通常有 start 和 end）
+                        const dateRangeInputs = document.querySelectorAll('input[type="date"], input[type="text"]');
+                        dateRangeInputs.forEach(input => {
+                            const name = (input.name || input.id || '').toLowerCase();
+                            const value = input.value || '';
+                            if (value && (name.includes('start') || name.includes('begin') || name.includes('from'))) {
+                                formDates['start_date'] = value;
+                            }
+                            if (value && (name.includes('end') || name.includes('to') || name.includes('until'))) {
+                                formDates['end_date'] = value;
+                            }
+                        });
+
                         const result = {
                             // 基本頁面信息
                             pageInfo: {
@@ -368,6 +392,9 @@ class ScrapeBrowserDOM extends Command
                             
                             // 提取所有文本內容
                             textContent: document.body.innerText.trim(),
+                            
+                            // 提取表單日期
+                            formDates: formDates,
 
                             // 提取所有表格資料，並且過濾掉只有表頭沒有資料的表格
                             tables: allTables.map((table, tableIndex) => processTable(table, tableIndex))
