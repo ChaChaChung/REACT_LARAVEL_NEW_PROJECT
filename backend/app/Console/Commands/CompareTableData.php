@@ -233,64 +233,6 @@ class CompareTableData extends Command
     }
 
     /**
-     * 將美東時間轉換為台北時間，然後轉換為 UTC 時間戳
-     * @param string $easternTime 美東時間字串 (格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
-     * @return array|null 返回 ['start' => timestamp, 'end' => timestamp] 或 null
-     */
-    private function convertEasternTimeToUTC($easternTime)
-    {
-        try {
-            // 創建時區
-            $easternTz = new \DateTimeZone('America/New_York'); // 美東時間
-            $taipeiTz = new \DateTimeZone('Asia/Taipei'); // 台北時間
-            $utcTz = new \DateTimeZone('UTC');
-            
-            // 如果只有日期，加上時間
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $easternTime)) {
-                $easternTime .= ' 00:00:00';
-            }
-            
-            // 解析美東時間
-            $dateTime = new \DateTime($easternTime, $easternTz);
-            
-            // 轉換為台北時間
-            $dateTime->setTimezone($taipeiTz);
-            $taipeiTime = $dateTime->format('Y-m-d H:i:s');
-            
-            // 獲取當天的開始時間（美東時間 00:00:00 -> 台北時間 -> UTC）
-            $startEastern = new \DateTime($easternTime, $easternTz);
-            // 如果輸入只有日期，使用 00:00:00
-            if (!preg_match('/\d{2}:\d{2}:\d{2}/', $easternTime)) {
-                $startEastern->setTime(0, 0, 0);
-            }
-            $startEastern->setTimezone($taipeiTz);
-            $startTaipei = $startEastern->format('Y-m-d H:i:s');
-            $startEastern->setTimezone($utcTz);
-            
-            // 獲取當天的結束時間（美東時間 23:59:59 -> 台北時間 -> UTC）
-            $endEastern = new \DateTime($easternTime, $easternTz);
-            $endEastern->setTime(23, 59, 59);
-            $endEastern->setTimezone($taipeiTz);
-            $endTaipei = $endEastern->format('Y-m-d H:i:s');
-            $endEastern->setTimezone($utcTz);
-            
-            return [
-                'start' => $startEastern->getTimestamp(),
-                'end' => $endEastern->getTimestamp(),
-                'original_eastern' => $easternTime,
-                'taipei_time' => $taipeiTime,
-                'start_taipei' => $startTaipei,
-                'end_taipei' => $endTaipei,
-                'start_utc' => $startEastern->format('Y-m-d H:i:s'),
-                'end_utc' => $endEastern->format('Y-m-d H:i:s'),
-            ];
-        } catch (\Exception $e) {
-            $this->warn('Failed to convert Eastern time: ' . $e->getMessage());
-            return null;
-        }
-    }
-
-    /**
      * 調用 API 獲取資料
      * @param string $gt 遊戲類型
      * @param array $dateRange 日期範圍
