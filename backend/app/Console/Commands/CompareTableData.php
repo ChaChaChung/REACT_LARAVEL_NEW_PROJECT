@@ -73,22 +73,6 @@ class CompareTableData extends Command
             return 1;
         }
 
-        // 顯示日期範圍
-        if (isset($dateRange['original_eastern_start']) && isset($dateRange['original_eastern_end'])) {
-            $this->info("   Eastern Time Range: {$dateRange['original_eastern_start']} to {$dateRange['original_eastern_end']}");
-            $this->info("   Taipei Time Range: {$dateRange['start_taipei']} to {$dateRange['end_taipei']}");
-            $this->info("   UTC Time Range: {$dateRange['start_utc']} to {$dateRange['end_utc']}");
-        } elseif (isset($dateRange['original_eastern'])) {
-            $this->info("   Eastern Time: {$dateRange['original_eastern']}");
-            if (isset($dateRange['taipei_time'])) {
-                $this->info("   Taipei Time: {$dateRange['taipei_time']}");
-            }
-            $this->info("   UTC Time Range: {$dateRange['start_utc']} to {$dateRange['end_utc']}");
-        } else {
-            $this->info("   Date Range (UTC): " . date('Y-m-d H:i:s', $dateRange['start']) . " to " . date('Y-m-d H:i:s', $dateRange['end']));
-        }
-        $this->info("   Timestamps: {$dateRange['start']} to {$dateRange['end']}");
-
         // 3. 調用 API 獲取資料
         $this->info('3. Fetching data from API...');
         $apiData = $this->fetchApiData($gt, $dateRange);
@@ -97,8 +81,6 @@ class CompareTableData extends Command
             $this->error('❌ Failed to fetch API data');
             return 1;
         }
-
-        $this->info("   API Records: " . count($apiData));
 
         // 4. 比對資料
         $this->info('4. Comparing data...');
@@ -159,16 +141,26 @@ class CompareTableData extends Command
         $startDate = null;
         $endDate = null;
         
-        foreach ($formDates as $key => $value) {
-            $keyLower = strtolower($key);
-            if (($keyLower === 'start_date' || strpos($keyLower, 'start') !== false || strpos($keyLower, 'begin') !== false || strpos($keyLower, 'from') !== false) && !empty($value)) {
-                $startDate = $value;
-            }
-            if (($keyLower === 'end_date' || strpos($keyLower, 'end') !== false || strpos($keyLower, 'to') !== false || strpos($keyLower, 'until') !== false) && !empty($value)) {
-                $endDate = $value;
-            }
+        // 優先查找 start_time 和 end_time（來自 placeholder 為 "Start time" 和 "End time" 的 input）
+        if (isset($formDates['start_time']) && !empty($formDates['start_time'])) {
+            $startDate = $formDates['start_time'];
+        }
+        if (isset($formDates['end_time']) && !empty($formDates['end_time'])) {
+            $endDate = $formDates['end_time'];
         }
         
+        // 如果沒有找到 start_time/end_time，則查找其他包含 start/end 的鍵
+        if (!$startDate || !$endDate) {
+            foreach ($formDates as $key => $value) {
+                $keyLower = strtolower($key);
+                if (!$startDate && $keyLower === 'start_date' && !empty($value)) {
+                    $startDate = $value;
+                }
+                if (!$endDate && $keyLower === 'end_date' && !empty($value)) {
+                    $endDate = $value;
+                }
+            }
+        }
         // 如果找到日期範圍
         if ($startDate || $endDate) {
             // 如果只有一個日期，使用同一天
@@ -184,66 +176,14 @@ class CompareTableData extends Command
                 return $this->convertDateRangeEasternToUTC($startDate, $endDate);
             }
         }
-        
-        // 如果表單中只有單個日期輸入
-        foreach ($formDates as $key => $value) {
-            if (!empty($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
-                return $this->convertEasternTimeToUTC($value);
-            }
-        }
-
-        // 方法2: 從 URL 中提取日期
-        $url = $domData['pageInfo']['url'] ?? '';
-        if (preg_match('/date[=:]([0-9\-]+)/i', $url, $matches)) {
-            $dateStr = $matches[1];
-            // 假設是美東時間
-            return $this->convertEasternTimeToUTC($dateStr);
-        }
-
-        // 方法3: 從文本內容中提取日期（優先查找美東時間）
-        $textContent = $domData['textContent'] ?? '';
-        
-        // 查找美東時間模式：美东时间: YYYY-MM-DD HH:MM:SS 或類似格式（使用 # 作為分隔符）
-        if (preg_match('#美[东東]时间[:\s]+(\d{4}[-/]\d{2}[-/]\d{2}[\s]+\d{2}:\d{2}:\d{2})#i', $textContent, $matches)) {
-            $dateTimeStr = str_replace('/', '-', $matches[1]);
-            return $this->convertEasternTimeToUTC($dateTimeStr);
-        }
-        
-        // 查找日期模式：YYYY-MM-DD 或 YYYY/MM/DD（使用 # 作為分隔符避免與 / 衝突）
-        if (preg_match('#(\d{4}[-/]\d{2}[-/]\d{2})#i', $textContent, $matches)) {
-            $dateStr = str_replace('/', '-', $matches[1]);
-            // 假設是美東時間
-            return $this->convertEasternTimeToUTC($dateStr);
-        }
-
-        // 方法4: 從表格資料中提取日期（查找時間欄位）
-        $tables = $domData['tables'] ?? [];
-        foreach ($tables as $table) {
-            $data = $table['data'] ?? [];
-            foreach ($data as $row) {
-                // 查找包含時間的欄位
-                foreach ($row as $key => $value) {
-                    if (preg_match('/time|時間|date|日期/i', $key) && !empty($value)) {
-                        // 嘗試解析日期時間（假設是美東時間）
-                        if (preg_match('/(\d{4}[-/]\d{2}[-/]\d{2}[\s]+\d{2}:\d{2}:\d{2})/', $value, $timeMatches)) {
-                            $dateTimeStr = str_replace('/', '-', $timeMatches[1]);
-                            return $this->convertEasternTimeToUTC($dateTimeStr);
-                        } elseif (preg_match('/(\d{4}[-/]\d{2}[-/]\d{2})/', $value, $dateMatches)) {
-                            $dateStr = str_replace('/', '-', $dateMatches[1]);
-                            return $this->convertEasternTimeToUTC($dateStr);
-                        }
-                    }
-                }
-            }
-        }
 
         return null;
     }
 
     /**
      * 將美東時間的日期範圍轉換為 UTC 時間戳
-     * @param string $startDate 開始日期 (格式: YYYY-MM-DD)
-     * @param string $endDate 結束日期 (格式: YYYY-MM-DD)
+     * @param string $startDate 開始日期 (格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
+     * @param string $endDate 結束日期 (格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
      * @return array|null 返回 ['start' => timestamp, 'end' => timestamp] 或 null
      */
     private function convertDateRangeEasternToUTC($startDate, $endDate)
@@ -253,27 +193,38 @@ class CompareTableData extends Command
             $taipeiTz = new \DateTimeZone('Asia/Taipei');
             $utcTz = new \DateTimeZone('UTC');
             
-            // 開始日期（美東時間 00:00:00 -> 台北時間 -> UTC）
-            $startEastern = new \DateTime($startDate . ' 00:00:00', $easternTz);
+            // 檢查日期字符串是否已經包含時間部分
+            // 如果已經包含時間（格式：YYYY-MM-DD HH:MM:SS），直接使用
+            // 如果只有日期（格式：YYYY-MM-DD），添加默認時間
+            $startDateTimeStr = $startDate;
+            if (!preg_match('/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/', $startDate)) {
+                // 只有日期，添加默認開始時間 00:00:00
+                $startDateTimeStr = $startDate . ' 00:00:00';
+            }
+            
+            $endDateTimeStr = $endDate;
+            if (!preg_match('/\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/', $endDate)) {
+                // 只有日期，添加默認結束時間 23:59:59
+                $endDateTimeStr = $endDate . ' 23:59:59';
+            }
+            
+            // 開始日期（美東時間 -> 台北時間 -> UTC）
+            $startEastern = new \DateTime($startDateTimeStr, $easternTz);
             $startEastern->setTimezone($taipeiTz);
             $startTaipei = $startEastern->format('Y-m-d H:i:s');
             $startEastern->setTimezone($utcTz);
             
-            // 結束日期（美東時間 23:59:59 -> 台北時間 -> UTC）
-            $endEastern = new \DateTime($endDate . ' 23:59:59', $easternTz);
+            // 結束日期（美東時間 -> 台北時間 -> UTC）
+            $endEastern = new \DateTime($endDateTimeStr, $easternTz);
             $endEastern->setTimezone($taipeiTz);
             $endTaipei = $endEastern->format('Y-m-d H:i:s');
             $endEastern->setTimezone($utcTz);
-            
+
             return [
                 'start' => $startEastern->getTimestamp(),
                 'end' => $endEastern->getTimestamp(),
-                'original_eastern_start' => $startDate,
-                'original_eastern_end' => $endDate,
                 'start_taipei' => $startTaipei,
                 'end_taipei' => $endTaipei,
-                'start_utc' => $startEastern->format('Y-m-d H:i:s'),
-                'end_utc' => $endEastern->format('Y-m-d H:i:s'),
             ];
         } catch (\Exception $e) {
             $this->warn('Failed to convert date range: ' . $e->getMessage());
@@ -388,30 +339,10 @@ class CompareTableData extends Command
                     // 提取列表資料
                     if (isset($currentData['data']) && is_array($currentData['data'])) {
                         $allData = array_merge($allData, $currentData['data']);
-                        $this->line("   Fetched page: " . count($currentData['data']) . " records (Total: " . count($allData) . ")");
-                    } else {
-                        $this->warn('   Warning: No data in API response data');
-                        $this->line('   Response data structure: ' . json_encode(array_keys($currentData), JSON_UNESCAPED_UNICODE));
                     }
 
                     // 檢查是否有下一頁
                     $pageKey = $currentData['page_key'] ?? null;
-                } else {
-                    // 顯示詳細錯誤信息（僅在 code 非 0 且確實存在時）
-                    if ($code !== null && $code !== 0) {
-                        $this->error('   API returned code: ' . $result['code']);
-                    }
-                    if (isset($result['message'])) {
-                        $this->error('   API message: ' . $result['message']);
-                    }
-                    if (isset($result['error'])) {
-                        $this->error('   API error: ' . $result['error']);
-                    }
-                    if (!isset($result['data'])) {
-                        $this->error('   No data in API response');
-                    }
-                    $this->line('   Full response: ' . json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                    break;
                 }
             } while (!empty($pageKey) && $pageKey !== 'none');
             

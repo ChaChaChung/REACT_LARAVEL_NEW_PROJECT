@@ -382,6 +382,25 @@ class ScrapeBrowserDOM extends Command
                                 formDates['end_date'] = value;
                             }
                         });
+                        
+                        // 專門提取 placeholder 為 "Start time" 和 "End time" 的日期輸入
+                        const startTimeInputs = document.querySelectorAll('input[placeholder="Start time"], input[placeholder*="Start time"]');
+                        startTimeInputs.forEach(input => {
+                            const value = input.value || '';
+                            if (value) {
+                                formDates['start_time'] = value;
+                                formDates['start_time_original'] = value;
+                            }
+                        });
+                        
+                        const endTimeInputs = document.querySelectorAll('input[placeholder="End time"], input[placeholder*="End time"]');
+                        endTimeInputs.forEach(input => {
+                            const value = input.value || '';
+                            if (value) {
+                                formDates['end_time'] = value;
+                                formDates['end_time_original'] = value;
+                            }
+                        });
 
                         const result = {
                             // 基本頁面信息
@@ -530,6 +549,41 @@ class ScrapeBrowserDOM extends Command
 
         // 提取 DOM 資料
         $domData = $result['domData'] ?? [];
+
+        // 處理表單日期
+        $formDates = $domData['formDates'] ?? [];
+        // 判斷是否有表單日期
+        if (!empty($formDates)) {
+            // 處理 Start time
+            if (isset($formDates['start_time'])) {
+                // 取得 Start time
+                $startTime = $formDates['start_time'];
+                // 轉換日期格式
+                try {
+                    $startDateTime = \Carbon\Carbon::parse($startTime);
+                    $formDates['start_time_converted'] = $startDateTime->format('Y-m-d H:i:s');
+                    $formDates['start_time_timestamp'] = $startDateTime->timestamp;
+                } catch (\Exception $e) {
+                    $this->warn("   ⚠️  Could not parse start_time: {$e->getMessage()}");
+                }
+            }
+            // 處理 End time
+            if (isset($formDates['end_time'])) {
+                // 取得 End time
+                $endTime = $formDates['end_time'];                
+                // 轉換日期格式
+                try {
+                    $endDateTime = \Carbon\Carbon::parse($endTime);
+                    $formDates['end_time_converted'] = $endDateTime->format('Y-m-d H:i:s');
+                    $formDates['end_time_timestamp'] = $endDateTime->timestamp;
+                } catch (\Exception $e) {
+                    $this->warn("   ⚠️  Could not parse end_time: {$e->getMessage()}");
+                }
+            }
+            
+            // 更新 domData 中的 formDates
+            $domData['formDates'] = $formDates;
+        }
 
         // 生成時間戳，用於文件名
         $timestamp = date('Y-m-d_H-i-s');
