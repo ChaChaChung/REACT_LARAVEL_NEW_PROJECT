@@ -46,6 +46,7 @@ trait HasAgentAuth
     protected function generateRsgPuppeteerCookiesCode(): string
     {
         $token = env('RSG_AGENT_TOKEN', '');
+        $lang = env('RSG_AGENT_LANGUAGE', 'zh-TW');
         $domain = env('RSG_AGENT_DOMAIN');
 
         return <<<JS
@@ -55,6 +56,7 @@ trait HasAgentAuth
             // 這些 cookies 用於通過需要登入的頁面驗證
             const cookies = [];
             if ('$token') cookies.push({ name: '.RoyalGameSGTCtrl.Session', value: '$token', domain: '$domain' });
+            if ('$lang') cookies.push({ name: 'Lang', value: '$lang', domain: '$domain' });
 
             // 如果有設定 cookies，則應用到頁面
             if (cookies.length > 0) {
