@@ -77,7 +77,8 @@ class CompareTableData extends Command
         $this->info('3. Fetching data from API...');
         $apiData = $this->fetchApiData($gt, $dateRange);
 
-        if (!$apiData) {
+        // 只有當返回 null 時才表示真正的錯誤（如異常），空數組表示沒有數據（正常情況）
+        if ($apiData === null) {
             $this->error('❌ Failed to fetch API data');
             return 1;
         }
@@ -288,9 +289,10 @@ class CompareTableData extends Command
                 }
             } while (!empty($pageKey) && $pageKey !== 'none');
             
+            // 數據為空是正常情況，返回空數組而不是 null
             if (empty($allData)) {
-                $this->warn('   No data returned from API');
-                return null;
+                $this->info('   No data returned from API (this is normal if there are no records)');
+                return [];
             }
             
             return $allData;

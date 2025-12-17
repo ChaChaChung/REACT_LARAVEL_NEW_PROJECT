@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\Storage;
  */
 class ScrapeBrowserDOM extends Command
 {
+    use HasAgentAuth;
+
     /**
      * 命令簽名和參數定義
      * @var string
@@ -109,10 +112,8 @@ class ScrapeBrowserDOM extends Command
     {
         $this->info('2. Creating browser automation script...');
 
-        // 從 .env 環境變數獲取認證相關的 cookie 值
-        $auth = env('AGENT_AUTH', '');
-        $token = env('AGENT_TOKEN', '');
-        $bgLang = env('AGENT_BG_LANGUAGE_KEY', 'zh-cn');
+        // 獲取認證 cookies 程式碼片段
+        $cookiesCode = $this->generatePuppeteerCookiesCode();
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -173,22 +174,7 @@ class ScrapeBrowserDOM extends Command
                     // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
-                    console.log('🔐 Setting authentication cookies...');
-
-                    // 根據環境變數設定認證 cookies
-                    // 這些 cookies 用於通過需要登入的頁面驗證
-                    const cookies = [];
-                    if ('$auth') cookies.push({ name: 'auth', value: '$auth', domain: 'agent2.chichengwld.com' });
-                    if ('$token') cookies.push({ name: 'token', value: '$token', domain: 'agent2.chichengwld.com' });
-                    if ('$bgLang') cookies.push({ name: 'bg_languageKey', value: '$bgLang', domain: 'agent2.chichengwld.com' });
-
-                    // 如果有設定 cookies，則應用到頁面
-                    if (cookies.length > 0) {
-                        await page.setCookie(...cookies);
-                        console.log('✅ Cookies set:', cookies.length);
-                    } else {
-                        console.log('⚠️  No cookies found in environment variables');
-                    }
+                    $cookiesCode
 
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
