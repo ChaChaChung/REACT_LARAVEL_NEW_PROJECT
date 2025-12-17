@@ -377,7 +377,15 @@ class ScrapeBrowserRsgDOM extends Command
                             let rows = Array.from(table.querySelectorAll('tr'));
                             // 獲取表格的 class 屬性
                             const tableClass = table.className || '';
-                            
+                            // 檢查表格是否包含表頭
+                            const isHeaderTable = tableClass.includes('header') || 
+                                                tableClass.includes('Header') ||
+                                                (rows.length > 0 && rows[0].querySelectorAll('th').length > 0);
+                            // 初始化表頭行和資料起始索引
+                            let headerRow = null;
+                            // 初始化資料起始索引
+                            let dataStartIndex = 0;
+
                             // 檢查是否有 thead 和 tbody 結構
                             const thead = table.querySelector('thead');
                             const dataContent = table.querySelector('tbody.dataContent');
@@ -387,56 +395,18 @@ class ScrapeBrowserRsgDOM extends Command
                                 rows = Array.from(dataContent.querySelectorAll('tr'));
                             }
                             
-                            // 從 thead 中提取表頭（如果存在）
-                            let headerRow = null;
-                            if (thead) {
-                                const headerRows = thead.querySelectorAll('tr');
-                                if (headerRows.length > 0) {
-                                    const headerCells = headerRows[0].querySelectorAll('th, td');
-                                    if (headerCells.length > 0) {
-                                        headerRow = Array.from(headerCells).map(cell => cell.textContent.trim());
-                                        console.log('Table ' + tableIndex + ': Extracted header from thead: ' + headerRow.length + ' columns');
-                                    }
-                                }
-                            }
-                            
-                            // 檢查表格是否包含表頭
-                            const isHeaderTable = tableClass.includes('header') || 
-                                                tableClass.includes('Header') ||
-                                                (thead !== null) ||
-                                                (rows.length > 0 && rows[0].querySelectorAll('th').length > 0);
-                            
-                            // 初始化資料起始索引
-                            let dataStartIndex = 0;
-                            
-                            // 如果沒有從 thead 獲取表頭，檢查第一行是否包含 th（標準表頭行）
-                            const firstRowHasTh = rows.length > 0 && rows[0] && rows[0].querySelectorAll('th').length > 0;
-                            
-                            // 如果沒有從 thead 獲取表頭，且第一行包含 th，則第一行是表頭
-                            if (!headerRow && firstRowHasTh) {
-                                // 提取第一行作為表頭
-                                const headerCells = rows[0].querySelectorAll('th, td');
-                                headerRow = Array.from(headerCells).map((cell, idx) => {
-                                    const text = cell.textContent.trim();
-                                    return text || 'column_' + idx;
-                                });
-                                // 資料從第二行開始
-                                dataStartIndex = 1;
-                                
-                                // 檢查是否有包含 td 的資料行
-                                const hasDataRows = rows.slice(1).some(row => row.querySelectorAll('td').length > 0);
-                                if (!hasDataRows) {
-                                    console.log('Table ' + tableIndex + ': Has header but no data rows (td cells)');
-                                }
-                            } else if (!headerRow && isHeaderTable && tableClass.includes('header')) {
-                                // 純表頭表格（class 包含 header 且沒有資料行）
+                            // 如果是表頭表格，只提取表頭，不提取資料
+                            if (!headerRow && isHeaderTable && tableClass.includes('header')) {
+                                // 如果表格的第一行存在，則獲取第一行的所有單元格
                                 if (rows[0]) {
+                                    // 獲取第一行的所有單元格
                                     const headerCells = rows[0].querySelectorAll('th, td');
                                     headerRow = Array.from(headerCells).map((cell, idx) => {
                                         const text = cell.textContent.trim();
                                         return text || 'column_' + idx;
                                     });
                                 }
+                                // 表頭表格通常沒有資料行
                                 dataStartIndex = rows.length;
                             } else {
                                 // 資料表格：嘗試找到對應的表頭
@@ -482,34 +452,9 @@ class ScrapeBrowserRsgDOM extends Command
                             // 將資料行轉換為對象數組
                             // 過濾掉空行（沒有 td/th 或所有單元格都是空的）
                             const dataRows = rows.slice(dataStartIndex)
-                                .filter(row => {
-                                    // 如果表格只有 th，也檢查 th（但 tbody.dataContent 應該都是 td）
-                                    const cells = (tableHasOnlyTh && !dataContent)
-                                        ? row.querySelectorAll('th') 
-                                        : row.querySelectorAll('td');
-                                    // 保留有單元格且至少有一個非空內容的行
-                                    // 排除表頭文字行
-                                    const hasContent = cells.length > 0 && Array.from(cells).some(cell => {
-                                        const text = cell.textContent.trim();
-                                        return text !== '' && 
-                                               text !== '幣別' && 
-                                               text !== '帳號' && 
-                                               text !== '下注' &&
-                                               text !== '彩金貢獻值' &&
-                                               text !== '彩金' &&
-                                               text !== '贏分' &&
-                                               text !== '總贏分' &&
-                                               text !== '淨輸贏' &&
-                                               text !== 'RTP' &&
-                                               text !== '筆數';
-                                    });
-                                    return hasContent;
-                                })
                                 .map((row, rowIndex) => {
                                 // 如果表格只有 th，也提取 th（但 tbody.dataContent 應該都是 td）
-                                const cells = (tableHasOnlyTh && !dataContent)
-                                    ? Array.from(row.querySelectorAll('th'))
-                                    : Array.from(row.querySelectorAll('td'));
+                                const cells = Array.from(row.querySelectorAll('td'));
                                 const rowData = {};
                                 
                                 // 如果有表頭，使用表頭作為 key
