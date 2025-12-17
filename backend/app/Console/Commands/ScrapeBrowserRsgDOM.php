@@ -176,14 +176,11 @@ class ScrapeBrowserRsgDOM extends Command
 
                     $cookiesCode
 
-                    // 監聽瀏覽器控制台的所有訊息（包括 console.log）
+                    // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
                     page.on('console', msg => {
                         if (msg.type() === 'error') {
                             console.log('❌ Browser console error:', msg.text());
-                        } else {
-                            // 輸出所有瀏覽器控制台訊息（包括 console.log）
-                            console.log('🌐 Browser console:', msg.text());
                         }
                     });
 
@@ -344,7 +341,7 @@ class ScrapeBrowserRsgDOM extends Command
                     // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 資料
                     const domData = await page.evaluate(() => {
                         // 先處理表格資料
-                        let allTables = Array.from(document.querySelectorAll('table'));
+                        const allTables = Array.from(document.querySelectorAll('table'));
                         // 存儲每個表格的表頭
                         const tableHeaders = {};
                         
@@ -361,8 +358,8 @@ class ScrapeBrowserRsgDOM extends Command
                             // 如果表格包含表頭，則提取表頭
                             if (isHeaderTable && rows.length > 0) {
                                 // 提取表頭
-                                const headerRows = Array.from(table.querySelector('thead').querySelectorAll('tr'))[0];
-                                const headerCells = headerRows.querySelectorAll('th, td');
+                                const headerRow = rows[0];
+                                const headerCells = headerRow.querySelectorAll('th, td');
                                 if (headerCells.length > 0) {
                                     const headers = Array.from(headerCells).map(cell => cell.textContent.trim());
                                     // 將表頭存儲，供後續表格使用
@@ -377,20 +374,16 @@ class ScrapeBrowserRsgDOM extends Command
                             let rows = Array.from(table.querySelectorAll('tr'));
                             // 獲取表格的 class 屬性
                             const tableClass = table.className || '';
-                            // 檢查表格是否包含表頭
-                            const isHeaderTable = tableClass.includes('header') || 
-                                                tableClass.includes('Header') ||
-                                                (rows.length > 0 && rows[0].querySelectorAll('th').length > 0);
-                            // 初始化表頭行和資料起始索引
-                            let headerRow = null;
-                            // 初始化資料起始索引
-                            let dataStartIndex = 0;
-
-                            // 檢查是否有 thead 和 tbody 結構
+                            
+                            // 檢查是否有 thead 和 tbody 結構（RSG 特殊結構）
                             const thead = table.querySelector('thead');
                             const dataContent = table.querySelector('tbody.dataContent');
                             
                             // 如果有 thead，優先從 thead 中提取表頭
+                            let headerRow = null;
+                            // 初始化資料起始索引
+                            let dataStartIndex = 0;
+                            
                             if (thead) {
                                 const headerRows = Array.from(thead.querySelectorAll('tr'));
                                 if (headerRows.length > 0) {
@@ -409,8 +402,13 @@ class ScrapeBrowserRsgDOM extends Command
                                 rows = Array.from(dataContent.querySelectorAll('tr'));
                             }
                             
+                            // 檢查表格是否包含表頭（只有在沒有 thead 的情況下才檢查）
+                            const isHeaderTable = !thead && (tableClass.includes('header') || 
+                                                tableClass.includes('Header') ||
+                                                (rows.length > 0 && rows[0].querySelectorAll('th').length > 0));
+                            
                             // 如果是表頭表格，只提取表頭，不提取資料
-                            if (!headerRow && isHeaderTable && tableClass.includes('header')) {
+                            if (isHeaderTable) {
                                 // 如果表格的第一行存在，則獲取第一行的所有單元格
                                 if (rows[0]) {
                                     // 獲取第一行的所有單元格
@@ -465,19 +463,11 @@ class ScrapeBrowserRsgDOM extends Command
                                 }
                             }
                             
-                            // 檢查表格是否只有 th 沒有 td（特殊情況）
-                            // 但如果有 tbody.dataContent，應該都是 td
-                            const tableHasOnlyTh = !dataContent && rows.length > 0 && rows[dataStartIndex] && rows[dataStartIndex].querySelectorAll('td').length === 0;
-                            
                             // 將資料行轉換為對象數組
-                            // 過濾掉空行（沒有 td/th 或所有單元格都是空的）
-                            const dataRows = rows.slice(dataStartIndex)
-                                .map((row, rowIndex) => {
-                                // 如果表格只有 th，也提取 th（但 tbody.dataContent 應該都是 td）
+                            const dataRows = rows.slice(dataStartIndex).map((row, rowIndex) => {
                                 const cells = Array.from(row.querySelectorAll('td'));
                                 const rowData = {};
                                 
-                                // 如果有表頭，使用表頭作為 key
                                 if (headerRow && headerRow.length > 0) {
                                     headerRow.forEach((header, colIndex) => {
                                         // 清理字段名（移除特殊字符，用於 JSON key）
@@ -514,20 +504,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 return rowData;
                             });
                             
-                            // 調試信息：輸出處理後的表格信息
-                            console.log('Table ' + tableIndex + ' processed: isHeaderTable=' + isHeaderTable + ', headerCount=' + (headerRow ? headerRow.length : 0) + ', dataRowCount=' + dataRows.length + ', totalRows=' + rows.length + ', dataStartIndex=' + dataStartIndex + ', hasOnlyTh=' + tableHasOnlyTh);
-                            if (dataRows.length === 0 && rows.length > dataStartIndex) {
-                                // 如果有行但沒有提取到資料，輸出調試信息
-                                const skippedRows = rows.slice(dataStartIndex);
-                                console.log('  Skipped rows info:');
-                                skippedRows.forEach((row, idx) => {
-                                    const tds = row.querySelectorAll('td');
-                                    const ths = row.querySelectorAll('th');
-                                    const text = row.textContent.trim().substring(0, 50);
-                                    console.log('    Row ' + (dataStartIndex + idx) + ': tdCount=' + tds.length + ', thCount=' + ths.length + ', text=' + text);
-                                });
-                            }
-                            
                             return {
                                 tableIndex: tableIndex,
                                 tableId: table.id || null,
@@ -537,13 +513,9 @@ class ScrapeBrowserRsgDOM extends Command
                                 headerCount: headerRow ? headerRow.length : 0,
                                 rowCount: dataRows.length,
                                 // 原始格式（保留以備用）
-                                rawRows: rows.slice(dataStartIndex).map(row => {
-                                    // 如果表格只有 th，也提取 th
-                                    const cells = tableHasOnlyTh 
-                                        ? row.querySelectorAll('th')
-                                        : row.querySelectorAll('td');
-                                    return Array.from(cells).map(cell => cell.textContent.trim());
-                                }),
+                                rawRows: rows.slice(dataStartIndex).map(row => 
+                                    Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim())
+                                ),
                                 // 結構化資料（推薦使用）
                                 data: dataRows
                             };
@@ -559,7 +531,7 @@ class ScrapeBrowserRsgDOM extends Command
                             // 提取所有文本內容
                             textContent: document.body.innerText.trim(),
                             
-                            // 提取所有表格資料
+                            // 提取所有表格資料，並且過濾掉只有表頭沒有資料的表格
                             tables: allTables.map((table, tableIndex) => processTable(table, tableIndex))
                                 .filter(table => {
                                     // 保留有資料的表格，或不是純表頭表格的表格
@@ -586,16 +558,6 @@ class ScrapeBrowserRsgDOM extends Command
                         domData: domData,  // 捕獲的 DOM 資料
                         success: true  // 成功標記
                     };
-
-                    // 調試信息：輸出表格統計
-                    if (domData && domData.tables) {
-                        console.log('📊 Tables extracted: ' + domData.tables.length);
-                        domData.tables.forEach((table, idx) => {
-                            console.log('  Table ' + idx + ': ' + table.rowCount + ' rows, ' + table.headerCount + ' headers');
-                        });
-                    } else {
-                        console.log('⚠️  No tables found in domData');
-                    }
 
                     // 將結果保存為 JSON 文件
                     fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
