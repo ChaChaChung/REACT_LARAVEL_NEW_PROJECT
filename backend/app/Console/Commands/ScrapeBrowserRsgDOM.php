@@ -361,8 +361,8 @@ class ScrapeBrowserRsgDOM extends Command
                             // 如果表格包含表頭，則提取表頭
                             if (isHeaderTable && rows.length > 0) {
                                 // 提取表頭
-                                const headerRow = rows[0];
-                                const headerCells = headerRow.querySelectorAll('th, td');
+                                const headerRows = Array.from(table.querySelector('thead').querySelectorAll('tr'))[0];
+                                const headerCells = headerRows.querySelectorAll('th, td');
                                 if (headerCells.length > 0) {
                                     const headers = Array.from(headerCells).map(cell => cell.textContent.trim());
                                     // 將表頭存儲，供後續表格使用
@@ -390,6 +390,20 @@ class ScrapeBrowserRsgDOM extends Command
                             const thead = table.querySelector('thead');
                             const dataContent = table.querySelector('tbody.dataContent');
                             
+                            // 如果有 thead，優先從 thead 中提取表頭
+                            if (thead) {
+                                const headerRows = Array.from(thead.querySelectorAll('tr'));
+                                if (headerRows.length > 0) {
+                                    const headerCells = headerRows[0].querySelectorAll('th, td');
+                                    if (headerCells.length > 0) {
+                                        headerRow = Array.from(headerCells).map((cell, idx) => {
+                                            const text = cell.textContent.trim();
+                                            return text || 'column_' + idx;
+                                        });
+                                    }
+                                }
+                            }
+                            
                             // 如果有 dataContent，優先從 tbody 中獲取行
                             if (dataContent) {
                                 rows = Array.from(dataContent.querySelectorAll('tr'));
@@ -410,36 +424,42 @@ class ScrapeBrowserRsgDOM extends Command
                                 dataStartIndex = rows.length;
                             } else {
                                 // 資料表格：嘗試找到對應的表頭
-                                // 1. 檢查前面的表格是否有表頭
-                                let foundHeader = null;
-                                for (let i = tableIndex - 1; i >= 0; i--) {
-                                    if (tableHeaders[i]) {
-                                        foundHeader = tableHeaders[i];
-                                        break;
-                                    }
-                                }
-                                
-                                // 2. 如果找到表頭，使用它
-                                if (foundHeader) {
-                                    // 使用找到的表頭
-                                    headerRow = foundHeader;
+                                // 1. 如果已經從 thead 提取到表頭，使用它
+                                if (headerRow) {
                                     // 所有行都是資料
                                     dataStartIndex = 0;
                                 } else {
-                                    // 3. 否則檢查第一行是否包含 th（標準表頭）
-                                    if (rows[0]) {
-                                        // 獲取第一行的所有單元格
-                                        const firstRowCells = rows[0].querySelectorAll('th, td');
-                                        // 檢查第一行是否包含 th 標籤
-                                        const hasTh = rows[0].querySelectorAll('th').length > 0;
-                                        // 如果第一行包含 th 標籤，則使用第一行的所有單元格
-                                        if (hasTh) {
+                                    // 2. 檢查前面的表格是否有表頭
+                                    let foundHeader = null;
+                                    for (let i = tableIndex - 1; i >= 0; i--) {
+                                        if (tableHeaders[i]) {
+                                            foundHeader = tableHeaders[i];
+                                            break;
+                                        }
+                                    }
+                                    
+                                    // 3. 如果找到表頭，使用它
+                                    if (foundHeader) {
+                                        // 使用找到的表頭
+                                        headerRow = foundHeader;
+                                        // 所有行都是資料
+                                        dataStartIndex = 0;
+                                    } else {
+                                        // 4. 否則檢查第一行是否包含 th（標準表頭）
+                                        if (rows[0]) {
                                             // 獲取第一行的所有單元格
-                                            headerRow = Array.from(firstRowCells).map((cell, idx) => {
-                                                const text = cell.textContent.trim();
-                                                return text || 'column_' + idx;
-                                            });
-                                            dataStartIndex = 1;
+                                            const firstRowCells = rows[0].querySelectorAll('th, td');
+                                            // 檢查第一行是否包含 th 標籤
+                                            const hasTh = rows[0].querySelectorAll('th').length > 0;
+                                            // 如果第一行包含 th 標籤，則使用第一行的所有單元格
+                                            if (hasTh) {
+                                                // 獲取第一行的所有單元格
+                                                headerRow = Array.from(firstRowCells).map((cell, idx) => {
+                                                    const text = cell.textContent.trim();
+                                                    return text || 'column_' + idx;
+                                                });
+                                                dataStartIndex = 1;
+                                            }
                                         }
                                     }
                                 }
