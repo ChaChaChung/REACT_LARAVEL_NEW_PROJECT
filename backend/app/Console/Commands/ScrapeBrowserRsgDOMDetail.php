@@ -20,8 +20,9 @@ class ScrapeBrowserRsgDOM extends Command
      * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
      * {account_number?} - 要點擊的帳號號碼（可選參數）
+     * {date?} - 要選擇的日期（可選參數）
      */
-    protected $signature = 'agent:scrape-rsg-dom-detail {url} {account_number?}';
+    protected $signature = 'agent:scrape-rsg-dom-detail {url} {account_number?} {date?}';
 
     /**
      * 命令描述
@@ -38,10 +39,12 @@ class ScrapeBrowserRsgDOM extends Command
         // 獲取命令參數
         $url = $this->argument('url');
         $accountNumber = $this->argument('account_number');
+        $date = $this->argument('date');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
         $this->info("Account Number: {$accountNumber}");
+        $this->info("Date: {$date}");
 
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
@@ -49,7 +52,7 @@ class ScrapeBrowserRsgDOM extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $accountNumber);
+        $scriptPath = $this->createPuppeteerScript($url, $accountNumber, $date);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -110,9 +113,10 @@ class ScrapeBrowserRsgDOM extends Command
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
      * @param string|null $accountNumber 要點擊的帳號號碼（可選）
+     * @param string|null $date 要選擇的日期（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $accountNumber = null)
+    private function createPuppeteerScript($url, $accountNumber = null, $date = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -121,6 +125,9 @@ class ScrapeBrowserRsgDOM extends Command
 
         // 將 account_number 轉換為 JavaScript 可用的格式
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
+
+        // 將 date 轉換為 JavaScript 可用的格式
+        $dateJs = $date ? json_encode(date('Y-m-d', strtotime($date))) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -333,6 +340,7 @@ class ScrapeBrowserRsgDOM extends Command
 
                         // 如果提供了 account_number，查找並點擊該帳號的連結
                         const accountNumber = $accountNumberJs;
+                        const date = $dateJs;
                         if (accountNumber && accountNumber !== null && accountNumber !== '') {
                             try {
                                 // 尋找包含指定 account number 的 <u onclick> 標籤
@@ -373,6 +381,83 @@ class ScrapeBrowserRsgDOM extends Command
                                 }
                             } catch (e) {
                                 console.log('⚠️  Error looking for account number: ' + e.message);
+                            }
+                            
+                            // 如果提供了 date，在表格的 Date 列中查找並點擊該日期的連結
+                            if (date && date !== null && date !== '') {
+                                try {
+                                    // 等待頁面完全載入，確保表格已渲染
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 在表格的 Date 列中尋找包含指定 date 的 <u onclick> 標籤
+                                    const dateLinkInfo = await page.evaluate((dateNum) => {
+                                        // 尋找所有表格
+                                        const allTables = Array.from(document.querySelectorAll('table'));
+                                        
+                                        // 表格資料執行迴圈
+                                        for (const table of allTables) {                                            
+                                            // 尋找表頭中的 Date 列索引
+                                            const headerRows = Array.from(table.querySelector('thead').querySelectorAll('tr'));
+                                            if (headerRows.length === 0) continue;
+                                            // 尋找表頭中的所有資料
+                                            const headerCells = Array.from(headerRows[0].querySelectorAll('th, td'));
+                                            // 尋找表頭中的 Date 列的 Index
+                                            const dateColumnIndex = headerCells.findIndex(cell => {
+                                                const text = cell.textContent.trim().toLowerCase();
+                                                return text === 'date';
+                                            });
+                                            
+                                            // 如果找到 Date 列，在該列中查找日期連結
+                                            if (dateColumnIndex !== -1) {
+                                                const rows = Array.from(table.querySelector('tbody').querySelectorAll('tr'));
+                                                // Table 中的資料執行迴圈
+                                                for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+                                                    const row = rows[rowIndex];
+                                                    const cells = Array.from(row.querySelectorAll('td'));
+                                                    
+                                                    if (cells[dateColumnIndex]) {
+                                                        // 在 Date 列的資料中查找 <u onclick> 標籤
+                                                        const uLink = cells[dateColumnIndex].querySelector('u[onclick]');
+                                                        // 判斷是否找到 <u onclick> 標籤
+                                                        if (uLink) {
+                                                            const text = uLink.textContent.trim();
+                                                            
+                                                            // 判斷是否完全匹配 date
+                                                            if (text === dateNum) {
+                                                                // 為元素添加唯一標識，方便 Puppeteer 選擇
+                                                                const uniqueId = 'date-link-' + Date.now() + '-' + rowIndex;
+                                                                uLink.setAttribute('data-puppeteer-id', uniqueId);
+                                                                
+                                                                return {
+                                                                    found: true,
+                                                                    text: text,
+                                                                    onclick: uLink.getAttribute('onclick'),
+                                                                    selector: 'u[data-puppeteer-id="' + uniqueId + '"]',
+                                                                    tableIndex: allTables.indexOf(table),
+                                                                    rowIndex: rowIndex
+                                                                };
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        return { found: false, reason: 'Date not found in any table: ' + dateNum };
+                                    }, date);
+
+                                    // 判斷是否找到日期連結
+                                    if (dateLinkInfo.found) {
+                                        // 點擊帳號連結
+                                        await page.click(accountLinkInfo.selector, { timeout: 3000 });                                    
+                                        // 等待額外 3 秒，確保動態內容完全載入
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                    } else {
+                                        console.log('⚠️  Could not find date link: ' + (dateLinkInfo.reason || 'Unknown reason'));
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Error looking for date: ' + e.message);
+                                }
                             }
                         }
                     } catch (e) {
