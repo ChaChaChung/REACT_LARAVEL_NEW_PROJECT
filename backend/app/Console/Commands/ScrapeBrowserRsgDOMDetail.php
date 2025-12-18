@@ -343,41 +343,114 @@ class ScrapeBrowserRsgDOM extends Command
                         const date = $dateJs;
                         if (accountNumber && accountNumber !== null && accountNumber !== '') {
                             try {
-                                // 尋找包含指定 account number 的 <u onclick> 標籤
-                                const accountLinkInfo = await page.evaluate((accountNum) => {
-                                    // 尋找所有 <u onclick> 標籤
-                                    const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                // 帳號連結資訊
+                                let accountLinkInfo = null;
+                                // 是否找到帳號連結
+                                let foundInPage = false;
+                                // 當前頁碼
+                                let currentPage = 1;
+                                // 最多查找 100 頁，防止無限循環
+                                const maxPages = 100;
+                                
+                                // 在頁面中查找 account number
+                                const findAccountInCurrentPage = async () => {
+                                    return await page.evaluate((accountNum) => {
+                                        // 尋找所有 <u onclick> 標籤
+                                        const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                        
+                                        // 所有 u[onclick] 資料執行迴圈 
+                                        for (let i = 0; i < allULinks.length; i++) {
+                                            const uLink = allULinks[i];
+                                            // 從 u[onclick] 中取得 text
+                                            const text = uLink.textContent.trim();
+                                            // 判斷是否完全匹配 account number
+                                            if (text === accountNum) {
+                                                // 為元素添加唯一標識，方便 Puppeteer 選擇
+                                                const uniqueId = 'account-link-' + Date.now() + '-' + i;
+                                                uLink.setAttribute('data-puppeteer-id', uniqueId);
+                                                
+                                                return {
+                                                    found: true,
+                                                    text: text,
+                                                    onclick: uLink.getAttribute('onclick'),
+                                                    selector: 'u[data-puppeteer-id="' + uniqueId + '"]'
+                                                };
+                                            }
+                                        }
+                                        return { found: false };
+                                    }, accountNumber);
+                                };
+                                
+                                // 尋找並點擊下一頁
+                                const goToNextPage = async () => {
+                                    const nextPageInfo = await page.evaluate(() => {
+                                        // 尋找下一頁按鈕
+                                        const dataTablesNext = document.querySelector('.paginate_button.next:not(.disabled)');
+                                        // 尋找下一頁按鈕中的連結
+                                        const link = dataTablesNext.querySelector('a');
+                                        // 為元素添加唯一標識，方便 Puppeteer 選擇
+                                        const uniqueId = 'next-page-' + Date.now();
+                                        link.setAttribute('data-puppeteer-id', uniqueId);
+                                        return {
+                                            found: true,
+                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                            method: 'click',
+                                            text: link.textContent.trim()
+                                        };
+                                        
+                                        return { found: false };
+                                    });
                                     
-                                    // 所有 u[onclick] 資料執行迴圈 
-                                    for (let i = 0; i < allULinks.length; i++) {
-                                        const uLink = allULinks[i];
-                                        // 從 u[onclick] 中取得 text
-                                        const text = uLink.textContent.trim();
-                                        // 判斷是否完全匹配 account number
-                                        if (text === accountNum) {
-                                            // 為元素添加唯一標識，方便 Puppeteer 選擇
-                                            const uniqueId = 'account-link-' + Date.now() + '-' + i;
-                                            uLink.setAttribute('data-puppeteer-id', uniqueId);
+                                    // 判斷是否找到下一頁按鈕
+                                    if (nextPageInfo.found) {
+                                        try {
+                                            // 使用 Puppeteer click
+                                            await page.click(nextPageInfo.selector, { timeout: 5000 });
                                             
-                                            return {
-                                                found: true,
-                                                text: text,
-                                                onclick: uLink.getAttribute('onclick'),
-                                                selector: 'u[data-puppeteer-id="' + uniqueId + '"]'
-                                            };
+                                            // 等待表格數據更新（DataTables 通常使用 AJAX，不會導航）
+                                            await new Promise(resolve => setTimeout(resolve, 3000));
+                                            
+                                            return true;
+                                        } catch (e) {
+                                            console.log('⚠️  Error clicking next page: ' + e.message);
+                                            return false;
                                         }
                                     }
-                                    return { found: false, reason: 'Account number not found in initial page: ' + accountNum };
-                                }, accountNumber);
+                                    
+                                    return false;
+                                };
+                                
+                                // 開始查找：先檢查當前頁
+                                accountLinkInfo = await findAccountInCurrentPage();
+                                
+                                // 如果當前頁找不到，開始翻頁查找
+                                while (!accountLinkInfo.found && currentPage < maxPages) {
+                                    const hasNextPage = await goToNextPage();
+                                    
+                                    if (!hasNextPage) {
+                                        break;
+                                    }
+                                    
+                                    currentPage++;
+                                    
+                                    // 在新頁面查找
+                                    accountLinkInfo = await findAccountInCurrentPage();
+                                    
+                                    if (accountLinkInfo.found) {
+                                        foundInPage = true;
+                                        break;
+                                    }
+                                }
 
                                 // 判斷是否找到帳號連結
-                                if (accountLinkInfo.found) {
+                                if (accountLinkInfo && accountLinkInfo.found) {
                                     // 點擊帳號連結
-                                    await page.click(accountLinkInfo.selector, { timeout: 3000 });                                    
-                                    // 等待額外 3 秒，確保動態內容完全載入
-                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    await page.click(accountLinkInfo.selector, { timeout: 5000 });
+
+                                    // 等待額外 5 秒，確保動態內容完全載入
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
                                 } else {
-                                    console.log('⚠️  Could not find account number link: ' + (accountLinkInfo.reason || 'Unknown reason'));
+                                    console.log('⚠️  Could not find account number link after searching ' + currentPage + ' pages');
                                 }
                             } catch (e) {
                                 console.log('⚠️  Error looking for account number: ' + e.message);
@@ -388,73 +461,39 @@ class ScrapeBrowserRsgDOM extends Command
                                 try {
                                     // 等待頁面完全載入，確保表格已渲染
                                     await new Promise(resolve => setTimeout(resolve, 2000));
-                                    
-                                    // 在表格的 Date 列中尋找包含指定 date 的 <u onclick> 標籤
-                                    const dateLinkInfo = await page.evaluate((dateNum) => {
-                                        // 尋找所有表格
+
+                                    // 在表格的 Date 列中查找並點擊該日期的連結
+                                    await page.evaluate((dateNum) => {
+                                        // 取得所有表格
                                         const allTables = Array.from(document.querySelectorAll('table'));
-                                        
-                                        // 表格資料執行迴圈
-                                        for (const table of allTables) {                                            
-                                            // 尋找表頭中的 Date 列索引
-                                            const headerRows = Array.from(table.querySelector('thead').querySelectorAll('tr'));
-                                            if (headerRows.length === 0) continue;
-                                            // 尋找表頭中的所有資料
-                                            const headerCells = Array.from(headerRows[0].querySelectorAll('th, td'));
-                                            // 尋找表頭中的 Date 列的 Index
+                                        // 所有表格資料執行迴圈 
+                                        for (const table of allTables) {
+                                            // 取得表格的表頭
+                                            const headerCells = Array.from(Array.from(table.querySelector('thead').querySelectorAll('tr'))[0].querySelectorAll('th, td'));
+                                            // 尋找 Date 列的 Index
                                             const dateColumnIndex = headerCells.findIndex(cell => {
-                                                const text = cell.textContent.trim().toLowerCase();
-                                                return text === 'date';
+                                                return cell.textContent.trim().toLowerCase() === 'date';
                                             });
-                                            
-                                            // 如果找到 Date 列，在該列中查找日期連結
+                                            // 判斷 Date 列的 Index
                                             if (dateColumnIndex !== -1) {
+                                                // 取得表格的資料
                                                 const rows = Array.from(table.querySelector('tbody').querySelectorAll('tr'));
-                                                // Table 中的資料執行迴圈
-                                                for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-                                                    const row = rows[rowIndex];
+                                                // 所有資料執行迴圈 
+                                                for (const row of rows) {
+                                                    // 取得該行的所有資料
                                                     const cells = Array.from(row.querySelectorAll('td'));
-                                                    
+                                                    // 判斷該單元格是否為 Date 列
                                                     if (cells[dateColumnIndex]) {
-                                                        // 在 Date 列的資料中查找 <u onclick> 標籤
                                                         const uLink = cells[dateColumnIndex].querySelector('u[onclick]');
-                                                        // 判斷是否找到 <u onclick> 標籤
-                                                        if (uLink) {
-                                                            const text = uLink.textContent.trim();
-                                                            
-                                                            // 判斷是否完全匹配 date
-                                                            if (text === dateNum) {
-                                                                // 為元素添加唯一標識，方便 Puppeteer 選擇
-                                                                const uniqueId = 'date-link-' + Date.now() + '-' + rowIndex;
-                                                                uLink.setAttribute('data-puppeteer-id', uniqueId);
-                                                                
-                                                                return {
-                                                                    found: true,
-                                                                    text: text,
-                                                                    onclick: uLink.getAttribute('onclick'),
-                                                                    selector: 'u[data-puppeteer-id="' + uniqueId + '"]',
-                                                                    tableIndex: allTables.indexOf(table),
-                                                                    rowIndex: rowIndex
-                                                                };
-                                                            }
-                                                        }
+                                                        uLink.click();
                                                     }
                                                 }
                                             }
                                         }
-                                        
-                                        return { found: false, reason: 'Date not found in any table: ' + dateNum };
                                     }, date);
-
-                                    // 判斷是否找到日期連結
-                                    if (dateLinkInfo.found) {
-                                        // 點擊帳號連結
-                                        await page.click(accountLinkInfo.selector, { timeout: 3000 });                                    
-                                        // 等待額外 3 秒，確保動態內容完全載入
-                                        await new Promise(resolve => setTimeout(resolve, 3000));
-                                    } else {
-                                        console.log('⚠️  Could not find date link: ' + (dateLinkInfo.reason || 'Unknown reason'));
-                                    }
+                                    
+                                    // 等待額外 5 秒，確保動態內容完全載入
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
                                 } catch (e) {
                                     console.log('⚠️  Error looking for date: ' + e.message);
                                 }
@@ -811,20 +850,35 @@ class ScrapeBrowserRsgDOM extends Command
                                     });
                                 
                                 if (accountNumberProvided) {
-                                    // 如果提供了 account_number，只保留最後一個表格
+                                    // 如果提供了 account_number，只保留最後一個有資料的表格
                                     if (processedTables.length > 0) {
-                                        return [processedTables[processedTables.length - 1]];
+                                        // 找到最後一個有資料的表格（rowCount > 0）
+                                        let lastTable = null;
+                                        for (let i = processedTables.length - 1; i >= 0; i--) {
+                                            if (processedTables[i].rowCount > 0) {
+                                                lastTable = processedTables[i];
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (lastTable) {
+                                            return [lastTable];
+                                        }
+                                    } else {
+                                        console.log('⚠️  No tables with data found');
                                     }
                                     return [];
                                 } else {
                                     // 否則，只保留包含 "Account number" 的表格
-                                    return processedTables.filter(table => {
+                                    const filtered = processedTables.filter(table => {
                                         const hasAccountNumber = table.headers.some(header => {
                                             const headerText = header.toLowerCase();
                                             return headerText.includes('account number');
                                         });
                                         return hasAccountNumber;
                                     });
+                                    console.log('📊 Filtered to ' + filtered.length + ' tables with Account number');
+                                    return filtered;
                                 }
                             })()
                         };
