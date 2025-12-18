@@ -124,6 +124,7 @@ class ScrapeBrowserRsgDOM extends Command
         $cookiesCode = $this->generateRsgPuppeteerCookiesCode();
 
         // 將 account_number 轉換為 JavaScript 可用的格式
+        // 使用 json_encode 確保正確的 JSON 格式，null 值會輸出為字符串 'null'
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
         // 將 date 轉換為 JavaScript 可用的格式
@@ -339,8 +340,9 @@ class ScrapeBrowserRsgDOM extends Command
                         }
 
                         // 如果提供了 account_number，查找並點擊該帳號的連結
-                        const accountNumber = $accountNumberJs;
-                        const date = $dateJs;
+                        // $accountNumberJs 和 $dateJs 是 JSON 編碼的字符串或 'null'
+                        const accountNumber = $accountNumberJs === 'null' ? null : JSON.parse($accountNumberJs);
+                        const date = $dateJs === 'null' ? null : JSON.parse($dateJs);
                         if (accountNumber && accountNumber !== null && accountNumber !== '') {
                             try {
                                 // 帳號連結資訊
@@ -643,12 +645,11 @@ class ScrapeBrowserRsgDOM extends Command
                     //     console.log('⚠️  Error handling reservation field: ' + e.message);
                     // }
 
-                    console.log('📄 Extracting DOM content...');
+                    console.log('📄 Extracting DOM content from all pages...');
 
-                    // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 資料
-                    const accountNumberForFilter = $accountNumberJs;
-                    const dateForFilter = $dateJs;
-                    const domData = await page.evaluate((accountNumberProvided, accountNumberValue, dateValue) => {
+                    // 定義提取當前頁資料的函數
+                    const extractCurrentPageData = async (accountNumberProvided, accountNumberValue, dateValue) => {
+                        return await page.evaluate((accountNumberProvided, accountNumberValue, dateValue) => {
                         // 先處理表格資料
                         const allTables = Array.from(document.querySelectorAll('table'));
                         // 存儲每個表格的表頭
@@ -884,14 +885,319 @@ class ScrapeBrowserRsgDOM extends Command
                                         });
                                         return hasAccountNumber;
                                     });
-                                    console.log('📊 Filtered to ' + filtered.length + ' tables with Account number');
                                     return filtered;
                                 }
                             })()
                         };
                         
                         return result;
-                    }, accountNumberForFilter && accountNumberForFilter !== null && accountNumberForFilter !== '');
+                        }, accountNumberProvided, accountNumberValue, dateValue);
+                    };
+
+                    // 定義檢查是否有下一頁的函數
+                    const hasNextPage = async () => {
+                        return await page.evaluate(() => {
+                            const nextButton = document.querySelector('.paginate_button.next:not(.disabled)');
+                            return nextButton !== null && !nextButton.classList.contains('disabled');
+                        });
+                    };
+
+                    // 定義點擊下一頁的函數
+                    const goToNextPage = async () => {
+                        const nextPageInfo = await page.evaluate(() => {
+                            const dataTablesNext = document.querySelector('.paginate_button.next:not(.disabled)');
+                            if (dataTablesNext) {
+                                const link = dataTablesNext.querySelector('a');
+                                if (link) {
+                                    const uniqueId = 'next-page-' + Date.now();
+                                    link.setAttribute('data-puppeteer-id', uniqueId);
+                                    return {
+                                        found: true,
+                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                        text: link.textContent.trim()
+                                    };
+                                }
+                            }
+                            return { found: false };
+                        });
+                        
+                        if (nextPageInfo.found) {
+                            try {
+                                await page.click(nextPageInfo.selector, { timeout: 5000 });
+                                // 等待表格數據更新
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                return true;
+                            } catch (e) {
+                                return false;
+                            }
+                        }
+                        return false;
+                    };
+
+                    // 開始收集所有分頁的資料
+                    // 注意：$accountNumberJs 和 $dateJs 是 JSON 編碼的字符串或字符串 'null'
+                    // 解析這些值以獲取實際的 JavaScript 值
+                    let accountNumberParsed = null;
+                    let dateParsed = null;
+                    
+                    // 解析 account_number
+                    if ($accountNumberJs && $accountNumberJs !== 'null') {
+                        try {
+                            accountNumberParsed = JSON.parse($accountNumberJs);
+                        } catch (e) {
+                            accountNumberParsed = null;
+                        }
+                    }
+                    
+                    // 解析 date
+                    if ($dateJs && $dateJs !== 'null') {
+                        try {
+                            dateParsed = JSON.parse($dateJs);
+                        } catch (e) {
+                            dateParsed = null;
+                        }
+                    }
+                    
+                    // 判斷是否提供了 account_number（檢查是否為 null 或空字符串）
+                    const accountNumberProvided = accountNumberParsed !== null && accountNumberParsed !== '' && accountNumberParsed !== undefined;
+
+                    // 存儲所有分頁的資料
+                    const allPagesData = [];
+                    let currentPage = 1;
+                    const maxPages = 1000; // 設定最大頁數限制，防止無限循環
+                    
+                    // 記錄上一頁的數據標識，用於檢測是否重複提取
+                    let previousPageDataHash = null;
+                    
+                    // 循環遍歷所有分頁
+                    while (currentPage <= maxPages) {
+                        // 在提取數據之前，先檢查當前頁面的狀態
+                        const pageState = await page.evaluate(() => {
+                            const nextButton = document.querySelector('.paginate_button.next');
+                            const currentPageInfo = document.querySelector('.paginate_button.current');
+                            return {
+                                hasNextButton: nextButton !== null,
+                                nextButtonDisabled: nextButton ? nextButton.classList.contains('disabled') : true,
+                                currentPageText: currentPageInfo ? currentPageInfo.textContent.trim() : null,
+                                tableRows: document.querySelectorAll('tbody.dataContent tr').length
+                            };
+                        });
+                        
+                        // 提取當前頁的資料
+                        const pageData = await extractCurrentPageData(accountNumberProvided, accountNumberParsed, dateParsed);
+                        
+                        // 生成當前頁數據的標識（用於檢測是否重複）
+                        let currentPageDataHash = null;
+                        if (pageData && pageData.tables && pageData.tables.length > 0) {
+                            // 使用第一行和最後一行的數據作為標識
+                            const firstTable = pageData.tables[0];
+                            if (firstTable.data && firstTable.data.length > 0) {
+                                const firstRow = JSON.stringify(firstTable.data[0]);
+                                const lastRow = firstTable.data.length > 1 ? JSON.stringify(firstTable.data[firstTable.data.length - 1]) : firstRow;
+                                currentPageDataHash = firstRow + '|' + lastRow + '|' + firstTable.data.length;
+                            }
+                            
+                            // 如果當前頁數據與上一頁相同，可能是重複提取
+                            if (previousPageDataHash !== null && currentPageDataHash === previousPageDataHash) {
+                                // 檢查是否有下一頁
+                                const hasNext = await hasNextPage();
+                                if (!hasNext) {
+                                    // 當前頁是重複的，不要添加，直接停止
+                                    break;
+                                }
+                            }
+                            
+                            // 保存當前頁數據標識
+                            previousPageDataHash = currentPageDataHash;
+                            
+                            // 將當前頁資料添加到總資料中（無論是否有數據都添加，以便後續處理）
+                            allPagesData.push({
+                                pageNumber: currentPage,
+                                data: pageData
+                            });
+                            
+                            const totalRows = pageData.tables.reduce((total, table) => total + (table.rowCount || 0), 0);
+                        } else {
+                            // 即使沒有數據，也添加到 allPagesData 中，以便後續處理
+                            if (pageData) {
+                                allPagesData.push({
+                                    pageNumber: currentPage,
+                                    data: pageData
+                                });
+                            }
+                        }
+                        
+                        // 檢查是否有下一頁（在點擊之前檢查）
+                        const hasNext = await hasNextPage();
+                        
+                        if (!hasNext) {
+                            break;
+                        }
+                        
+                        // 點擊下一頁
+                        const nextPageSuccess = await goToNextPage();
+                        if (!nextPageSuccess) {
+                            break;
+                        }
+                        
+                        // 等待頁面更新
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        
+                        // 驗證頁面是否真的更新了
+                        const pageStateAfterClick = await page.evaluate(() => {
+                            const currentPageInfo = document.querySelector('.paginate_button.current');
+                            const tableRows = document.querySelectorAll('tbody.dataContent tr').length;
+                            return {
+                                currentPageText: currentPageInfo ? currentPageInfo.textContent.trim() : null,
+                                tableRows: tableRows
+                            };
+                        });
+                        
+                        currentPage++;
+                    }
+                    
+                    allPagesData.forEach((pageData, idx) => {
+                        const totalRows = pageData.data.tables ? 
+                            pageData.data.tables.reduce((total, table) => total + (table.rowCount || 0), 0) : 0;
+                    });
+                    
+                    // 獲取當前頁面信息（用於 pageInfo）
+                    const currentPageInfo = await page.evaluate(() => {
+                        return {
+                            title: document.title,
+                            url: window.location.href
+                        };
+                    });
+                    
+                    // 合併所有分頁的資料
+                    const mergedDomData = {
+                        pageInfo: (allPagesData.length > 0 && allPagesData[0].data && allPagesData[0].data.pageInfo) 
+                            ? allPagesData[0].data.pageInfo 
+                            : currentPageInfo,
+                        queryParams: {
+                            accountNumber: accountNumberParsed,
+                            date: dateParsed
+                        },
+                        totalPages: currentPage,
+                        pages: allPagesData.map(page => ({
+                            pageNumber: page.pageNumber,
+                            tables: page.data.tables
+                        })),
+                        // 合併所有分頁的表格資料
+                        tables: (() => {
+                            if (allPagesData.length === 0) {
+                                return [];
+                            }
+                            
+                            // 如果提供了 account_number，合併所有分頁的最後一個表格
+                            if (accountNumberProvided) {
+                                const mergedTables = [];
+                                
+                                // 為每個分頁找到最後一個有資料的表格
+                                allPagesData.forEach((pageData, pageIndex) => {
+                                    const tables = pageData.data.tables || [];
+                                    
+                                    if (tables.length > 0) {
+                                        // 找到最後一個有資料的表格
+                                        let lastTable = null;
+                                        for (let i = tables.length - 1; i >= 0; i--) {
+                                            if (tables[i].rowCount > 0) {
+                                                lastTable = tables[i];
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (lastTable) {
+                                            // 為資料添加頁碼標記
+                                            const tableWithPageInfo = {
+                                                ...lastTable,
+                                                pageNumber: pageData.pageNumber,
+                                                data: lastTable.data.map(row => ({
+                                                    ...row,
+                                                    _pageNumber: pageData.pageNumber
+                                                }))
+                                            };
+                                            mergedTables.push(tableWithPageInfo);
+                                        }
+                                    }
+                                });
+                                
+                                // 合併所有表格的數據到一個表格中
+                                if (mergedTables.length > 0) {
+                                    const firstTable = mergedTables[0];
+                                    const allData = [];
+                                    
+                                    mergedTables.forEach((table, idx) => {
+                                        allData.push(...table.data);
+                                    });
+                                    
+                                    return [{
+                                        ...firstTable,
+                                        tableIndex: firstTable.tableIndex,
+                                        tableId: firstTable.tableId,
+                                        tableClass: firstTable.tableClass,
+                                        isHeaderTable: firstTable.isHeaderTable,
+                                        headers: firstTable.headers,
+                                        headerCount: firstTable.headerCount,
+                                        rowCount: allData.length,
+                                        data: allData,  // 所有頁面的數據都合併到這裡
+                                        pages: mergedTables.map(t => t.pageNumber)
+                                    }];
+                                }
+                                
+                                return [];
+                            } else {
+                                // 否則，合併所有包含 "Account number" 的表格
+                                const mergedTables = [];
+                                
+                                allPagesData.forEach((pageData) => {
+                                    const tables = pageData.data.tables || [];
+                                    tables.forEach(table => {
+                                        const hasAccountNumber = table.headers.some(header => {
+                                            const headerText = header.toLowerCase();
+                                            return headerText.includes('account number');
+                                        });
+                                        
+                                        if (hasAccountNumber) {
+                                            const tableWithPageInfo = {
+                                                ...table,
+                                                pageNumber: pageData.pageNumber,
+                                                data: table.data.map(row => ({
+                                                    ...row,
+                                                    _pageNumber: pageData.pageNumber
+                                                }))
+                                            };
+                                            mergedTables.push(tableWithPageInfo);
+                                        }
+                                    });
+                                });
+                                
+                                // 如果有多個表格，合併成一個
+                                if (mergedTables.length > 1) {
+                                    const firstTable = mergedTables[0];
+                                    const allData = [];
+                                    
+                                    mergedTables.forEach((table) => {
+                                        allData.push(...table.data);
+                                    });
+                                    
+                                    return [{
+                                        ...firstTable,
+                                        rowCount: allData.length,
+                                        data: allData,  // 所有頁面的數據都合併到這裡
+                                        pages: mergedTables.map(t => t.pageNumber)
+                                    }];
+                                } else if (mergedTables.length === 1) {
+                                    // 即使只有一個表格，也要確保數據已合併
+                                    return mergedTables;
+                                }
+                                
+                                return [];
+                            }
+                        })()
+                    };
+                    
+                    const domData = mergedDomData;
 
                     // 截圖（用於調試和驗證）
                     // fullPage: true 表示截取整個頁面，而不只是可見區域
@@ -903,32 +1209,7 @@ class ScrapeBrowserRsgDOM extends Command
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
                     // 合併所有提取的資料和捕獲的 DOM 資料
-                    const accountNumberValue = $accountNumberJs;
-                    const dateValue = $dateJs;
-                    
-                    // 解析 account_number 和 date
-                    // 注意：$accountNumberJs 和 $dateJs 已經是 JSON 編碼的字符串（例如 "value" 或 null）
-                    let accountNumberParsed = null;
-                    let dateParsed = null;
-                    
-                    if (accountNumberValue && accountNumberValue !== 'null') {
-                        // 如果值不是 null，嘗試解析 JSON（移除引號）
-                        if (accountNumberValue.startsWith('"') && accountNumberValue.endsWith('"')) {
-                            accountNumberParsed = accountNumberValue.slice(1, -1);
-                        } else {
-                            accountNumberParsed = accountNumberValue;
-                        }
-                    }
-                    
-                    if (dateValue && dateValue !== 'null') {
-                        // 如果值不是 null，嘗試解析 JSON（移除引號）
-                        if (dateValue.startsWith('"') && dateValue.endsWith('"')) {
-                            dateParsed = dateValue.slice(1, -1);
-                        } else {
-                            dateParsed = dateValue;
-                        }
-                    }
-                    
+                    // accountNumberParsed 和 dateParsed 已經在上面定義過了
                     const result = {
                         timestamp: new Date().toISOString(),  // 時間戳
                         url: '$url',  // 目標 URL
@@ -1057,26 +1338,55 @@ class ScrapeBrowserRsgDOM extends Command
         $fullResultPath = storage_path("app/scraped_data/dom_scrape_full_{$timestamp}.json");
         Storage::put("scraped_data/dom_scrape_full_{$timestamp}.json", json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-        // 保存表格資料（包含原始和結構化格式）
+        // 保存合併後的表格資料到單一 JSON 文件
         if (!empty($domData['tables'])) {
-            // 保存完整表格信息（包含原始和結構化資料）
-            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($domData['tables'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-            // 為每個表格單獨保存結構化資料（推薦使用）
+            // 合併所有表格的數據到一個數組中
+            $allData = [];
+            $totalRows = 0;
+            $headers = [];
+            
+            // 遍歷所有表格，合併數據
             foreach ($domData['tables'] as $tableIndex => $table) {
                 if (!empty($table['data'])) {
-                    $tableFileName = "scraped_data/dom_table_{$tableIndex}_structured_{$timestamp}.json";
-                    Storage::put($tableFileName, json_encode([
-                        'queryParams' => $queryParams,
-                        'tableIndex' => $table['tableIndex'],
-                        'headers' => $table['headers'],
-                        'rowCount' => $table['rowCount'],
-                        'data' => $table['data']
-                    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-                    $this->info("   📋 Table {$tableIndex} structured data saved");
+                    // 將當前表格的所有數據添加到總數組中
+                    $allData = array_merge($allData, $table['data']);
+                    $totalRows += count($table['data']);
+                    
+                    // 保存表頭（使用第一個表格的表頭）
+                    if (empty($headers) && !empty($table['headers'])) {
+                        $headers = $table['headers'];
+                    }
                 }
             }
-            $this->info("📊 Tables saved separately");
+            
+            // 創建合併後的數據結構（單一 table，所有數據在一個 data 數組中）
+            $mergedData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $result['url'] ?? '',
+                    'queryParams' => $queryParams,
+                    'totalPages' => $domData['totalPages'] ?? 1,
+                    'pagesCollected' => $domData['pages'] ?? [],
+                    'totalRows' => $totalRows,
+                    'totalTablesMerged' => count($domData['tables'])
+                ],
+                'table' => [
+                    'headers' => $headers,
+                    'headerCount' => count($headers),
+                    'rowCount' => $totalRows,
+                    'data' => $allData  // 所有頁面的數據都在這裡
+                ]
+            ];
+            
+            // 保存合併後的數據到單一 JSON 文件
+            $mergedFileName = "scraped_data/dom_merged_all_pages_{$timestamp}.json";
+            Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("💾 Merged data saved to: scraped_data/dom_merged_all_pages_{$timestamp}.json");
+            $this->info("📊 Total rows in merged file: {$totalRows}");
+            $this->info("📋 Headers: " . implode(', ', $headers));
+            
+            // 可選：也保存完整表格信息（包含每個表格的詳細信息）
+            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($domData['tables'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         }
 
         $this->info("💾 Full results saved to: {$fullResultPath}");
