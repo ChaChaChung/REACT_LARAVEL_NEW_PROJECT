@@ -19,8 +19,9 @@ class ScrapeBrowserRsgDOM extends Command
      * @var string
      * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
+     * {account_number?} - 要點擊的帳號號碼（可選參數）
      */
-    protected $signature = 'agent:scrape-rsg-dom-detail {url}';
+    protected $signature = 'agent:scrape-rsg-dom-detail {url} {account_number?}';
 
     /**
      * 命令描述
@@ -36,9 +37,11 @@ class ScrapeBrowserRsgDOM extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
+        $accountNumber = $this->argument('account_number');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
+        $this->info("Account Number: {$accountNumber}");
 
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
@@ -46,7 +49,7 @@ class ScrapeBrowserRsgDOM extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url);
+        $scriptPath = $this->createPuppeteerScript($url, $accountNumber);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -106,14 +109,18 @@ class ScrapeBrowserRsgDOM extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
+     * @param string|null $accountNumber 要點擊的帳號號碼（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url)
+    private function createPuppeteerScript($url, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
 
         // 獲取認證 cookies 程式碼片段
         $cookiesCode = $this->generateRsgPuppeteerCookiesCode();
+
+        // 將 account_number 轉換為 JavaScript 可用的格式
+        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -322,6 +329,53 @@ class ScrapeBrowserRsgDOM extends Command
                             }
                         } else {
                             console.log('⚠️  Could not find Currency link: ' + (currencyLinkInfo.reason || 'Unknown reason'));
+                        }
+
+                        // 如果提供了 account_number，查找並點擊該帳號的連結
+                        const accountNumber = $accountNumberJs;
+                        if (accountNumber && accountNumber !== null && accountNumber !== '') {
+                            try {
+                                // 尋找包含指定 account number 的 <u onclick> 標籤
+                                const accountLinkInfo = await page.evaluate((accountNum) => {
+                                    // 尋找所有 <u onclick> 標籤
+                                    const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                    
+                                    // 所有 u[onclick] 資料執行迴圈 
+                                    for (let i = 0; i < allULinks.length; i++) {
+                                        const uLink = allULinks[i];
+                                        // 從 u[onclick] 中取得 text
+                                        const text = uLink.textContent.trim();
+                                        // 判斷是否完全匹配 account number
+                                        if (text === accountNum) {
+                                            // 為元素添加唯一標識，方便 Puppeteer 選擇
+                                            const uniqueId = 'account-link-' + Date.now() + '-' + i;
+                                            uLink.setAttribute('data-puppeteer-id', uniqueId);
+                                            
+                                            return {
+                                                found: true,
+                                                text: text,
+                                                onclick: uLink.getAttribute('onclick'),
+                                                selector: 'u[data-puppeteer-id="' + uniqueId + '"]'
+                                            };
+                                        }
+                                    }
+                                    return { found: false, reason: 'Account number not found in initial page: ' + accountNum };
+                                }, accountNumber);
+
+                                // 判斷是否找到帳號連結
+                                if (accountLinkInfo.found) {
+                                    await page.click(accountLinkInfo.selector, { timeout: 3000 });
+                                    
+                                    const newUrl = page.url();
+                                    
+                                    // 等待額外 3 秒，確保動態內容完全載入
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                } else {
+                                    console.log('⚠️  Could not find account number link: ' + (accountLinkInfo.reason || 'Unknown reason'));
+                                }
+                            } catch (e) {
+                                console.log('⚠️  Error looking for account number: ' + e.message);
+                            }
                         }
                     } catch (e) {
                         console.log('⚠️  Error clicking Currency link: ' + e.message);
