@@ -647,7 +647,8 @@ class ScrapeBrowserRsgDOM extends Command
 
                     // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 資料
                     const accountNumberForFilter = $accountNumberJs;
-                    const domData = await page.evaluate((accountNumberProvided) => {
+                    const dateForFilter = $dateJs;
+                    const domData = await page.evaluate((accountNumberProvided, accountNumberValue, dateValue) => {
                         // 先處理表格資料
                         const allTables = Array.from(document.querySelectorAll('table'));
                         // 存儲每個表格的表頭
@@ -836,6 +837,12 @@ class ScrapeBrowserRsgDOM extends Command
                                 url: window.location.href,
                             },
                             
+                            // 查詢參數
+                            queryParams: {
+                                accountNumber: accountNumberValue || null,
+                                date: dateValue || null
+                            },
+                            
                             // 提取所有文本內容
                             textContent: document.body.innerText.trim(),
                             
@@ -896,9 +903,39 @@ class ScrapeBrowserRsgDOM extends Command
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
                     // 合併所有提取的資料和捕獲的 DOM 資料
+                    const accountNumberValue = $accountNumberJs;
+                    const dateValue = $dateJs;
+                    
+                    // 解析 account_number 和 date
+                    // 注意：$accountNumberJs 和 $dateJs 已經是 JSON 編碼的字符串（例如 "value" 或 null）
+                    let accountNumberParsed = null;
+                    let dateParsed = null;
+                    
+                    if (accountNumberValue && accountNumberValue !== 'null') {
+                        // 如果值不是 null，嘗試解析 JSON（移除引號）
+                        if (accountNumberValue.startsWith('"') && accountNumberValue.endsWith('"')) {
+                            accountNumberParsed = accountNumberValue.slice(1, -1);
+                        } else {
+                            accountNumberParsed = accountNumberValue;
+                        }
+                    }
+                    
+                    if (dateValue && dateValue !== 'null') {
+                        // 如果值不是 null，嘗試解析 JSON（移除引號）
+                        if (dateValue.startsWith('"') && dateValue.endsWith('"')) {
+                            dateParsed = dateValue.slice(1, -1);
+                        } else {
+                            dateParsed = dateValue;
+                        }
+                    }
+                    
                     const result = {
                         timestamp: new Date().toISOString(),  // 時間戳
                         url: '$url',  // 目標 URL
+                        queryParams: {
+                            accountNumber: accountNumberParsed,
+                            date: dateParsed
+                        },
                         domData: domData,  // 捕獲的 DOM 資料
                         success: true  // 成功標記
                     };
@@ -1009,6 +1046,9 @@ class ScrapeBrowserRsgDOM extends Command
 
         // 提取 DOM 資料
         $domData = $result['domData'] ?? [];
+        
+        // 獲取查詢參數（account_number 和 date）
+        $queryParams = $result['queryParams'] ?? [];
 
         // 生成時間戳，用於文件名
         $timestamp = date('Y-m-d_H-i-s');
@@ -1027,6 +1067,7 @@ class ScrapeBrowserRsgDOM extends Command
                 if (!empty($table['data'])) {
                     $tableFileName = "scraped_data/dom_table_{$tableIndex}_structured_{$timestamp}.json";
                     Storage::put($tableFileName, json_encode([
+                        'queryParams' => $queryParams,
                         'tableIndex' => $table['tableIndex'],
                         'headers' => $table['headers'],
                         'rowCount' => $table['rowCount'],
