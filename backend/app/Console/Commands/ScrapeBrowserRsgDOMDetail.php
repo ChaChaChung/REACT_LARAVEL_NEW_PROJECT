@@ -364,10 +364,8 @@ class ScrapeBrowserRsgDOM extends Command
 
                                 // 判斷是否找到帳號連結
                                 if (accountLinkInfo.found) {
-                                    await page.click(accountLinkInfo.selector, { timeout: 3000 });
-                                    
-                                    const newUrl = page.url();
-                                    
+                                    // 點擊帳號連結
+                                    await page.click(accountLinkInfo.selector, { timeout: 3000 });                                    
                                     // 等待額外 3 秒，確保動態內容完全載入
                                     await new Promise(resolve => setTimeout(resolve, 3000));
                                 } else {
@@ -524,7 +522,8 @@ class ScrapeBrowserRsgDOM extends Command
                     console.log('📄 Extracting DOM content...');
 
                     // 使用 page.evaluate() 在瀏覽器環境中執行 JavaScript 來提取 DOM 資料
-                    const domData = await page.evaluate(() => {
+                    const accountNumberForFilter = $accountNumberJs;
+                    const domData = await page.evaluate((accountNumberProvided) => {
                         // 先處理表格資料
                         const allTables = Array.from(document.querySelectorAll('table'));
                         // 存儲每個表格的表頭
@@ -717,22 +716,36 @@ class ScrapeBrowserRsgDOM extends Command
                             textContent: document.body.innerText.trim(),
                             
                             // 提取所有表格資料，並且過濾掉只有表頭沒有資料的表格
-                            // 只保留包含 "Account number" 的表格
-                            tables: allTables.map((table, tableIndex) => processTable(table, tableIndex))
-                                .filter(table => {
-                                    // 檢查表格表頭是否包含 "Account number"
-                                    const hasAccountNumber = table.headers.some(header => {
-                                        const headerText = header.toLowerCase();
-                                        return headerText.includes('account number');
+                            // 如果提供了 account_number，只保留最後一個有資料的表格
+                            // 否則只保留包含 "Account number" 的表格
+                            tables: (() => {
+                                const processedTables = allTables.map((table, tableIndex) => processTable(table, tableIndex))
+                                    .filter(table => {
+                                        // 過濾掉只有表頭沒有資料的表格
+                                        return table.rowCount > 0 || !table.isHeaderTable;
                                     });
-                                    
-                                    // 只保留有資料且包含 Account number 的表格
-                                    return hasAccountNumber && (table.rowCount > 0 || !table.isHeaderTable);
-                                })
+                                
+                                if (accountNumberProvided) {
+                                    // 如果提供了 account_number，只保留最後一個表格
+                                    if (processedTables.length > 0) {
+                                        return [processedTables[processedTables.length - 1]];
+                                    }
+                                    return [];
+                                } else {
+                                    // 否則，只保留包含 "Account number" 的表格
+                                    return processedTables.filter(table => {
+                                        const hasAccountNumber = table.headers.some(header => {
+                                            const headerText = header.toLowerCase();
+                                            return headerText.includes('account number');
+                                        });
+                                        return hasAccountNumber;
+                                    });
+                                }
+                            })()
                         };
                         
                         return result;
-                    });
+                    }, accountNumberForFilter && accountNumberForFilter !== null && accountNumberForFilter !== '');
 
                     // 截圖（用於調試和驗證）
                     // fullPage: true 表示截取整個頁面，而不只是可見區域
