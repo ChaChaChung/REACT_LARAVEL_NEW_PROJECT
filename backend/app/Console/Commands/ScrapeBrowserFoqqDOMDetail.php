@@ -19,10 +19,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * @var string
      * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
-     * {account_number?} - 要點擊的帳號號碼（可選參數）
      * {date?} - 要選擇的日期（可選參數）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {account_number?} {date?}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date?}';
 
     /**
      * 命令描述
@@ -38,12 +37,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $accountNumber = $this->argument('account_number');
         $date = $this->argument('date');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
-        $this->info("Account Number: {$accountNumber}");
         $this->info("Date: {$date}");
 
         // 檢查 Node.js 是否安裝
@@ -52,7 +49,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $accountNumber, $date);
+        $scriptPath = $this->createPuppeteerScript($url, $date);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -112,19 +109,15 @@ class ScrapeBrowserFoqqDOMDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
-     * @param string|null $accountNumber 要點擊的帳號號碼（可選）
      * @param string|null $date 要選擇的日期（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $accountNumber = null, $date = null)
+    private function createPuppeteerScript($url, $date = null)
     {
         $this->info('2. Creating browser automation script...');
 
         // 獲取認證 cookies 程式碼片段
         $cookiesCode = $this->generateFoqqPuppeteerCookiesCode();
-
-        // 將 account_number 轉換為 JavaScript 可用的格式
-        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
         // 將 date 轉換為 JavaScript 可用的格式
         $dateJs = $date ? json_encode(date('Y-m-d', strtotime($date))) : 'null';
@@ -210,73 +203,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 等待額外 5 秒，確保動態內容完全載入
                     await new Promise(resolve => setTimeout(resolve, 5000));
 
-                    // 解析 account_number 和 date
-                    let accountNumberParsed = null;
+                    // 解析 date
                     let dateParsed = null;
-                    
-                    try {
-                        if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
-                            accountNumberParsed = JSON.parse($accountNumberJs);
-                        }
-                    } catch (e) {
-                        accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs : null;
-                    }
-
-                    // 如果提供了 account_number，填入 input#find4 並點擊搜尋按鈕
-                    if (accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '') {
-                        try {
-                            // 查找 input#find4 欄位
-                            await page.waitForSelector('#find4', { timeout: 10000 });
-                            
-                            // 清空並填入 account number
-                            await page.evaluate((accountNum) => {
-                                const input = document.querySelector('#find4');
-                                if (input) {
-                                    input.value = '';
-                                    input.value = accountNum;
-                                    // 觸發 input 事件，確保頁面知道值已改變
-                                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                            }, accountNumberParsed);
-
-                            // 等待一下讓輸入完成
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-
-                            // 查找並點擊搜尋按鈕
-                            const searchButton = await page.evaluate(() => {
-                                // 優先查找包含 "搜尋" 文本的按鈕
-                                const allButtons = Array.from(document.querySelectorAll('button'));
-                                let searchBtn = allButtons.find(btn => {
-                                    const text = btn.textContent.trim();
-                                    return text === '搜尋';
-                                });
-
-                                // 判斷 searchBtn 是否存在
-                                if (searchBtn) {
-                                    const uniqueId = 'search-btn-' + Date.now();
-                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                    return {
-                                        found: true,
-                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: searchBtn.textContent.trim()
-                                    };
-                                }
-                                
-                                return { found: false };
-                            });
-
-                            // 判斷是否有找到 searchButton
-                            if (searchButton.found) {
-                                await page.click(searchButton.selector, { timeout: 5000 });
-                                
-                                // 等待頁面載入和表格更新
-                                await new Promise(resolve => setTimeout(resolve, 5000));
-                            }
-                        } catch (e) {
-                            console.log('⚠️  Error filling account number: ' + e.message);
-                        }
-                    }
                     
                     try {
                         if ($dateJs && $dateJs !== 'null' && $dateJs !== '') {
@@ -315,6 +243,37 @@ class ScrapeBrowserFoqqDOMDetail extends Command
 
                             // 等待一下讓輸入完成
                             await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            // 查找並點擊搜尋按鈕
+                            const searchButton = await page.evaluate(() => {
+                                // 優先查找包含 "搜尋" 文本的按鈕
+                                const allButtons = Array.from(document.querySelectorAll('button'));
+                                let searchBtn = allButtons.find(btn => {
+                                    const text = btn.textContent.trim();
+                                    return text === '搜尋';
+                                });
+
+                                // 判斷 searchBtn 是否存在
+                                if (searchBtn) {
+                                    const uniqueId = 'search-btn-' + Date.now();
+                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                    return {
+                                        found: true,
+                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                        text: searchBtn.textContent.trim()
+                                    };
+                                }
+                                
+                                return { found: false };
+                            });
+
+                            // 判斷是否有找到 searchButton
+                            if (searchButton.found) {
+                                await page.click(searchButton.selector, { timeout: 5000 });
+                                
+                                // 等待頁面載入和表格更新
+                                await new Promise(resolve => setTimeout(resolve, 5000));
+                            }
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
                         }
@@ -532,7 +491,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
-                            accountNumber: accountNumberParsed,
                             date: dateParsed
                         },
                         totalPages: allPagesData.length,
@@ -559,7 +517,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         timestamp: new Date().toISOString(),
                         url: '$url',
                         queryParams: {
-                            accountNumber: accountNumberParsed,
                             date: dateParsed
                         },
                         domData: domData,
@@ -675,7 +632,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         // 提取 DOM 資料
         $domData = $result['domData'] ?? [];
         
-        // 獲取查詢參數（account_number 和 date）
+        // 獲取查詢參數
         $queryParams = $result['queryParams'] ?? [];
 
         // 生成時間戳，用於文件名
@@ -723,6 +680,17 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         
         // 如果有數據，保存合併後的數據
         if (!empty($allData)) {
+            // 清理"代理"欄位：移除"公司主站代理線"字樣
+            foreach ($allData as &$row) {
+                if (isset($row['代理'])) {
+                    // 移除"公司主站代理線"，只保留前面的部分
+                    $row['代理'] = str_replace('公司主站代理線', '', $row['代理']);
+                    // 去除多餘的空白
+                    $row['代理'] = trim($row['代理']);
+                }
+            }
+            unset($row); // 解除引用
+            
             // 按照平台分類數據
             $platformData = [];
             $platformField = '平台'; // 平台欄位名稱
