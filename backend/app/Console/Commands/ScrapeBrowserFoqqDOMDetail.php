@@ -417,12 +417,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     let currentPageNumber = 1;
                     let hasMorePages = true;
 
-                    console.log('📄 開始提取分頁資料...');
-
                     // 循環提取所有分頁的資料
                     while (hasMorePages) {
-                        console.log('📖 正在提取第 ' + currentPageNumber + ' 頁...');
-                        
                         // 等待表格載入
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         
@@ -430,11 +426,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         const tableData = await extractTableData();
 
                         if (!tableData.found) {
-                            console.log('⚠️  第 ' + currentPageNumber + ' 頁未找到表格資料');
                             break;
                         }
-
-                        console.log('✅ 第 ' + currentPageNumber + ' 頁提取成功，共 ' + tableData.rowCount + ' 筆資料');
 
                         // 保存當前頁面的資料
                         allPagesData.push({
@@ -445,9 +438,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         // 檢查是否有下一頁
                         const nextPageInfo = await checkNextPage();
 
-                        if (nextPageInfo.hasNext) {
-                            console.log('🔄 找到下一頁連結，準備跳轉到第 ' + nextPageInfo.pageNumber + ' 頁...');
-                            
+                        if (nextPageInfo.hasNext) {                            
                             try {
                                 // 點擊下一頁連結
                                 await page.click('a[rel="next"]');
@@ -457,16 +448,14 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                 
                                 // 等待網路空閒
                                 await page.waitForNetworkIdle({ timeout: 10000 }).catch(() => {
-                                    console.log('⚠️  等待網路空閒超時，繼續執行...');
+                                    console.log('⚠️  Error waiting for network idle...');
                                 });
                                 
                                 currentPageNumber++;
                             } catch (error) {
-                                console.log('⚠️  跳轉下一頁時發生錯誤: ' + error.message);
                                 hasMorePages = false;
                             }
                         } else {
-                            console.log('🏁 已到達最後一頁，總共提取了 ' + currentPageNumber + ' 頁');
                             hasMorePages = false;
                         }
                     }
@@ -526,8 +515,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 將結果保存為 JSON 文件
                     fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
                     console.log('💾 Results saved to: scraped_result.json');
-                    console.log('📊 總共提取頁數:', allPagesData.length);
-                    console.log('📊 總資料筆數:', totalRows);
+                    console.log('📊 DOM elements extracted:');
 
                     return result;
                 } catch (error) {
@@ -732,17 +720,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             // 保存合併後的數據到單一 JSON 文件
             $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            
-            // 顯示統計信息
-            $this->info("📊 提取統計:");
-            $this->info("   - 總頁數: " . ($domData['totalPages'] ?? 1));
-            $this->info("   - 總資料筆數: {$totalRows}");
-            $this->info("   - 平台數量: " . count($platformData));
-            foreach ($platformData as $platform => $data) {
-                $this->info("     • {$platform}: {$data['rowCount']} 筆");
-            }
-            $this->info("   - 輸出檔案: {$mergedFileName}");
         }
+
+        $this->info("💾 Merged data saved to: {$mergedFileName}");
 
         // 將截圖從臨時目錄移動到永久存儲目錄
         $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
