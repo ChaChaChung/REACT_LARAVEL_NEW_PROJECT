@@ -67,4 +67,33 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 FoqQ Puppeteer cookies 設定程式碼片段
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateFoqqPuppeteerCookiesCode(): string
+    {
+        $auth = env('FOQQ_AGENT_AUTH', '');
+        $token = env('FOQQ_AGENT_TOKEN', '');
+        $domain = env('FOQQ_AGENT_DOMAIN');
+
+        return <<<JS
+            console.log('🔐 Setting authentication cookies...');
+
+            // 根據環境變數設定認證 cookies
+            // 這些 cookies 用於通過需要登入的頁面驗證
+            const cookies = [];
+            if ('$auth') cookies.push({ name: 'ci_session', value: '$auth', domain: '$domain' });
+            if ('$token') cookies.push({ name: 'login_root', value: '$token', domain: '$domain' });
+
+            // 如果有設定 cookies，則應用到頁面
+            if (cookies.length > 0) {
+                await page.setCookie(...cookies);
+                console.log('✅ Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No cookies found in environment variables');
+            }
+        JS;
+    }
 }
