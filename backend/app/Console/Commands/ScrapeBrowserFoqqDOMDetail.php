@@ -723,7 +723,28 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         
         // 如果有數據，保存合併後的數據
         if (!empty($allData)) {
-            // 創建合併後的數據結構（單一 data 數組，所有數據集中在一起）
+            // 按照平台分類數據
+            $platformData = [];
+            $platformField = '平台'; // 平台欄位名稱
+            
+            foreach ($allData as $row) {
+                $platform = $row[$platformField] ?? 'Unknown';
+                
+                if (!isset($platformData[$platform])) {
+                    $platformData[$platform] = [
+                        'rowCount' => 0,
+                        'data' => []
+                    ];
+                }
+                
+                $platformData[$platform]['data'][] = $row;
+                $platformData[$platform]['rowCount']++;
+            }
+            
+            // 按照平台名稱排序
+            ksort($platformData);
+            
+            // 創建合併後的數據結構（按平台分類）
             $mergedData = [
                 'metadata' => [
                     'timestamp' => $timestamp,
@@ -731,11 +752,13 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     'queryParams' => $queryParams,
                     'totalPages' => $domData['totalPages'] ?? 1,
                     'totalRows' => $totalRows,
+                    'platformCount' => count($platformData),
+                    'platforms' => array_keys($platformData)
                 ],
                 'headers' => $headers,
                 'headerCount' => count($headers),
                 'rowCount' => $totalRows,
-                'data' => $allData  // 所有頁面的數據都集中在這裡
+                'platforms' => $platformData
             ];
             
             // 保存合併後的數據到單一 JSON 文件
@@ -746,6 +769,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             $this->info("📊 提取統計:");
             $this->info("   - 總頁數: " . ($domData['totalPages'] ?? 1));
             $this->info("   - 總資料筆數: {$totalRows}");
+            $this->info("   - 平台數量: " . count($platformData));
+            foreach ($platformData as $platform => $data) {
+                $this->info("     • {$platform}: {$data['rowCount']} 筆");
+            }
             $this->info("   - 輸出檔案: {$mergedFileName}");
         }
 
