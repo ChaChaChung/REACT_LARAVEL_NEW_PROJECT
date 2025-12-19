@@ -459,6 +459,137 @@ class ScrapeBrowserFoqqDOMDetail extends Command
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
+                    // 查找並點擊所有帳號超連結
+                    console.log('🔍 Looking for account links in the table...');
+                    const accountLinks = await page.evaluate(() => {
+                        const table = document.querySelector('#simple-table');
+                        if (!table) return [];
+                        
+                        // 查找所有包含 game_report_details 的 <a> 標籤
+                        const links = Array.from(table.querySelectorAll('a[href*="game_report_details"]'));
+                        return links.map((link, index) => {
+                            const accountText = link.textContent.trim();
+                            const href = link.getAttribute('href');
+                            return {
+                                index: index,
+                                account: accountText,
+                                href: href
+                            };
+                        });
+                    });
+
+                    console.log('📋 Found ' + accountLinks.length + ' account link(s)');
+
+                    // 點擊每個連結並截圖
+                    const linkScreenshots = [];
+                    for (let i = 0; i < accountLinks.length; i++) {
+                        const linkInfo = accountLinks[i];
+                        console.log('🔗 Clicking link ' + (i + 1) + '/' + accountLinks.length + ': ' + linkInfo.account);
+                        
+                        try {
+                            // 記錄當前頁面數量
+                            const pagesBefore = (await browser.pages()).length;
+
+                            // 使用 evaluateHandle 獲取連結元素並點擊
+                            const linkElement = await page.evaluateHandle((href, accountText) => {
+                                const table = document.querySelector('#simple-table');
+                                if (!table) return null;
+                                
+                                const links = Array.from(table.querySelectorAll('a[href*="game_report_details"]'));
+                                const link = links.find(l => 
+                                    l.getAttribute('href') === href && 
+                                    l.textContent.trim() === accountText
+                                );
+                                return link;
+                            }, linkInfo.href, linkInfo.account);
+
+                            if (!linkElement) {
+                                throw new Error('Link element not found');
+                            }
+
+                            // 點擊連結（會在新標籤頁打開，因為 target="_blank"）
+                            await linkElement.click();
+                            linkElement.dispose();
+
+                            // 等待新頁面打開 - 使用輪詢方式檢查頁面數量
+                            let newPage = null;
+                            const maxWaitTime = 10000; // 10秒超時
+                            const checkInterval = 100; // 每100ms檢查一次
+                            const startTime = Date.now();
+                            
+                            while (!newPage && (Date.now() - startTime) < maxWaitTime) {
+                                const pages = await browser.pages();
+                                if (pages.length > pagesBefore) {
+                                    // 找到新頁面（最後一個打開的頁面）
+                                    newPage = pages[pages.length - 1];
+                                    // 確保不是當前頁面
+                                    if (newPage === page) {
+                                        newPage = null;
+                                    }
+                                }
+                                if (!newPage) {
+                                    await new Promise(resolve => setTimeout(resolve, checkInterval));
+                                }
+                            }
+
+                            if (!newPage || newPage === page) {
+                                throw new Error('New page did not open within timeout');
+                            }
+
+                            // 等待新頁面載入完成
+                            try {
+                                await newPage.waitForNavigation({ 
+                                    waitUntil: 'networkidle2',
+                                    timeout: 30000 
+                                });
+                            } catch (navError) {
+                                // 如果導航超時，繼續執行
+                                console.log('⚠️  Navigation timeout, continuing...');
+                            }
+
+                            // 額外等待確保內容載入
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+
+                            // 截圖新頁面
+                            const accountSafeName = linkInfo.account.replace(/[^a-zA-Z0-9]/g, '_');
+                            const screenshotPath = 'account_link_' + (i + 1) + '_' + accountSafeName + '_screenshot.png';
+                            await newPage.screenshot({ 
+                                path: screenshotPath,
+                                fullPage: true 
+                            });
+
+                            console.log('📸 Screenshot saved: ' + screenshotPath);
+
+                            const newPageUrl = await newPage.url();
+                            linkScreenshots.push({
+                                account: linkInfo.account,
+                                href: linkInfo.href,
+                                screenshot: screenshotPath,
+                                url: newPageUrl
+                            });
+
+                            // 關閉新標籤頁
+                            await newPage.close();
+
+                            // 切換回原頁面
+                            await page.bringToFront();
+                            
+                            // 等待一下再處理下一個連結
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+
+                        } catch (error) {
+                            console.log('⚠️  Error clicking link ' + (i + 1) + ': ' + error.message);
+                            linkScreenshots.push({
+                                account: linkInfo.account,
+                                href: linkInfo.href,
+                                error: error.message
+                            });
+                        }
+                    }
+
+                    // 將連結截圖信息添加到結果中
+                    domData.accountLinkScreenshots = linkScreenshots;
+
                     // 合併所有提取的資料
                     const result = {
                         timestamp: new Date().toISOString(),
@@ -670,6 +801,29 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         if (file_exists($screenshotSrc)) {
             rename($screenshotSrc, $screenshotDst);
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
+        }
+
+        // 處理帳號連結的截圖
+        $accountLinkScreenshots = $domData['accountLinkScreenshots'] ?? [];
+        if (!empty($accountLinkScreenshots)) {
+            $this->info("📸 Processing " . count($accountLinkScreenshots) . " account link screenshot(s)...");
+            
+            foreach ($accountLinkScreenshots as $index => $linkInfo) {
+                if (!empty($linkInfo['screenshot'])) {
+                    $screenshotFileName = basename($linkInfo['screenshot']);
+                    $screenshotSrc = storage_path('app/temp/' . $screenshotFileName);
+                    $accountSafeName = preg_replace('/[^a-zA-Z0-9]/', '_', $linkInfo['account'] ?? 'unknown');
+                    $linkIndex = $index + 1;
+                    $screenshotDst = storage_path("app/scraped_data/account_link_{$linkIndex}_{$accountSafeName}_{$timestamp}.png");
+                    
+                    if (file_exists($screenshotSrc)) {
+                        rename($screenshotSrc, $screenshotDst);
+                        $this->info("📸 Account link screenshot saved: {$screenshotDst}");
+                    }
+                } elseif (!empty($linkInfo['error'])) {
+                    $this->warn("⚠️  Failed to screenshot account link {$linkInfo['account']}: {$linkInfo['error']}");
+                }
+            }
         }
         
         $this->info("✅ Data processing completed!");
