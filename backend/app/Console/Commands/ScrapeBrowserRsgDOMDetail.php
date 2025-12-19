@@ -341,8 +341,27 @@ class ScrapeBrowserRsgDOM extends Command
 
                         // 如果提供了 account_number，查找並點擊該帳號的連結
                         // $accountNumberJs 和 $dateJs 是 JSON 編碼的字符串或 'null'
-                        const accountNumber = $accountNumberJs === 'null' ? null : JSON.parse($accountNumberJs);
-                        const date = $dateJs === 'null' ? null : JSON.parse($dateJs);
+                        let accountNumber = null;
+                        let date = null;
+                        
+                        try {
+                            if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                                accountNumber = JSON.parse($accountNumberJs);
+                            }
+                        } catch (e) {
+                            // 如果解析失敗，嘗試直接使用原始值
+                            accountNumber = $accountNumberJs !== 'null' ? $accountNumberJs : null;
+                        }
+                        
+                        try {
+                            if ($dateJs && $dateJs !== 'null' && $dateJs !== '') {
+                                date = JSON.parse($dateJs);
+                            }
+                        } catch (e) {
+                            // 如果解析失敗，嘗試直接使用原始值
+                            date = $dateJs !== 'null' ? $dateJs : null;
+                        }
+                        
                         if (accountNumber && accountNumber !== null && accountNumber !== '') {
                             try {
                                 // 帳號連結資訊
@@ -872,19 +891,11 @@ class ScrapeBrowserRsgDOM extends Command
                                         if (lastTable) {
                                             return [lastTable];
                                         }
-                                    } else {
-                                        console.log('⚠️  No tables with data found');
                                     }
                                     return [];
                                 } else {
-                                    // 否則，只保留包含 "Account number" 的表格
-                                    const filtered = processedTables.filter(table => {
-                                        const hasAccountNumber = table.headers.some(header => {
-                                            const headerText = header.toLowerCase();
-                                            return headerText.includes('account number');
-                                        });
-                                        return hasAccountNumber;
-                                    });
+                                    // 否則，保留所有有資料的表格（不限制必須包含 Account number）
+                                    const filtered = processedTables.filter(table => table.rowCount > 0);
                                     return filtered;
                                 }
                             })()
@@ -941,20 +952,22 @@ class ScrapeBrowserRsgDOM extends Command
                     let dateParsed = null;
                     
                     // 解析 account_number
-                    if ($accountNumberJs && $accountNumberJs !== 'null') {
+                    if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
                         try {
                             accountNumberParsed = JSON.parse($accountNumberJs);
                         } catch (e) {
-                            accountNumberParsed = null;
+                            // 如果解析失敗，嘗試直接使用原始值（可能是普通字符串）
+                            accountNumberParsed = $accountNumberJs;
                         }
                     }
                     
                     // 解析 date
-                    if ($dateJs && $dateJs !== 'null') {
+                    if ($dateJs && $dateJs !== 'null' && $dateJs !== '') {
                         try {
                             dateParsed = JSON.parse($dateJs);
                         } catch (e) {
-                            dateParsed = null;
+                            // 如果解析失敗，嘗試直接使用原始值（可能是普通字符串）
+                            dateParsed = $dateJs;
                         }
                     }
                     
@@ -1153,12 +1166,8 @@ class ScrapeBrowserRsgDOM extends Command
                                 allPagesData.forEach((pageData) => {
                                     const tables = pageData.data.tables || [];
                                     tables.forEach(table => {
-                                        const hasAccountNumber = table.headers.some(header => {
-                                            const headerText = header.toLowerCase();
-                                            return headerText.includes('account number');
-                                        });
-                                        
-                                        if (hasAccountNumber) {
+                                        // 只保留有數據的表格
+                                        if (table.rowCount > 0 && table.data && table.data.length > 0) {
                                             const tableWithPageInfo = {
                                                 ...table,
                                                 pageNumber: pageData.pageNumber,
@@ -1284,7 +1293,8 @@ class ScrapeBrowserRsgDOM extends Command
         $workingDir = dirname($scriptPath);
 
         // 在指定目錄執行 Node.js 腳本
-        $result = Process::path($workingDir)->run("node " . basename($scriptPath));
+        // 增加超時時間到 10 分鐘（600秒），因為需要爬取多頁數據
+        $result = Process::path($workingDir)->timeout(600)->run("node " . basename($scriptPath));
 
         // 顯示瀏覽器執行的輸出信息
         $this->line(""); // 空行
@@ -1334,18 +1344,13 @@ class ScrapeBrowserRsgDOM extends Command
         // 生成時間戳，用於文件名
         $timestamp = date('Y-m-d_H-i-s');
 
-        // 保存完整結果為 JSON 文件
-        $fullResultPath = storage_path("app/scraped_data/dom_scrape_full_{$timestamp}.json");
-        Storage::put("scraped_data/dom_scrape_full_{$timestamp}.json", json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-        // 保存合併後的表格資料到單一 JSON 文件
+        // 保存合併後的表格資料到單一 JSON 文件（主要輸出文件）
+        $allData = [];
+        $totalRows = 0;
+        $headers = [];
+        
+        // 首先嘗試從 tables 中提取數據
         if (!empty($domData['tables'])) {
-            // 合併所有表格的數據到一個數組中
-            $allData = [];
-            $totalRows = 0;
-            $headers = [];
-            
-            // 遍歷所有表格，合併數據
             foreach ($domData['tables'] as $tableIndex => $table) {
                 if (!empty($table['data'])) {
                     // 將當前表格的所有數據添加到總數組中
@@ -1358,7 +1363,29 @@ class ScrapeBrowserRsgDOM extends Command
                     }
                 }
             }
-            
+        }
+        
+        // 如果 tables 為空或沒有數據，嘗試從 pages 中提取數據
+        if (empty($allData) && !empty($domData['pages'])) {
+            foreach ($domData['pages'] as $page) {
+                if (!empty($page['tables'])) {
+                    foreach ($page['tables'] as $table) {
+                        if (!empty($table['data'])) {
+                            $allData = array_merge($allData, $table['data']);
+                            $totalRows += count($table['data']);
+                            
+                            // 保存表頭（使用第一個表格的表頭）
+                            if (empty($headers) && !empty($table['headers'])) {
+                                $headers = $table['headers'];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果有數據，保存合併後的數據
+        if (!empty($allData)) {
             // 創建合併後的數據結構（單一 table，所有數據在一個 data 數組中）
             $mergedData = [
                 'metadata' => [
@@ -1381,15 +1408,19 @@ class ScrapeBrowserRsgDOM extends Command
             // 保存合併後的數據到單一 JSON 文件
             $mergedFileName = "scraped_data/dom_merged_all_pages_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            $this->info("💾 Merged data saved to: scraped_data/dom_merged_all_pages_{$timestamp}.json");
-            $this->info("📊 Total rows in merged file: {$totalRows}");
-            $this->info("📋 Headers: " . implode(', ', $headers));
+
+            $tablesData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $result['url'] ?? '',
+                    'queryParams' => $queryParams,
+                ],
+                'tables' => $domData['tables']
+            ];
             
             // 可選：也保存完整表格信息（包含每個表格的詳細信息）
-            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($domData['tables'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($tablesData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         }
-
-        $this->info("💾 Full results saved to: {$fullResultPath}");
 
         // 將截圖從臨時目錄移動到永久存儲目錄
         $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
