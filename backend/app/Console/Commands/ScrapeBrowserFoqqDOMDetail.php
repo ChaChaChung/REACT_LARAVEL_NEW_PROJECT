@@ -368,43 +368,50 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             }
 
                             // 將資料行轉換為對象數組
-                            const dataRows = rows.slice(dataStartIndex).map((row, rowIndex) => {
-                                const cells = Array.from(row.querySelectorAll('td'));
-                                const rowData = {};
-                                
-                                if (headers && headers.length > 0) {
-                                    headers.forEach((header, colIndex) => {
-                                        // 清理字段名
-                                        let cleanHeader = header
-                                            .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-                                            .replace(/^_+|_+$/g, '');
-                                        
-                                        if (!cleanHeader) {
-                                            cleanHeader = 'column_' + colIndex;
-                                        }
-                                        
-                                        // 確保字段名唯一
-                                        let finalHeader = cleanHeader;
-                                        let counter = 1;
-                                        while (rowData.hasOwnProperty(finalHeader)) {
-                                            finalHeader = cleanHeader + '_' + counter;
-                                            counter++;
-                                        }
-                                        
-                                        rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
-                                    });
-                                } else {
-                                    // 如果沒有表頭，使用索引作為 key
-                                    cells.forEach((cell, colIndex) => {
-                                        rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
-                                    });
-                                }
-                                
-                                // 添加原始行索引
-                                rowData._rowIndex = rowIndex;
-                                
-                                return rowData;
-                            });
+                            const dataRows = rows.slice(dataStartIndex)
+                                .map((row, rowIndex) => {
+                                    const cells = Array.from(row.querySelectorAll('td'));
+                                    const rowData = {};
+                                    
+                                    if (headers && headers.length > 0) {
+                                        headers.forEach((header, colIndex) => {
+                                            // 清理字段名
+                                            let cleanHeader = header
+                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                .replace(/^_+|_+$/g, '');
+                                            
+                                            if (!cleanHeader) {
+                                                cleanHeader = 'column_' + colIndex;
+                                            }
+                                            
+                                            // 確保字段名唯一
+                                            let finalHeader = cleanHeader;
+                                            let counter = 1;
+                                            while (rowData.hasOwnProperty(finalHeader)) {
+                                                finalHeader = cleanHeader + '_' + counter;
+                                                counter++;
+                                            }
+                                            
+                                            rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                        });
+                                    } else {
+                                        // 如果沒有表頭，使用索引作為 key
+                                        cells.forEach((cell, colIndex) => {
+                                            rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
+                                        });
+                                    }
+                                    
+                                    // 添加原始行索引
+                                    rowData._rowIndex = rowIndex;
+                                    
+                                    return rowData;
+                                })
+                                .filter(rowData => {
+                                    // 過濾掉小計和總計行
+                                    // 檢查第一個欄位（通常是日期欄位）是否包含"小計"或"總計"
+                                    const firstValue = Object.values(rowData)[0];
+                                    return firstValue !== '小計' && firstValue !== '總計';
+                                });
 
                             return {
                                 found: true,
@@ -413,9 +420,12 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                 headers: headers,
                                 headerCount: headers.length,
                                 rowCount: dataRows.length,
-                                rawRows: rows.slice(dataStartIndex).map(row => 
-                                    Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim())
-                                ),
+                                rawRows: rows.slice(dataStartIndex)
+                                    .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
+                                    .filter(rowArray => {
+                                        // 過濾掉小計和總計行
+                                        return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
+                                    }),
                                 data: dataRows
                             };
                         });
@@ -713,46 +723,30 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         
         // 如果有數據，保存合併後的數據
         if (!empty($allData)) {
-            // 創建合併後的數據結構（單一 table，所有數據在一個 data 數組中）
+            // 創建合併後的數據結構（單一 data 數組，所有數據集中在一起）
             $mergedData = [
                 'metadata' => [
                     'timestamp' => $timestamp,
                     'url' => $result['url'] ?? '',
                     'queryParams' => $queryParams,
                     'totalPages' => $domData['totalPages'] ?? 1,
-                    'pagesCollected' => $domData['pages'] ?? [],
                     'totalRows' => $totalRows,
-                    'totalTablesMerged' => count($domData['tables'])
                 ],
-                'table' => [
-                    'headers' => $headers,
-                    'headerCount' => count($headers),
-                    'rowCount' => $totalRows,
-                    'data' => $allData  // 所有頁面的數據都在這裡
-                ]
+                'headers' => $headers,
+                'headerCount' => count($headers),
+                'rowCount' => $totalRows,
+                'data' => $allData  // 所有頁面的數據都集中在這裡
             ];
             
             // 保存合併後的數據到單一 JSON 文件
-            $mergedFileName = "scraped_data/dom_merged_all_pages_{$timestamp}.json";
+            $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-            $tablesData = [
-                'metadata' => [
-                    'timestamp' => $timestamp,
-                    'url' => $result['url'] ?? '',
-                    'queryParams' => $queryParams,
-                ],
-                'tables' => $domData['tables']
-            ];
-            
-            // 可選：也保存完整表格信息（包含每個表格的詳細信息）
-            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($tablesData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
             
             // 顯示統計信息
             $this->info("📊 提取統計:");
             $this->info("   - 總頁數: " . ($domData['totalPages'] ?? 1));
             $this->info("   - 總資料筆數: {$totalRows}");
-            $this->info("   - 合併檔案: {$mergedFileName}");
+            $this->info("   - 輸出檔案: {$mergedFileName}");
         }
 
         // 將截圖從臨時目錄移動到永久存儲目錄
