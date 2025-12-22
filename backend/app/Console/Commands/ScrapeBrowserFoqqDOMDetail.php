@@ -21,8 +21,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
+     * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -40,11 +41,13 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
+        $concurrency = $this->option('concurrency');
 
-        $this->info('=== Browser DOM Scraper ===');
+        $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
+        $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -54,7 +57,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -116,14 +119,17 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * @param string $url 要爬取的目標網址
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
+     * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
-        // 獲取認證 cookies 程式碼片段
-        $cookiesCode = $this->generateFoqqPuppeteerCookiesCode();
+        // 獲取認證 cookies 程式碼片段（主頁面用）
+        $cookiesCodeForPage = $this->generateFoqqPuppeteerCookiesCode('page');
+        // 獲取認證 cookies 程式碼片段（併發頁面用）
+        $cookiesCodeForNewPage = $this->generateFoqqPuppeteerCookiesCode('newPage');
 
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
@@ -135,12 +141,63 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             const fs = require('fs');
 
             /**
+             * 併發控制器：限制同時執行的 Promise 數量
+             * @param {Array} items - 準備要處理的項目列表（例如要爬取的頁面資訊）
+             * @param {Number} limit - 併發數量上限（同時最多執行幾個任務）
+             * @param {Function} fn - 要執行的函數，接收 (item, index) 兩個參數
+             * @return {Promise<Array>} 返回所有執行結果的陣列
+             */
+            async function promiseAllWithLimit(items, limit, fn) {
+                // 創建兩個陣列來追蹤任務狀態
+                const results = [];   // 儲存所有任務的 Promise（包含已完成和未完成的）
+                const executing = []; // 儲存「正在執行中」的任務 Promise
+                
+                // 所有要處理的項目執行迴圈
+                for (const [index, item] of items.entries()) {
+                    // 為每個項目創建一個 Promise
+                    // Promise.resolve().then() 確保函數是異步執行的
+                    const promise = Promise.resolve().then(() => fn(item, index));
+                    
+                    // 將這個 Promise 加入結果陣列
+                    // 注意：這裡只是「記錄」這個 Promise，任務可能還沒開始執行
+                    results.push(promise);
+                    
+                    // 併發控制邏輯（核心部分）
+                    if (limit <= items.length) {
+                        // 創建一個「可追蹤」的 Promise
+                        // 當原始 Promise 完成時，自動從 executing 陣列中移除自己
+                        const executing_promise = promise.then(() => 
+                            executing.splice(executing.indexOf(executing_promise), 1)
+                        );
+                        
+                        // 將這個任務加入「執行中」的任務池
+                        executing.push(executing_promise);
+                        
+                        // 如果執行中的任務數量達到上限
+                        if (executing.length >= limit) {
+                            // 使用 Promise.race 等待「任何一個」任務完成
+                            // Promise.race 的特性：只要陣列中有一個 Promise 完成，就會 resolve
+                            // 這樣可以確保：當一個任務完成後，立即可以開始下一個任務
+                            await Promise.race(executing);
+                            
+                            // 執行到這裡時，表示至少有一個任務完成了
+                            // 該任務已經自動從 executing 陣列中移除（見上面的 splice）
+                            // 現在 executing.length < limit，可以繼續添加新任務
+                        }
+                    }
+                }
+                
+                // 等待所有任務完成
+                // Promise.all 會等待 results 陣列中的所有 Promise 都完成
+                // 返回一個包含所有結果的陣列
+                return Promise.all(results);
+            }
+
+            /**
              * 從 DOM 提取資料的函數
-             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容
+             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
              */
             async function scrapeDOMContent() {
-                console.log('🚀 Starting browser automation for DOM scraping...');
-
                 // 啟動無頭瀏覽器（headless mode）
                 const browser = await puppeteer.launch({
                     headless: 'new',
@@ -202,7 +259,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         }
                     });
 
-                    $cookiesCode
+                    $cookiesCodeForPage
 
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
@@ -310,9 +367,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         }
                     }
 
-                    // 提取表格資料的函數
-                    const extractTableData = async () => {
-                        return await page.evaluate(() => {
+                    // 提取表格資料的函數（可重用）
+                    // @param {Page} pageObject - Puppeteer 頁面對象（可以是 page 或 newPage）
+                    const extractTableData = async (pageObject) => {
+                        return await pageObject.evaluate(() => {
                             // 查找 id="simple-table" 的表格
                             const table = document.querySelector('#simple-table');
                             
@@ -449,76 +507,152 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         });
                     };
 
-                    // 收集所有分頁的資料
-                    const allPagesData = [];
-                    let currentPageNumber = 1;
-                    let hasMorePages = true;
-
-                    // 循環提取所有分頁的資料
-                    while (hasMorePages) {
-                        // 確保表格已載入（減少等待時間）
-                        await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        
-                        // 提取當前頁面的表格資料
-                        const tableData = await extractTableData();
-
-                        if (!tableData.found) {
-                            break;
-                        }
-
-                        // 保存當前頁面的資料
-                        allPagesData.push({
-                            pageNumber: currentPageNumber,
-                            tables: [tableData]
-                        });
-
-                        // 檢查是否有下一頁
-                        const nextPageInfo = await checkNextPage();
-
-                        if (nextPageInfo.hasNext) {
-                            try {
-                                // 使用 JavaScript 點擊，更可靠
-                                const clickSuccess = await page.evaluate(() => {
-                                    const nextLink = document.querySelector('a[rel="next"]');
-                                    if (nextLink) {
-                                        nextLink.click();
-                                        return true;
-                                    }
-                                    return false;
-                                });
-                                
-                                if (!clickSuccess) {
-                                    hasMorePages = false;
-                                    continue;
-                                }
-                                
-                                // 等待表格內容變化（更快的方式）
-                                await page.waitForFunction(
-                                    (prevRowCount) => {
-                                        const table = document.querySelector('#simple-table tbody');
-                                        if (!table) return false;
-                                        const currentRowCount = table.querySelectorAll('tr').length;
-                                        // 檢查行數是否變化，或者等待至少有數據行
-                                        return currentRowCount > 0 && (currentRowCount !== prevRowCount || currentRowCount >= 1);
-                                    },
-                                    { timeout: 10000 },
-                                    tableData.rowCount
-                                ).catch(() => {
-                                    console.log('⚠️  Waiting for table update...');
-                                });
-                                
-                                // 等待一下確保內容穩定
-                                await new Promise(resolve => setTimeout(resolve, 800));
-                                
-                                currentPageNumber++;
-                            } catch (error) {
-                                hasMorePages = false;
-                            }
-                        } else {
-                            hasMorePages = false;
-                        }
+                    // ========== 步驟 1：爬取第一頁，獲取分頁資訊 ==========
+                    console.log('📄 Step 1: Extracting first page and pagination info...');
+                    
+                    // 確保表格已載入
+                    await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // 提取第一頁的表格資料
+                    const firstPageData = await extractTableData(page);
+                    
+                    if (!firstPageData.found) {
+                        throw new Error('No table found on first page');
                     }
+                    
+                    // 獲取所有分頁連結
+                    const paginationInfo = await page.evaluate(() => {
+                        const pageLinks = [];
+                        
+                        // 查找分頁區域（通常在 .pagination 或 ul.pagination 中）
+                        const paginationContainer = document.querySelector('.pagination') || 
+                                                   document.querySelector('ul.pagination') ||
+                                                   document.querySelector('[class*="pag"]');
+                        
+                        if (paginationContainer) {
+                            // 獲取所有分頁連結
+                            const links = paginationContainer.querySelectorAll('a[data-ci-pagination-page]');
+                            links.forEach(link => {
+                                const pageNum = parseInt(link.getAttribute('data-ci-pagination-page'));
+                                if (!isNaN(pageNum) && link.href) {
+                                    pageLinks.push({
+                                        pageNumber: pageNum,
+                                        url: link.href
+                                    });
+                                }
+                            });
+                        }
+                        
+                        // 如果沒有找到分頁連結，嘗試查找「下一頁」連結來推測總頁數
+                        if (pageLinks.length === 0) {
+                            const nextLink = document.querySelector('a[rel="next"]');
+                            if (nextLink) {
+                                // 至少有 2 頁
+                                pageLinks.push({ pageNumber: 1, url: window.location.href });
+                                pageLinks.push({ pageNumber: 2, url: nextLink.href });
+                            } else {
+                                // 只有 1 頁
+                                pageLinks.push({ pageNumber: 1, url: window.location.href });
+                            }
+                        }
+                        
+                        return {
+                            totalPages: pageLinks.length > 0 ? Math.max(...pageLinks.map(p => p.pageNumber)) : 1,
+                            pageLinks: pageLinks,
+                            currentUrl: window.location.href
+                        };
+                    });
+                    
+                    // ========== 步驟 2：並行爬取所有頁面 ==========
+                    console.log('🚀 Step 2: Starting concurrent scraping for all pages...');
+                    
+                    // 定義併發數量
+                    const CONCURRENCY_LIMIT = $concurrency;
+                    
+                    // 準備要爬取的頁面列表（從第 2 頁開始，因為第 1 頁已經爬了）
+                    const pagesToScrape = [];
+                    for (let i = 2; i <= paginationInfo.totalPages; i++) {
+                        // 嘗試從 pageLinks 中找到對應的 URL
+                        const pageLink = paginationInfo.pageLinks.find(p => p.pageNumber === i);
+                        const pageUrl = pageLink ? pageLink.url : paginationInfo.currentUrl + (paginationInfo.currentUrl.includes('?') ? '&' : '?') + 'page=' + i;
+                        pagesToScrape.push({ pageNumber: i, url: pageUrl });
+                    }
+                    
+                    // 並行爬取函數
+                    const scrapePage = async (pageInfo, index) => {
+                        const newPage = await browser.newPage();
+                        
+                        try {
+                            // 設定視窗大小
+                            await newPage.setViewport({ width: 1920, height: 1080 });
+                            
+                            // 設定 User Agent
+                            await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                            
+                            // 設定資源攔截
+                            await newPage.setRequestInterception(true);
+                            newPage.on('request', (req) => {
+                                const resourceType = req.resourceType();
+                                if (['image', 'font', 'media'].includes(resourceType)) {
+                                    req.abort();
+                                } else {
+                                    req.continue();
+                                }
+                            });
+                            
+                            $cookiesCodeForNewPage
+                            
+                            // 導航到頁面
+                            await newPage.goto(pageInfo.url, {
+                                waitUntil: 'domcontentloaded',
+                                timeout: 30000
+                            });
+                            
+                            // 等待表格載入
+                            await newPage.waitForSelector('#simple-table tbody tr', { timeout: 8000 }).catch(() => {});
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // 提取表格資料
+                            const tableData = await extractTableData(newPage);
+                            
+                            return {
+                                pageNumber: pageInfo.pageNumber,
+                                tables: [tableData]
+                            };
+                            
+                        } catch (error) {
+                            console.error('❌ [Page ' + pageInfo.pageNumber + '] Error: ' + error.message);
+                            return {
+                                pageNumber: pageInfo.pageNumber,
+                                tables: [],
+                                error: error.message
+                            };
+                        } finally {
+                            await newPage.close();
+                        }
+                    };
+                    
+                    // 使用併發控制並行爬取所有頁面
+                    const otherPagesData = await promiseAllWithLimit(
+                        pagesToScrape,
+                        CONCURRENCY_LIMIT,
+                        scrapePage
+                    );
+                    
+                    // 合併第一頁和其他頁面的資料
+                    const allPagesData = [
+                        {
+                            pageNumber: 1,
+                            tables: [firstPageData]
+                        },
+                        ...otherPagesData
+                    ];
+                    
+                    // 按頁碼排序
+                    allPagesData.sort((a, b) => a.pageNumber - b.pageNumber);
+                    
+                    console.log('✅ All pages scraped successfully!');
 
                     // 獲取當前頁面信息
                     const pageInfo = await page.evaluate(() => {
