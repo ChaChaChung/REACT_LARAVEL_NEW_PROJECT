@@ -861,8 +861,11 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 }
             }
         }
+
+        // 初始化合併後的檔案名稱
+        $mergedFileName = null;
         
-        // 如果有數據，保存合併後的數據
+        // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
             // 清理"代理"欄位：移除"公司主站代理線"字樣
             foreach ($allData as &$row) {
@@ -875,21 +878,28 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             }
             unset($row); // 解除引用
             
-            // 按照平台分類數據
+            // 按照平台分類數資料
             $platformData = [];
-            $platformField = '平台'; // 平台欄位名稱
+            // 平台欄位名稱
+            $platformField = '平台';
             
+            // 所有資料執行迴圈
             foreach ($allData as $row) {
+                // 取出平台名稱
                 $platform = $row[$platformField] ?? 'Unknown';
                 
+                // 如果平台資料不存在，創建新的平台資料
                 if (!isset($platformData[$platform])) {
+                    // 創建新的平台資料
                     $platformData[$platform] = [
                         'rowCount' => 0,
                         'data' => []
                     ];
                 }
                 
+                // 將資料加入平台資料
                 $platformData[$platform]['data'][] = $row;
+                // 增加平台資料的行數
                 $platformData[$platform]['rowCount']++;
             }
             
@@ -913,14 +923,44 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 'platforms' => $platformData
             ];
             
-            // 保存合併後的數據到單一 JSON 文件
+            // 保存合併後的資料到單一 JSON 檔案
             $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            
+            // 為每個平台單獨保存檔案
+            foreach ($platformData as $platform => $data) {
+                // 取出平台名稱
+                $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
+                
+                // 創建平台專屬的資料結構
+                $platformFileData = [
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'platform' => $platform,
+                        'url' => $result['url'] ?? '',
+                        'queryParams' => $queryParams,
+                        'totalPages' => $domData['totalPages'] ?? 1,
+                        'totalRows' => $data['rowCount']
+                    ],
+                    'headers' => $headers,
+                    'headerCount' => count($headers),
+                    'rowCount' => $data['rowCount'],
+                    'data' => $data['data']
+                ];
+                
+                // 保存平台專屬檔案
+                $platformFileName = "scraped_data/platform_{$safePlatformName}_{$timestamp}.json";
+                Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            }
+            
+            $this->info("✅ All platform-specific files saved!");
         }
 
-        $this->info("💾 Merged data saved to: {$mergedFileName}");
+        if (!$mergedFileName) {
+            $this->warn("⚠️ No data to save.");
+        }
 
-        // 將截圖從臨時目錄移動到永久存儲目錄
+        // 將截圖從臨時目錄移動到永久儲存目錄
         $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
         $screenshotDst = storage_path("app/scraped_data/dom_screenshot_{$timestamp}.png");
         
