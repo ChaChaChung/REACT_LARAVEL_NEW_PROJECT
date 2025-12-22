@@ -841,11 +841,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 headers: headerRow || [],
                                 headerCount: headerRow ? headerRow.length : 0,
                                 rowCount: dataRows.length,
-                                // 原始格式（保留以備用）
-                                rawRows: rows.slice(dataStartIndex).map(row => 
-                                    Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim())
-                                ),
-                                // 結構化資料（推薦使用）
                                 data: dataRows
                             };
                         }
@@ -1025,7 +1020,6 @@ class ScrapeBrowserRsgDOM extends Command
                             
                             // 將當前頁資料添加到總資料中（無論是否有數據都添加，以便後續處理）
                             allPagesData.push({
-                                pageNumber: currentPage,
                                 data: pageData
                             });
                             
@@ -1034,7 +1028,6 @@ class ScrapeBrowserRsgDOM extends Command
                             // 即使沒有數據，也添加到 allPagesData 中，以便後續處理
                             if (pageData) {
                                 allPagesData.push({
-                                    pageNumber: currentPage,
                                     data: pageData
                                 });
                             }
@@ -1092,10 +1085,6 @@ class ScrapeBrowserRsgDOM extends Command
                             date: dateParsed
                         },
                         totalPages: currentPage,
-                        pages: allPagesData.map(page => ({
-                            pageNumber: page.pageNumber,
-                            tables: page.data.tables
-                        })),
                         // 合併所有分頁的表格資料
                         tables: (() => {
                             if (allPagesData.length === 0) {
@@ -1124,7 +1113,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             // 為資料添加頁碼標記
                                             const tableWithPageInfo = {
                                                 ...lastTable,
-                                                pageNumber: pageData.pageNumber,
                                                 data: lastTable.data.map(row => ({
                                                     ...row,
                                                     _pageNumber: pageData.pageNumber
@@ -1146,15 +1134,10 @@ class ScrapeBrowserRsgDOM extends Command
                                     
                                     return [{
                                         ...firstTable,
-                                        tableIndex: firstTable.tableIndex,
-                                        tableId: firstTable.tableId,
-                                        tableClass: firstTable.tableClass,
-                                        isHeaderTable: firstTable.isHeaderTable,
                                         headers: firstTable.headers,
                                         headerCount: firstTable.headerCount,
                                         rowCount: allData.length,
                                         data: allData,  // 所有頁面的數據都合併到這裡
-                                        pages: mergedTables.map(t => t.pageNumber)
                                     }];
                                 }
                                 
@@ -1170,7 +1153,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         if (table.rowCount > 0 && table.data && table.data.length > 0) {
                                             const tableWithPageInfo = {
                                                 ...table,
-                                                pageNumber: pageData.pageNumber,
                                                 data: table.data.map(row => ({
                                                     ...row,
                                                     _pageNumber: pageData.pageNumber
@@ -1194,7 +1176,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         ...firstTable,
                                         rowCount: allData.length,
                                         data: allData,  // 所有頁面的數據都合併到這裡
-                                        pages: mergedTables.map(t => t.pageNumber)
                                     }];
                                 } else if (mergedTables.length === 1) {
                                     // 即使只有一個表格，也要確保數據已合併
@@ -1392,14 +1373,11 @@ class ScrapeBrowserRsgDOM extends Command
                     'timestamp' => $timestamp,
                     'url' => $result['url'] ?? '',
                     'queryParams' => $queryParams,
-                    'totalPages' => $domData['totalPages'] ?? 1,
-                    'pagesCollected' => $domData['pages'] ?? [],
-                    'totalRows' => $totalRows,
-                    'totalTablesMerged' => count($domData['tables'])
                 ],
                 'table' => [
                     'headers' => $headers,
                     'headerCount' => count($headers),
+                    'totalPages' => $domData['totalPages'] ?? 1,
                     'rowCount' => $totalRows,
                     'data' => $allData  // 所有頁面的數據都在這裡
                 ]
@@ -1408,18 +1386,6 @@ class ScrapeBrowserRsgDOM extends Command
             // 保存合併後的數據到單一 JSON 文件
             $mergedFileName = "scraped_data/dom_merged_all_pages_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-            $tablesData = [
-                'metadata' => [
-                    'timestamp' => $timestamp,
-                    'url' => $result['url'] ?? '',
-                    'queryParams' => $queryParams,
-                ],
-                'tables' => $domData['tables']
-            ];
-            
-            // 可選：也保存完整表格信息（包含每個表格的詳細信息）
-            Storage::put("scraped_data/dom_tables_{$timestamp}.json", json_encode($tablesData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         }
 
         // 將截圖從臨時目錄移動到永久存儲目錄
