@@ -19,9 +19,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * @var string
      * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
-     * {date?} - 要選擇的日期（可選參數）
+     * {date_start?} - 要選擇的開始日期（可選參數）
+     * {date_end?} - 要選擇的結束日期（可選參數）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date?}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?}';
 
     /**
      * 命令描述
@@ -37,11 +38,15 @@ class ScrapeBrowserFoqqDOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $date = $this->argument('date');
+        $date_start = $this->argument('date_start');
+        $date_end = $this->argument('date_end');
 
         $this->info('=== Browser DOM Scraper ===');
         $this->info("Target URL: {$url}");
-        $this->info("Date: {$date}");
+        $this->info("Date Start: {$date_start}");
+        $this->info("Date End: {$date_end}");
+
+        $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
@@ -49,7 +54,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -109,10 +114,11 @@ class ScrapeBrowserFoqqDOMDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
-     * @param string|null $date 要選擇的日期（可選）
+     * @param string|null $date_start 要選擇的開始日期（可選）
+     * @param string|null $date_end 要選擇的結束日期（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date = null)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -120,7 +126,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $cookiesCode = $this->generateFoqqPuppeteerCookiesCode();
 
         // 將 date 轉換為 JavaScript 可用的格式
-        $dateJs = $date ? json_encode(date('Y-m-d', strtotime($date))) : 'null';
+        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
+        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -164,7 +171,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         '--disable-web-security',
                         '--disable-features=VizDisplayCompositor',
                         '--temp-profile',
-                        '--memory-pressure-off'
+                        '--memory-pressure-off',
+                        // 額外的性能優化
+                        '--disable-javascript-harmony-shipping',
+                        '--disable-sync'
                     ],
                     // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
@@ -180,69 +190,89 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
+                    // 攔截並阻止不必要的資源載入（大幅提升速度）
+                    await page.setRequestInterception(true);
+                    page.on('request', (req) => {
+                        const resourceType = req.resourceType();
+                        // 只阻止圖片、字體、媒體檔案，保留 CSS 和 JS 以確保分頁功能正常
+                        if (['image', 'font', 'media'].includes(resourceType)) {
+                            req.abort();
+                        } else {
+                            req.continue();
+                        }
+                    });
+
                     $cookiesCode
 
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
                     page.on('console', msg => {
                         if (msg.type() === 'error') {
-                            console.log('❌ Browser console error:', msg.text());
+                            // console.log('❌ Browser console error:', msg.text());
                         }
                     });
 
                     console.log('🌐 Navigating to:', '$url');
 
                     // 導航到目標頁面
-                    // waitUntil: 'networkidle2' 表示等待網路空閒（沒有超過 2 個網路連接）時才繼續
+                    // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
                     // timeout: 30000 設定 30 秒超時
                     await page.goto('$url', {
-                        waitUntil: 'networkidle2',
+                        waitUntil: 'domcontentloaded',
                         timeout: 30000
                     });
 
-                    // 等待額外 5 秒，確保動態內容完全載入
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    // 等待表格元素出現，而不是固定等待時間
+                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {
+                        console.log('⚠️  Table not found, waiting 2 seconds...');
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 1000));
 
                     // 解析 date
-                    let dateParsed = null;
+                    let dateStartParsed = null;
+                    let dateEndParsed = null;
                     
                     try {
-                        if ($dateJs && $dateJs !== 'null' && $dateJs !== '') {
-                            dateParsed = JSON.parse($dateJs);
+                        if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
+                            dateStartParsed = JSON.parse($dateStartJs);
+                        }
+                        if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
+                            dateEndParsed = JSON.parse($dateEndJs);
                         }
                     } catch (e) {
-                        dateParsed = $dateJs !== 'null' ? $dateJs : null;
+                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
+                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
                     }
 
-                    // 如果提供了 date，填入 input#find1 和 input#find2
-                    if (dateParsed && dateParsed !== null && dateParsed !== '') {
+                    // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
+                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
                             // 查找 input#find1 和 input#find2 欄位
                             await page.waitForSelector('#find1', { timeout: 10000 });
                             await page.waitForSelector('#find2', { timeout: 10000 });
                             
                             // 清空並填入日期到兩個欄位
-                            await page.evaluate((dateValue) => {
+                            await page.evaluate((dateStartValue, dateEndValue) => {
                                 const input1 = document.querySelector('#find1');
                                 const input2 = document.querySelector('#find2');
                                 
                                 if (input1) {
                                     input1.value = '';
-                                    input1.value = dateValue;
+                                    input1.value = dateStartValue;
                                     input1.dispatchEvent(new Event('input', { bubbles: true }));
                                     input1.dispatchEvent(new Event('change', { bubbles: true }));
                                 }
                                 
                                 if (input2) {
                                     input2.value = '';
-                                    input2.value = dateValue;
+                                    input2.value = dateEndValue;
                                     input2.dispatchEvent(new Event('input', { bubbles: true }));
                                     input2.dispatchEvent(new Event('change', { bubbles: true }));
                                 }
-                            }, dateParsed);
+                            }, dateStartParsed, dateEndParsed);
 
-                            // 等待一下讓輸入完成
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 減少等待時間
+                            await new Promise(resolve => setTimeout(resolve, 500));
 
                             // 查找並點擊搜尋按鈕
                             const searchButton = await page.evaluate(() => {
@@ -271,8 +301,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             if (searchButton.found) {
                                 await page.click(searchButton.selector, { timeout: 5000 });
                                 
-                                // 等待頁面載入和表格更新
-                                await new Promise(resolve => setTimeout(resolve, 5000));
+                                // 等待表格更新（使用更短的等待時間）
+                                await page.waitForSelector('#simple-table', { timeout: 8000 }).catch(() => {});
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             }
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
@@ -397,10 +428,16 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             const nextLink = document.querySelector('a[rel="next"]');
                             
                             if (nextLink && nextLink.href) {
+                                // 檢查連結是否可見和可點擊
+                                const style = window.getComputedStyle(nextLink);
+                                const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                                
                                 return {
                                     hasNext: true,
                                     nextUrl: nextLink.href,
-                                    pageNumber: nextLink.getAttribute('data-ci-pagination-page')
+                                    pageNumber: nextLink.getAttribute('data-ci-pagination-page'),
+                                    isVisible: isVisible,
+                                    text: nextLink.textContent.trim()
                                 };
                             }
                             
@@ -419,8 +456,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
 
                     // 循環提取所有分頁的資料
                     while (hasMorePages) {
-                        // 等待表格載入
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        // 確保表格已載入（減少等待時間）
+                        await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         
                         // 提取當前頁面的表格資料
                         const tableData = await extractTableData();
@@ -438,18 +476,40 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         // 檢查是否有下一頁
                         const nextPageInfo = await checkNextPage();
 
-                        if (nextPageInfo.hasNext) {                            
+                        if (nextPageInfo.hasNext) {
                             try {
-                                // 點擊下一頁連結
-                                await page.click('a[rel="next"]');
-                                
-                                // 等待頁面跳轉和資料載入
-                                await new Promise(resolve => setTimeout(resolve, 3000));
-                                
-                                // 等待網路空閒
-                                await page.waitForNetworkIdle({ timeout: 10000 }).catch(() => {
-                                    console.log('⚠️  Error waiting for network idle...');
+                                // 使用 JavaScript 點擊，更可靠
+                                const clickSuccess = await page.evaluate(() => {
+                                    const nextLink = document.querySelector('a[rel="next"]');
+                                    if (nextLink) {
+                                        nextLink.click();
+                                        return true;
+                                    }
+                                    return false;
                                 });
+                                
+                                if (!clickSuccess) {
+                                    hasMorePages = false;
+                                    continue;
+                                }
+                                
+                                // 等待表格內容變化（更快的方式）
+                                await page.waitForFunction(
+                                    (prevRowCount) => {
+                                        const table = document.querySelector('#simple-table tbody');
+                                        if (!table) return false;
+                                        const currentRowCount = table.querySelectorAll('tr').length;
+                                        // 檢查行數是否變化，或者等待至少有數據行
+                                        return currentRowCount > 0 && (currentRowCount !== prevRowCount || currentRowCount >= 1);
+                                    },
+                                    { timeout: 10000 },
+                                    tableData.rowCount
+                                ).catch(() => {
+                                    console.log('⚠️  Waiting for table update...');
+                                });
+                                
+                                // 等待一下確保內容穩定
+                                await new Promise(resolve => setTimeout(resolve, 800));
                                 
                                 currentPageNumber++;
                             } catch (error) {
@@ -480,7 +540,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
-                            date: dateParsed
+                            date_start: dateStartParsed,
+                            date_end: dateEndParsed
                         },
                         totalPages: allPagesData.length,
                         pages: allPagesData,
@@ -493,10 +554,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         totalRows += table.rowCount || 0;
                     });
 
-                    // 截圖（用於調試和驗證）- 截取最後一頁
+                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
                     await page.screenshot({ 
                         path: 'scraped_page_screenshot.png',
-                        fullPage: true 
+                        fullPage: false  // 改為 false，只截可見區域，速度更快
                     });
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
@@ -506,7 +567,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         timestamp: new Date().toISOString(),
                         url: '$url',
                         queryParams: {
-                            date: dateParsed
+                            date_start: dateStartParsed,
+                            date_end: dateEndParsed
                         },
                         domData: domData,
                         success: true
@@ -575,8 +637,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $workingDir = dirname($scriptPath);
 
         // 在指定目錄執行 Node.js 腳本
-        // 增加超時時間到 10 分鐘（600秒），因為需要爬取多頁數據
-        $result = Process::path($workingDir)->timeout(600)->run("node " . basename($scriptPath));
+        // 增加超時時間到 60 分鐘（6000秒），因為需要爬取多頁數據
+        $result = Process::path($workingDir)->timeout(6000)->run("node " . basename($scriptPath));
 
         // 顯示瀏覽器執行的輸出信息
         $this->line(""); // 空行
@@ -733,6 +795,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
         }
         
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
 }
