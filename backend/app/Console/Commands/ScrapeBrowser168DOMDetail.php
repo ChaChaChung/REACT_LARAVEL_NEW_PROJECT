@@ -17,14 +17,13 @@ class ScrapeBrowser168DOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-168-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}
+     * 執行方式：php artisan agent:scrape-168-dom-detail {url} {date_start?} {date_end?}
      * {url} - 要爬取的目標網址（必需參數）
-     * {account_number?} - 要點擊的帳號號碼（可選參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
-     * {--concurrency=4} - 併發數量（可選，預設為 4）
+     * {account_number?} - 要點擊的帳號號碼（可選參數）
      */
-    protected $signature = 'agent:scrape-168-dom-detail {url} {account_number?} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-168-dom-detail {url} {date_start?} {date_end?} {account_number?}';
 
     /**
      * 命令描述
@@ -40,17 +39,15 @@ class ScrapeBrowser168DOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $account_number = $this->argument('account_number');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
-        $concurrency = $this->option('concurrency');
+        $account_number = $this->argument('account_number');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
-        $this->info("Account Number: {$account_number}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
-        $this->info("Concurrency: {$concurrency}");
+        $this->info("Account Number: {$account_number}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -60,7 +57,7 @@ class ScrapeBrowser168DOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $account_number, $date_start, $date_end, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -120,13 +117,12 @@ class ScrapeBrowser168DOMDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
-     * @param string|null $account_number 要點擊的帳號號碼（可選）
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
-     * @param int $concurrency 併發數量
+     * @param string|null $account_number 要點擊的帳號號碼（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $account_number = null, $date_start = null, $date_end = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -190,7 +186,7 @@ class ScrapeBrowser168DOMDetail extends Command
                 });
 
                 try {
-                    // 創建新的瀏覽器頁面（使用 let 因為可能會切換到新視窗）
+                    // 創建新的瀏覽器頁面
                     let page = await browser.newPage();
 
                     // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
@@ -287,7 +283,7 @@ class ScrapeBrowser168DOMDetail extends Command
                         await new Promise(resolve => setTimeout(resolve, 500));
                     }
                     
-                    // 提取「開始查詢」按鈕觸發的 URL 並直接導航（不打開新窗口）
+                    // 提取「開始查詢」按鈕觸發的 URL 並直接導航
                     const reportUrl = await page.evaluate(() => {
                         // 查找「開始查詢」按鈕
                         const buttons = Array.from(document.querySelectorAll('input[type="button"], button'));
@@ -323,8 +319,7 @@ class ScrapeBrowser168DOMDetail extends Command
                     if (reportUrl) {
                         // 將相對路徑轉換為絕對路徑
                         const absoluteUrl = reportUrl.startsWith('http') ? reportUrl : new URL(reportUrl, page.url()).href;
-                        console.log('📍 Navigating to report page:', absoluteUrl);
-                        // 直接導航到報表頁面（不打開新窗口）
+                        // 直接導航到報表頁面
                         await page.goto(absoluteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
@@ -335,9 +330,9 @@ class ScrapeBrowser168DOMDetail extends Command
                     });
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    // 查找並點擊表格中的第一個代理商鏈接
+                    // 查找並點擊表格中的第一個代理
                     const agentLinkClicked = await page.evaluate(() => {
-                        // 查找表格中帶有 upField=up6_id 的鏈接（代理商詳細頁面鏈接）
+                        // 查找表格中帶有 upField=up6_id 的代理
                         const table = document.querySelector('table.table-bordered');
                         if (table) {
                             const links = table.querySelectorAll('a[href*="upField=up6_id"]');
@@ -360,14 +355,14 @@ class ScrapeBrowser168DOMDetail extends Command
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                     
-                    // 無論是否點擊了代理商鏈接，都嘗試在當前頁面查找並點擊會員鏈接（會打開新視窗）
+                    // 無論是否點擊了代理網址，都嘗試在當前頁面查找並點擊會員網址
                     {
-                        // 如果指定了 accountNumber，就點擊該會員；否則點擊第一個會員
+                        // 如果指定了 accountNumber，就點擊該會員
                         const targetAccount = accountNumberParsed;
                         
-                        // 提取會員鏈接的 URL 並直接導航（不打開新窗口）
+                        // 提取會員網址的 URL 並直接導航
                         const memberLinkInfo = await page.evaluate((targetAccountName) => {
-                            // 查找表格中的會員鏈接
+                            // 查找表格中的會員網址
                             const table = document.querySelector('table.table-bordered');
                             if (table) {
                                 const rows = table.querySelectorAll('tbody tr');
@@ -379,13 +374,13 @@ class ScrapeBrowser168DOMDetail extends Command
                                         // 找第一個 td（會員名稱列）
                                         const firstCell = row.querySelector('td');
                                         if (firstCell) {
-                                            // 找第一個 a 標籤（會員名稱鏈接）
+                                            // 找第一個 a 標籤（會員名稱網址）
                                             const link = firstCell.querySelector('a');
                                             if (link) {
                                                 const memberName = link.textContent.trim();
                                                 
                                                 // 排除非會員行
-                                                if (memberName && memberName !== '無搜尋資料' && memberName !== '小計' && memberName !== '總計') {
+                                                if (memberName && memberName !== '總計') {
                                                     // 如果指定了目標帳號，檢查是否匹配
                                                     if (targetAccountName) {
                                                         // 檢查會員名稱是否包含目標帳號
@@ -405,21 +400,6 @@ class ScrapeBrowser168DOMDetail extends Command
                                                                 url: url
                                                             };
                                                         }
-                                                    } else {
-                                                        // 如果沒有指定目標帳號，使用第一個會員
-                                                        const onclick = link.getAttribute('onclick');
-                                                        let url = null;
-                                                        if (onclick) {
-                                                            const match = onclick.match(/window\\.open\\s*\\(\\s*['"]([^'"]+)['"]/);
-                                                            if (match) {
-                                                                url = match[1];
-                                                            }
-                                                        }
-                                                        return {
-                                                            found: true,
-                                                            memberName: memberName,
-                                                            url: url
-                                                        };
                                                     }
                                                 }
                                             }
@@ -434,7 +414,7 @@ class ScrapeBrowser168DOMDetail extends Command
                             // 將相對路徑轉換為絕對路徑
                             const absoluteMemberUrl = memberLinkInfo.url.startsWith('http') ? memberLinkInfo.url : new URL(memberLinkInfo.url, page.url()).href;
                             console.log('📍 Navigating to member detail page:', memberLinkInfo.memberName);
-                            // 直接導航到會員詳細頁面（不打開新窗口）
+                            // 直接導航到會員詳細頁面
                             await page.goto(absoluteMemberUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
                             await new Promise(resolve => setTimeout(resolve, 2000));
                         } else {
@@ -939,11 +919,7 @@ class ScrapeBrowser168DOMDetail extends Command
                     'metadata' => [
                         'timestamp' => $timestamp,
                         'url' => $result['url'] ?? '',
-                        'queryParams' => $queryParams,
-                        'tableIndex' => $tableIndex,
-                        'tableId' => $tableData['tableId'],
-                        'tableClass' => $tableData['tableClass'],
-                        'totalRows' => $tableData['rowCount']
+                        'queryParams' => $queryParams
                     ],
                     'headers' => $tableData['headers'],
                     'headerCount' => $tableData['headerCount'],
@@ -960,45 +936,6 @@ class ScrapeBrowser168DOMDetail extends Command
             $allData = $firstTable['data'];
             $headers = $firstTable['headers'];
             
-            // 清理"代理"欄位：移除"公司主站代理線"字樣
-            foreach ($allData as &$row) {
-                if (isset($row['代理'])) {
-                    // 移除"公司主站代理線"，只保留前面的部分
-                    $row['代理'] = str_replace('公司主站代理線', '', $row['代理']);
-                    // 去除多餘的空白
-                    $row['代理'] = trim($row['代理']);
-                }
-            }
-            unset($row); // 解除引用
-            
-            // 按照平台分類數資料
-            $platformData = [];
-            // 平台欄位名稱
-            $platformField = '平台';
-            
-            // 所有資料執行迴圈
-            foreach ($allData as $row) {
-                // 取出平台名稱
-                $platform = $row[$platformField] ?? 'Unknown';
-                
-                // 如果平台資料不存在，創建新的平台資料
-                if (!isset($platformData[$platform])) {
-                    // 創建新的平台資料
-                    $platformData[$platform] = [
-                        'rowCount' => 0,
-                        'data' => []
-                    ];
-                }
-                
-                // 將資料加入平台資料
-                $platformData[$platform]['data'][] = $row;
-                // 增加平台資料的行數
-                $platformData[$platform]['rowCount']++;
-            }
-            
-            // 按照平台名稱排序
-            ksort($platformData);
-            
             // 創建合併後的數據結構（按平台分類）
             $mergedData = [
                 'metadata' => [
@@ -1006,45 +943,17 @@ class ScrapeBrowser168DOMDetail extends Command
                     'url' => $result['url'] ?? '',
                     'queryParams' => $queryParams,
                     'totalPages' => $domData['totalPages'] ?? 1,
-                    'totalRows' => $totalRows,
-                    'platformCount' => count($platformData),
-                    'platforms' => array_keys($platformData)
+                    'totalRows' => $totalRows
                 ],
                 'headers' => $headers,
                 'headerCount' => count($headers),
                 'rowCount' => $totalRows,
-                'platforms' => $platformData
+                'data' => $allData
             ];
             
             // 保存合併後的資料到單一 JSON 檔案
             $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            
-            // 為每個平台單獨保存檔案
-            foreach ($platformData as $platform => $data) {
-                // 取出平台名稱
-                $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
-                
-                // 創建平台專屬的資料結構
-                $platformFileData = [
-                    'metadata' => [
-                        'timestamp' => $timestamp,
-                        'platform' => $platform,
-                        'url' => $result['url'] ?? '',
-                        'queryParams' => $queryParams,
-                        'totalPages' => $domData['totalPages'] ?? 1,
-                        'totalRows' => $data['rowCount']
-                    ],
-                    'headers' => $headers,
-                    'headerCount' => count($headers),
-                    'rowCount' => $data['rowCount'],
-                    'data' => $data['data']
-                ];
-                
-                // 保存平台專屬檔案
-                $platformFileName = "scraped_data/platform_{$safePlatformName}_{$timestamp}.json";
-                Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            }
             
             $this->info("✅ All platform-specific files saved!");
         }
