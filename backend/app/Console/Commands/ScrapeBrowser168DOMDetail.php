@@ -130,12 +130,8 @@ class ScrapeBrowser168DOMDetail extends Command
     {
         $this->info('2. Creating browser automation script...');
 
-        // 獲取認證 cookies 程式碼片段（主頁面用）
+        // 獲取認證 cookies 程式碼片段（只需要一個頁面）
         $cookiesCodeForPage = $this->generate168PuppeteerCookiesCode('page');
-        // 獲取認證 cookies 程式碼片段（併發頁面用）
-        $cookiesCodeForNewPage = $this->generate168PuppeteerCookiesCode('newPage');
-        // 獲取認證 cookies 程式碼片段（會員詳細頁面用）
-        $cookiesCodeForMemberPage = $this->generate168PuppeteerCookiesCode('memberPage');
 
         // 將 account_number 轉換為 JavaScript 可用的格式
         $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
@@ -150,61 +146,8 @@ class ScrapeBrowser168DOMDetail extends Command
             const fs = require('fs');
 
             /**
-             * 併發控制器：限制同時執行的 Promise 數量
-             * @param {Array} items - 準備要處理的項目列表（例如要爬取的頁面資訊）
-             * @param {Number} limit - 併發數量上限（同時最多執行幾個任務）
-             * @param {Function} fn - 要執行的函數，接收 (item, index) 兩個參數
-             * @return {Promise<Array>} 返回所有執行結果的陣列
-             */
-            async function promiseAllWithLimit(items, limit, fn) {
-                // 創建兩個陣列來追蹤任務狀態
-                const results = [];   // 儲存所有任務的 Promise（包含已完成和未完成的）
-                const executing = []; // 儲存「正在執行中」的任務 Promise
-                
-                // 所有要處理的項目執行迴圈
-                for (const [index, item] of items.entries()) {
-                    // 為每個項目創建一個 Promise
-                    // Promise.resolve().then() 確保函數是異步執行的
-                    const promise = Promise.resolve().then(() => fn(item, index));
-                    
-                    // 將這個 Promise 加入結果陣列
-                    // 注意：這裡只是「記錄」這個 Promise，任務可能還沒開始執行
-                    results.push(promise);
-                    
-                    // 併發控制邏輯（核心部分）
-                    if (limit <= items.length) {
-                        // 創建一個「可追蹤」的 Promise
-                        // 當原始 Promise 完成時，自動從 executing 陣列中移除自己
-                        const executing_promise = promise.then(() => 
-                            executing.splice(executing.indexOf(executing_promise), 1)
-                        );
-                        
-                        // 將這個任務加入「執行中」的任務池
-                        executing.push(executing_promise);
-                        
-                        // 如果執行中的任務數量達到上限
-                        if (executing.length >= limit) {
-                            // 使用 Promise.race 等待「任何一個」任務完成
-                            // Promise.race 的特性：只要陣列中有一個 Promise 完成，就會 resolve
-                            // 這樣可以確保：當一個任務完成後，立即可以開始下一個任務
-                            await Promise.race(executing);
-                            
-                            // 執行到這裡時，表示至少有一個任務完成了
-                            // 該任務已經自動從 executing 陣列中移除（見上面的 splice）
-                            // 現在 executing.length < limit，可以繼續添加新任務
-                        }
-                    }
-                }
-                
-                // 等待所有任務完成
-                // Promise.all 會等待 results 陣列中的所有 Promise 都完成
-                // 返回一個包含所有結果的陣列
-                return Promise.all(results);
-            }
-
-            /**
              * 從 DOM 提取資料的函數
-             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
+             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容
              */
             async function scrapeDOMContent() {
                 // 啟動無頭瀏覽器（headless mode）
@@ -344,62 +287,46 @@ class ScrapeBrowser168DOMDetail extends Command
                         await new Promise(resolve => setTimeout(resolve, 500));
                     }
                     
-                    // 設置監聽新標籤頁的事件
-                    const newPagePromise = new Promise(resolve => {
-                        browser.on('targetcreated', async (target) => {
-                            if (target.type() === 'page') {
-                                const newPage = await target.page();
-                                resolve(newPage);
-                            }
-                        });
-                    });
-                    
-                    // 查找並點擊「開始查詢」按鈕
-                    const buttonClicked = await page.evaluate(() => {
-                        // 查找包含「開始查詢」文字的按鈕
+                    // 提取「開始查詢」按鈕觸發的 URL 並直接導航（不打開新窗口）
+                    const reportUrl = await page.evaluate(() => {
+                        // 查找「開始查詢」按鈕
                         const buttons = Array.from(document.querySelectorAll('input[type="button"], button'));
                         const startButton = buttons.find(btn => 
                             btn.value === '開始查詢' || btn.textContent.trim() === '開始查詢'
                         );
                         
-                        if (startButton) {
-                            startButton.click();
-                            return true;
+                        if (startButton && startButton.onclick) {
+                            // Hook window.open 來捕獲 URL（不管是直接調用還是通過函數調用）
+                            let capturedUrl = null;
+                            const originalOpen = window.open;
+                            
+                            window.open = function(url) {
+                                capturedUrl = url;
+                                return null;  // 返回 null 避免真的打開新窗口
+                            };
+                            
+                            try {
+                                // 執行 onclick（會觸發 window.open，但被我們 hook 了）
+                                startButton.onclick.call(startButton);
+                            } catch (e) {
+                                console.log('Error calling onclick:', e);
+                            }
+                            
+                            // 恢復原始的 window.open
+                            window.open = originalOpen;
+                            
+                            return capturedUrl;
                         }
-                        return false;
+                        return null;
                     });
                     
-                    if (buttonClicked) {
-                        // 等待新標籤頁打開（最多等待 10 秒）
-                        const newPage = await Promise.race([
-                            newPagePromise,
-                            new Promise((_, reject) => setTimeout(() => reject(new Error('New page timeout')), 10000))
-                        ]).catch(() => null);
-                        
-                        if (newPage) {
-                            await newPage.setViewport({ width: 1920, height: 1080 });
-                            
-                            // 設置資源攔截
-                            await newPage.setRequestInterception(true);
-                            newPage.on('request', (req) => {
-                                const resourceType = req.resourceType();
-                                if (['image', 'font', 'media'].includes(resourceType)) {
-                                    req.abort();
-                                } else {
-                                    req.continue();
-                                }
-                            });
-                            
-                            $cookiesCodeForNewPage
-                            
-                            // 等待新頁面加載完成
-                            await newPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 關閉原始頁面，使用新頁面
-                            await page.close();
-                            page = newPage;
-                        }
+                    if (reportUrl) {
+                        // 將相對路徑轉換為絕對路徑
+                        const absoluteUrl = reportUrl.startsWith('http') ? reportUrl : new URL(reportUrl, page.url()).href;
+                        console.log('📍 Navigating to report page:', absoluteUrl);
+                        // 直接導航到報表頁面（不打開新窗口）
+                        await page.goto(absoluteUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                        await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                     
                     // 等待表格元素出現
@@ -438,17 +365,8 @@ class ScrapeBrowser168DOMDetail extends Command
                         // 如果指定了 accountNumber，就點擊該會員；否則點擊第一個會員
                         const targetAccount = accountNumberParsed;
                         
-                        // 設置監聽新標籤頁的事件（會員詳細頁面）
-                        const memberPagePromise = new Promise(resolve => {
-                            browser.on('targetcreated', async (target) => {
-                                if (target.type() === 'page') {
-                                    const memberPage = await target.page();
-                                    resolve(memberPage);
-                                }
-                            });
-                        });
-                        
-                        const memberLinkClicked = await page.evaluate((targetAccountName) => {
+                        // 提取會員鏈接的 URL 並直接導航（不打開新窗口）
+                        const memberLinkInfo = await page.evaluate((targetAccountName) => {
                             // 查找表格中的會員鏈接
                             const table = document.querySelector('table.table-bordered');
                             if (table) {
@@ -472,18 +390,35 @@ class ScrapeBrowser168DOMDetail extends Command
                                                     if (targetAccountName) {
                                                         // 檢查會員名稱是否包含目標帳號
                                                         if (memberName.includes(targetAccountName)) {
-                                                            link.click();
+                                                            // 提取 onclick 中的 URL
+                                                            const onclick = link.getAttribute('onclick');
+                                                            let url = null;
+                                                            if (onclick) {
+                                                                const match = onclick.match(/window\\.open\\s*\\(\\s*['"]([^'"]+)['"]/);
+                                                                if (match) {
+                                                                    url = match[1];
+                                                                }
+                                                            }
                                                             return {
-                                                                clicked: true,
-                                                                memberName: memberName
+                                                                found: true,
+                                                                memberName: memberName,
+                                                                url: url
                                                             };
                                                         }
                                                     } else {
-                                                        // 如果沒有指定目標帳號，點擊第一個會員
-                                                        link.click();
+                                                        // 如果沒有指定目標帳號，使用第一個會員
+                                                        const onclick = link.getAttribute('onclick');
+                                                        let url = null;
+                                                        if (onclick) {
+                                                            const match = onclick.match(/window\\.open\\s*\\(\\s*['"]([^'"]+)['"]/);
+                                                            if (match) {
+                                                                url = match[1];
+                                                            }
+                                                        }
                                                         return {
-                                                            clicked: true,
-                                                            memberName: memberName
+                                                            found: true,
+                                                            memberName: memberName,
+                                                            url: url
                                                         };
                                                     }
                                                 }
@@ -492,42 +427,16 @@ class ScrapeBrowser168DOMDetail extends Command
                                     }
                                 }
                             }
-                            return { clicked: false };
+                            return { found: false };
                         }, targetAccount);
                         
-                        if (memberLinkClicked.clicked) {                            
-                            // 等待新標籤頁打開（最多等待 10 秒）
-                            const memberPage = await Promise.race([
-                                memberPagePromise,
-                                new Promise((_, reject) => setTimeout(() => reject(new Error('Member page timeout')), 10000))
-                            ]).catch(() => null);
-                            
-                            if (memberPage) {
-                                await memberPage.setViewport({ width: 1920, height: 1080 });
-                                
-                                // 設置資源攔截
-                                await memberPage.setRequestInterception(true);
-                                memberPage.on('request', (req) => {
-                                    const resourceType = req.resourceType();
-                                    if (['image', 'font', 'media'].includes(resourceType)) {
-                                        req.abort();
-                                    } else {
-                                        req.continue();
-                                    }
-                                });
-                                
-                                $cookiesCodeForMemberPage
-                                
-                                // 等待新頁面加載完成
-                                await memberPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-                                await new Promise(resolve => setTimeout(resolve, 2000));
-                                
-                                // 關閉會員列表頁面，使用新的會員詳細頁面
-                                await page.close();
-                                page = memberPage;
-                            } else {
-                                console.log('⚠️  Member detail window did not open');
-                            }
+                        if (memberLinkInfo.found && memberLinkInfo.url) {
+                            // 將相對路徑轉換為絕對路徑
+                            const absoluteMemberUrl = memberLinkInfo.url.startsWith('http') ? memberLinkInfo.url : new URL(memberLinkInfo.url, page.url()).href;
+                            console.log('📍 Navigating to member detail page:', memberLinkInfo.memberName);
+                            // 直接導航到會員詳細頁面（不打開新窗口）
+                            await page.goto(absoluteMemberUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                         } else {
                             console.log('⚠️  No member link found, will scrape current page');
                         }
@@ -755,36 +664,8 @@ class ScrapeBrowser168DOMDetail extends Command
                         });
                     };
 
-                    // 檢查是否有下一頁的函數
-                    const checkNextPage = async () => {
-                        return await page.evaluate(() => {
-                            // 查找包含 rel="next" 的分頁連結
-                            const nextLink = document.querySelector('a[rel="next"]');
-                            
-                            if (nextLink && nextLink.href) {
-                                // 檢查連結是否可見和可點擊
-                                const style = window.getComputedStyle(nextLink);
-                                const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-                                
-                                return {
-                                    hasNext: true,
-                                    nextUrl: nextLink.href,
-                                    pageNumber: nextLink.getAttribute('data-ci-pagination-page'),
-                                    isVisible: isVisible,
-                                    text: nextLink.textContent.trim()
-                                };
-                            }
-                            
-                            return {
-                                hasNext: false,
-                                nextUrl: null,
-                                pageNumber: null
-                            };
-                        });
-                    };
-
-                    // ========== 步驟 1：爬取第一頁，獲取分頁資訊 ==========
-                    console.log('📄 Step 1: Extracting first page and pagination info...');
+                    // ========== 提取表格資料 ==========
+                    console.log('📄 Extracting table data...');
                     
                     // 確保表格已載入
                     await page.waitForSelector('.report_list tbody tr, table.num_table tbody tr, table.table-bordered tbody tr', { timeout: 5000 }).catch(() => {});
@@ -808,10 +689,10 @@ class ScrapeBrowser168DOMDetail extends Command
                         };
                     });
                     
-                    // 提取第一頁的表格資料
-                    const firstPageData = await extractTableData(page);
+                    // 提取表格資料
+                    const tableData = await extractTableData(page);
                     
-                    if (!firstPageData.found) {
+                    if (!tableData.found) {
                         // Take a screenshot for debugging
                         await page.screenshot({ 
                             path: 'debug_screenshot.png',
@@ -823,141 +704,10 @@ class ScrapeBrowser168DOMDetail extends Command
                         const html = await page.content();
                         fs.writeFileSync('debug_page.html', html);
                         
-                        throw new Error('No table found on first page');
+                        throw new Error('No table found on page');
                     }
                     
-                    // 獲取所有分頁連結
-                    const paginationInfo = await page.evaluate(() => {
-                        const pageLinks = [];
-                        
-                        // 查找分頁區域（通常在 .pagination 或 ul.pagination 中）
-                        const paginationContainer = document.querySelector('.pagination') || 
-                                                   document.querySelector('ul.pagination') ||
-                                                   document.querySelector('[class*="pag"]');
-                        
-                        if (paginationContainer) {
-                            // 獲取所有分頁連結
-                            const links = paginationContainer.querySelectorAll('a[data-ci-pagination-page]');
-                            links.forEach(link => {
-                                const pageNum = parseInt(link.getAttribute('data-ci-pagination-page'));
-                                if (!isNaN(pageNum) && link.href) {
-                                    pageLinks.push({
-                                        pageNumber: pageNum,
-                                        url: link.href
-                                    });
-                                }
-                            });
-                        }
-                        
-                        // 如果沒有找到分頁連結，嘗試查找「下一頁」連結來推測總頁數
-                        if (pageLinks.length === 0) {
-                            const nextLink = document.querySelector('a[rel="next"]');
-                            if (nextLink) {
-                                // 至少有 2 頁
-                                pageLinks.push({ pageNumber: 1, url: window.location.href });
-                                pageLinks.push({ pageNumber: 2, url: nextLink.href });
-                            } else {
-                                // 只有 1 頁
-                                pageLinks.push({ pageNumber: 1, url: window.location.href });
-                            }
-                        }
-                        
-                        return {
-                            totalPages: pageLinks.length > 0 ? Math.max(...pageLinks.map(p => p.pageNumber)) : 1,
-                            pageLinks: pageLinks,
-                            currentUrl: window.location.href
-                        };
-                    });
-                    
-                    // ========== 步驟 2：並行爬取所有頁面 ==========
-                    console.log('🚀 Step 2: Starting concurrent scraping for all pages...');
-                    
-                    // 定義併發數量
-                    const CONCURRENCY_LIMIT = $concurrency;
-                    
-                    // 準備要爬取的頁面列表（從第 2 頁開始，因為第 1 頁已經爬了）
-                    const pagesToScrape = [];
-                    for (let i = 2; i <= paginationInfo.totalPages; i++) {
-                        // 嘗試從 pageLinks 中找到對應的 URL
-                        const pageLink = paginationInfo.pageLinks.find(p => p.pageNumber === i);
-                        const pageUrl = pageLink ? pageLink.url : paginationInfo.currentUrl + (paginationInfo.currentUrl.includes('?') ? '&' : '?') + 'page=' + i;
-                        pagesToScrape.push({ pageNumber: i, url: pageUrl });
-                    }
-                    
-                    // 並行爬取函數
-                    const scrapePage = async (pageInfo, index) => {
-                        const newPage = await browser.newPage();
-                        
-                        try {
-                            // 設定視窗大小
-                            await newPage.setViewport({ width: 1920, height: 1080 });
-                            
-                            // 設定 User Agent
-                            await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-                            
-                            // 設定資源攔截
-                            await newPage.setRequestInterception(true);
-                            newPage.on('request', (req) => {
-                                const resourceType = req.resourceType();
-                                if (['image', 'font', 'media'].includes(resourceType)) {
-                                    req.abort();
-                                } else {
-                                    req.continue();
-                                }
-                            });
-                            
-                            $cookiesCodeForNewPage
-                            
-                            // 導航到頁面
-                            await newPage.goto(pageInfo.url, {
-                                waitUntil: 'domcontentloaded',
-                                timeout: 30000
-                            });
-                            
-                            // 等待表格載入
-                            await newPage.waitForSelector('.report_list tbody tr, table.num_table tbody tr, table.table-bordered tbody tr', { timeout: 8000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                            
-                            // 提取表格資料
-                            const tableData = await extractTableData(newPage);
-                            
-                            return {
-                                pageNumber: pageInfo.pageNumber,
-                                tables: [tableData]
-                            };
-                            
-                        } catch (error) {
-                            console.error('❌ [Page ' + pageInfo.pageNumber + '] Error: ' + error.message);
-                            return {
-                                pageNumber: pageInfo.pageNumber,
-                                tables: [],
-                                error: error.message
-                            };
-                        } finally {
-                            await newPage.close();
-                        }
-                    };
-                    
-                    // 使用併發控制並行爬取所有頁面
-                    const otherPagesData = await promiseAllWithLimit(
-                        pagesToScrape,
-                        CONCURRENCY_LIMIT,
-                        scrapePage
-                    );
-                    
-                    // 合併第一頁和其他頁面的資料
-                    const allPagesData = [
-                        {
-                            pageNumber: 1,
-                            tables: [firstPageData]
-                        },
-                        ...otherPagesData
-                    ];
-                    
-                    // 按頁碼排序
-                    allPagesData.sort((a, b) => a.pageNumber - b.pageNumber);
-                    
-                    console.log('✅ All pages scraped successfully!');
+                    console.log('✅ Table data extracted successfully!');
 
                     // 獲取當前頁面信息
                     const pageInfo = await page.evaluate(() => {
@@ -967,31 +717,25 @@ class ScrapeBrowser168DOMDetail extends Command
                         };
                     });
 
-                    // 合併所有頁面的表格資料
-                    const allTables = [];
-                    allPagesData.forEach(pageData => {
-                        if (pageData.tables && pageData.tables.length > 0) {
-                            allTables.push(...pageData.tables);
-                        }
-                    });
-
-                    // 構建結果數據結構
+                    // 構建結果數據結構（單頁）
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
                             date_start: dateStartParsed,
                             date_end: dateEndParsed
                         },
-                        totalPages: allPagesData.length,
-                        pages: allPagesData,
-                        tables: allTables
+                        totalPages: 1,
+                        pages: [
+                            {
+                                pageNumber: 1,
+                                tables: [tableData]
+                            }
+                        ],
+                        tables: [tableData]
                     };
 
                     // 計算總資料筆數
-                    let totalRows = 0;
-                    allTables.forEach(table => {
-                        totalRows += table.rowCount || 0;
-                    });
+                    const totalRows = tableData.rowCount || 0;
 
                     // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
                     await page.screenshot({ 
