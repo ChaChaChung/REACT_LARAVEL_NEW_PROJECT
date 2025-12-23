@@ -612,12 +612,107 @@ class ScrapeBrowser168DOMDetail extends Command
                                             }
                                             
                                             rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                            
+                                            // 特殊處理：如果是「注單內容」欄位，提取藍色字體（投注內容）
+                                            if (finalHeader === '注單內容' && cells[colIndex]) {
+                                                const blueText = cells[colIndex].querySelector('.text_color_blue');
+                                                if (blueText) {
+                                                    rowData['投注內容'] = blueText.textContent.trim();
+                                                }
+                                            }
                                         });
                                     } else {
                                         // 如果沒有表頭，使用索引作為 key
                                         cells.forEach((cell, colIndex) => {
                                             rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
                                         });
+                                    }
+                                    
+                                    // 解析特定欄位
+                                    // 1. 注單編號欄位：拆分成「注單編號」、「投注方式」、「IP」
+                                    if (rowData['注單編號']) {
+                                        const lines = rowData['注單編號'].split('\\n').map(line => line.trim()).filter(line => line);
+                                        if (lines.length >= 1) {
+                                            rowData['注單編號'] = lines[0];  // 第一行：BK28770853
+                                        }
+                                        if (lines.length >= 2) {
+                                            // 第二行：[手機投注] -> 移除方括號
+                                            rowData['投注方式'] = lines[1].replace(/[\\[\\]]/g, '');
+                                        }
+                                        if (lines.length >= 3) {
+                                            rowData['IP'] = lines[2];  // 第三行：101.8.77.10 (TW)
+                                        }
+                                    }
+                                    
+                                    // 2. 球類/玩法欄位：拆分成「球類」、「玩法」、「歸帳日」
+                                    if (rowData['球類_玩法']) {
+                                        const lines = rowData['球類_玩法'].split('\\n').map(line => line.trim()).filter(line => line);
+                                        if (lines.length >= 1) {
+                                            rowData['球類'] = lines[0];  // 第一行：美籃 A盤
+                                        }
+                                        if (lines.length >= 2) {
+                                            rowData['玩法'] = lines[1];  // 第二行：全場讓分
+                                        }
+                                        if (lines.length >= 3) {
+                                            // 第三行：[歸帳日:25-12-04] -> 提取日期
+                                            const match = lines[2].match(/歸帳日[：:]\\s*(\\S+)/);
+                                            if (match) {
+                                                rowData['歸帳日'] = match[1].replace(/[\\[\\]]/g, '');
+                                            }
+                                        }
+                                        // 刪除原始欄位
+                                        delete rowData['球類_玩法'];
+                                    }
+                                    
+                                    // 3. 注單內容欄位：解析比賽詳情
+                                    if (rowData['注單內容']) {
+                                        const content = rowData['注單內容'];
+                                        
+                                        // 檢查是哪種格式
+                                        // 格式1: [109] 底特律活塞 4.5 密爾瓦基公鹿 [主] [113] - 客隊在前
+                                        // 格式2: [112] 奧蘭多魔術 [主] 8 聖安東尼奧馬刺 [114] - 主隊在前
+                                        
+                                        // 先嘗試格式1（客隊在前）
+                                        const format1Match = content.match(/\\[(\\d+)\\]\\s*([^\\n]+?)\\s+([\\d.-]+)\\s+([\\u4e00-\\u9fa5]+)\\s*\\[主\\]\\s*\\[(\\d+)\\]/);
+                                        if (format1Match) {
+                                            rowData['客隊分數'] = format1Match[1];
+                                            rowData['客隊'] = format1Match[2].trim();
+                                            rowData['盤口'] = format1Match[3].trim();
+                                            rowData['主隊'] = format1Match[4].trim();
+                                            rowData['主隊分數'] = format1Match[5];
+                                        } else {
+                                            // 嘗試格式2（主隊在前）
+                                            const format2Match = content.match(/\\[(\\d+)\\]\\s*([^\\n]+?)\\s*\\[主\\]\\s*([\\d.-]+)\\s+([\\u4e00-\\u9fa5]+)\\s*\\[(\\d+)\\]/);
+                                            if (format2Match) {
+                                                rowData['主隊分數'] = format2Match[1];
+                                                rowData['主隊'] = format2Match[2].trim();
+                                                rowData['盤口'] = format2Match[3].trim();
+                                                rowData['客隊'] = format2Match[4].trim();
+                                                rowData['客隊分數'] = format2Match[5];
+                                            }
+                                        }
+                                        
+                                        // 提取比賽時間和聯賽：[25-12-04 09:00] [美國NBA]
+                                        const gameInfoMatch = content.match(/\\[([\\d-]+\\s[\\d:]+)\\]\\s*\\[([^\\]]+)\\]/);
+                                        if (gameInfoMatch) {
+                                            rowData['比賽時間'] = gameInfoMatch[1];
+                                            rowData['聯賽'] = gameInfoMatch[2];
+                                        }
+                                        
+                                        // 提取賠率：@ 0.970
+                                        const oddsMatch = content.match(/@\\s*([\\d.]+)/);
+                                        if (oddsMatch) {
+                                            rowData['賠率'] = oddsMatch[1];
+                                        }
+                                        
+                                        // 提取結算時間：[結算:25-12-04 11:39:13]
+                                        const settlementMatch = content.match(/結算[：:]\\s*([\\d-]+\\s[\\d:]+)/);
+                                        if (settlementMatch) {
+                                            rowData['結算時間'] = settlementMatch[1];
+                                        }
+                                        
+                                        // 移除原始的注單內容欄位（已經提取了所有需要的資訊）
+                                        delete rowData['注單內容'];
                                     }
                                     
                                     // 添加原始行索引
