@@ -19,11 +19,12 @@ class ScrapeBrowser168DOMDetail extends Command
      * @var string
      * 執行方式：php artisan agent:scrape-168-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}
      * {url} - 要爬取的目標網址（必需參數）
+     * {account_number?} - 要點擊的帳號號碼（可選參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-168-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-168-dom-detail {url} {account_number?} {date_start?} {date_end?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -39,12 +40,14 @@ class ScrapeBrowser168DOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
+        $account_number = $this->argument('account_number');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
         $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
+        $this->info("Account Number: {$account_number}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Concurrency: {$concurrency}");
@@ -57,7 +60,7 @@ class ScrapeBrowser168DOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $account_number, $date_start, $date_end, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -117,12 +120,13 @@ class ScrapeBrowser168DOMDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
+     * @param string|null $account_number 要點擊的帳號號碼（可選）
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
      * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $account_number = null, $date_start = null, $date_end = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -130,6 +134,11 @@ class ScrapeBrowser168DOMDetail extends Command
         $cookiesCodeForPage = $this->generate168PuppeteerCookiesCode('page');
         // 獲取認證 cookies 程式碼片段（併發頁面用）
         $cookiesCodeForNewPage = $this->generate168PuppeteerCookiesCode('newPage');
+        // 獲取認證 cookies 程式碼片段（會員詳細頁面用）
+        $cookiesCodeForMemberPage = $this->generate168PuppeteerCookiesCode('memberPage');
+
+        // 將 account_number 轉換為 JavaScript 可用的格式
+        $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
 
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
@@ -282,24 +291,33 @@ class ScrapeBrowser168DOMDetail extends Command
                     // 等待頁面加載完成
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
-                    // 解析日期參數
-                    let dateStartParsed = null;
-                    let dateEndParsed = null;
+                    // 解析帳號號碼
+                    let accountNumberParsed = $accountNumberJs;
                     
-                    try {
-                        if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
-                            dateStartParsed = JSON.parse($dateStartJs);
-                        }
-                        if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
-                            dateEndParsed = JSON.parse($dateEndJs);
-                        }
-                    } catch (e) {
-                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
-                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                    // 如果提供了帳號號碼參數，填入 account_number 欄位
+                    if (accountNumberParsed && accountNumberParsed !== null) {
+                        await page.evaluate((accountNumber) => {
+                            // 填入帳號號碼
+                            if (accountNumber) {
+                                const accountNumberInput = document.querySelector('input[name="username"]');
+                                if (accountNumberInput) {
+                                    accountNumberInput.value = accountNumber;
+                                    accountNumberInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    accountNumberInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }
+                        }, accountNumberParsed);
+                        
+                        // 等待一下讓表單處理完成
+                        await new Promise(resolve => setTimeout(resolve, 500));
                     }
+
+                    // 解析日期參數（PHP 的 json_encode 已經處理好了，直接使用）
+                    let dateStartParsed = $dateStartJs;
+                    let dateEndParsed = $dateEndJs;
                     
                     // 如果提供了日期參數，填入 starttime 和 endtime 欄位
-                    if (dateStartParsed || dateEndParsed) {
+                    if ((dateStartParsed && dateStartParsed !== null) || (dateEndParsed && dateEndParsed !== null)) {
                         await page.evaluate((startDate, endDate) => {
                             // 填入開始日期
                             if (startDate) {
@@ -414,23 +432,126 @@ class ScrapeBrowser168DOMDetail extends Command
                         await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
+                    
+                    // 無論是否點擊了代理商鏈接，都嘗試在當前頁面查找並點擊會員鏈接（會打開新視窗）
+                    {
+                        // 如果指定了 accountNumber，就點擊該會員；否則點擊第一個會員
+                        const targetAccount = accountNumberParsed;
+                        
+                        // 設置監聽新標籤頁的事件（會員詳細頁面）
+                        const memberPagePromise = new Promise(resolve => {
+                            browser.on('targetcreated', async (target) => {
+                                if (target.type() === 'page') {
+                                    const memberPage = await target.page();
+                                    resolve(memberPage);
+                                }
+                            });
+                        });
+                        
+                        const memberLinkClicked = await page.evaluate((targetAccountName) => {
+                            // 查找表格中的會員鏈接
+                            const table = document.querySelector('table.table-bordered');
+                            if (table) {
+                                const rows = table.querySelectorAll('tbody tr');
+                                if (rows.length > 0) {
+                                    // 跳過標題行，找到目標會員
+                                    for (let i = 0; i < rows.length; i++) {
+                                        const row = rows[i];
+                                        
+                                        // 找第一個 td（會員名稱列）
+                                        const firstCell = row.querySelector('td');
+                                        if (firstCell) {
+                                            // 找第一個 a 標籤（會員名稱鏈接）
+                                            const link = firstCell.querySelector('a');
+                                            if (link) {
+                                                const memberName = link.textContent.trim();
+                                                
+                                                // 排除非會員行
+                                                if (memberName && memberName !== '無搜尋資料' && memberName !== '小計' && memberName !== '總計') {
+                                                    // 如果指定了目標帳號，檢查是否匹配
+                                                    if (targetAccountName) {
+                                                        // 檢查會員名稱是否包含目標帳號
+                                                        if (memberName.includes(targetAccountName)) {
+                                                            link.click();
+                                                            return {
+                                                                clicked: true,
+                                                                memberName: memberName
+                                                            };
+                                                        }
+                                                    } else {
+                                                        // 如果沒有指定目標帳號，點擊第一個會員
+                                                        link.click();
+                                                        return {
+                                                            clicked: true,
+                                                            memberName: memberName
+                                                        };
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            return { clicked: false };
+                        }, targetAccount);
+                        
+                        if (memberLinkClicked.clicked) {                            
+                            // 等待新標籤頁打開（最多等待 10 秒）
+                            const memberPage = await Promise.race([
+                                memberPagePromise,
+                                new Promise((_, reject) => setTimeout(() => reject(new Error('Member page timeout')), 10000))
+                            ]).catch(() => null);
+                            
+                            if (memberPage) {
+                                await memberPage.setViewport({ width: 1920, height: 1080 });
+                                
+                                // 設置資源攔截
+                                await memberPage.setRequestInterception(true);
+                                memberPage.on('request', (req) => {
+                                    const resourceType = req.resourceType();
+                                    if (['image', 'font', 'media'].includes(resourceType)) {
+                                        req.abort();
+                                    } else {
+                                        req.continue();
+                                    }
+                                });
+                                
+                                $cookiesCodeForMemberPage
+                                
+                                // 等待新頁面加載完成
+                                await memberPage.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                // 關閉會員列表頁面，使用新的會員詳細頁面
+                                await page.close();
+                                page = memberPage;
+                            } else {
+                                console.log('⚠️  Member detail window did not open');
+                            }
+                        } else {
+                            console.log('⚠️  No member link found, will scrape current page');
+                        }
+                    }
 
-                    // 提取表格資料的函數（可重用）
+                    // 提取表格資料的函數（可重用）- 提取所有表格
                     // @param {Page} pageObject - Puppeteer 頁面對象（可以是 page 或 newPage）
                     const extractTableData = async (pageObject) => {
                         return await pageObject.evaluate(() => {
-                            // 查找表格（優先使用 report_list，否則使用任何 table.table-bordered）
-                            const table = document.querySelector('.report_list') || 
-                                         document.querySelector('table.num_table') ||
-                                         document.querySelector('table.table-bordered.bg-white');
+                            // 查找所有表格（不限制 class，只要是 table 標籤）
+                            const tables = document.querySelectorAll('table');
                             
-                            if (!table) {
+                            if (tables.length === 0) {
                                 return {
                                     found: false,
-                                    error: 'Table not found (tried .report_list, table.num_table, table.table-bordered)'
+                                    error: 'No tables found'
                                 };
                             }
-
+                            
+                            // 提取所有表格的數據
+                            const allTablesData = [];
+                            
+                            tables.forEach((table, tableIndex) => {
+                            
                             // 提取表頭
                             let headers = [];
                             const thead = table.querySelector('thead');
@@ -511,20 +632,30 @@ class ScrapeBrowser168DOMDetail extends Command
                                     return firstValue !== '小計' && firstValue !== '總計';
                                 });
 
+                                allTablesData.push({
+                                    tableIndex: tableIndex,
+                                    tableId: table.id || null,
+                                    tableClass: table.className || null,
+                                    headers: headers,
+                                    headerCount: headers.length,
+                                    rowCount: dataRows.length,
+                                    rawRows: rows.slice(dataStartIndex)
+                                        .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
+                                        .filter(rowArray => {
+                                            // 過濾掉小計和總計行
+                                            return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
+                                        }),
+                                    data: dataRows
+                                });
+                            });
+                            
+                            // 返回所有表格的數據
                             return {
                                 found: true,
-                                tableId: table.id || null,
-                                tableClass: table.className || null,
-                                headers: headers,
-                                headerCount: headers.length,
-                                rowCount: dataRows.length,
-                                rawRows: rows.slice(dataStartIndex)
-                                    .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
-                                    .filter(rowArray => {
-                                        // 過濾掉小計和總計行
-                                        return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
-                                    }),
-                                data: dataRows
+                                tableCount: allTablesData.length,
+                                tables: allTablesData,
+                                // 保持向後兼容，返回第一個表格的數據作為主數據
+                                ...allTablesData[0]
                             };
                         });
                     };
@@ -901,51 +1032,97 @@ class ScrapeBrowser168DOMDetail extends Command
         // 生成時間戳，用於文件名
         $timestamp = date('Y-m-d_H-i-s');
 
-        // 保存合併後的表格資料到單一 JSON 文件（主要輸出文件）
-        $allData = [];
+        // 保存所有表格的資料（分別保存，不合併）
+        $allTablesData = [];
         $totalRows = 0;
-        $headers = [];
         
         // 首先嘗試從 tables 中提取數據
         if (!empty($domData['tables'])) {
             foreach ($domData['tables'] as $tableIndex => $table) {
-                if (!empty($table['data'])) {
-                    // 將當前表格的所有數據添加到總數組中
-                    $allData = array_merge($allData, $table['data']);
-                    $totalRows += count($table['data']);
-                    
-                    // 保存表頭（使用第一個表格的表頭）
-                    if (empty($headers) && !empty($table['headers'])) {
-                        $headers = $table['headers'];
+                // 檢查是否有嵌套的 tables 屬性（新格式）
+                if (!empty($table['tables'])) {
+                    foreach ($table['tables'] as $subTableIndex => $subTable) {
+                        if (!empty($subTable['data'])) {
+                            $allTablesData[] = [
+                                'tableIndex' => $subTableIndex,
+                                'tableId' => $subTable['tableId'] ?? null,
+                                'tableClass' => $subTable['tableClass'] ?? null,
+                                'headers' => $subTable['headers'] ?? [],
+                                'headerCount' => count($subTable['headers'] ?? []),
+                                'rowCount' => count($subTable['data']),
+                                'data' => $subTable['data']
+                            ];
+                            $totalRows += count($subTable['data']);
+                        }
                     }
+                } elseif (!empty($table['data'])) {
+                    // 舊格式：直接處理表格數據
+                    $allTablesData[] = [
+                        'tableIndex' => $tableIndex,
+                        'tableId' => $table['tableId'] ?? null,
+                        'tableClass' => $table['tableClass'] ?? null,
+                        'headers' => $table['headers'] ?? [],
+                        'headerCount' => count($table['headers'] ?? []),
+                        'rowCount' => count($table['data']),
+                        'data' => $table['data']
+                    ];
+                    $totalRows += count($table['data']);
                 }
             }
         }
         
         // 如果 tables 為空或沒有數據，嘗試從 pages 中提取數據
-        if (empty($allData) && !empty($domData['pages'])) {
+        if (empty($allTablesData) && !empty($domData['pages'])) {
             foreach ($domData['pages'] as $page) {
                 if (!empty($page['tables'])) {
-                    foreach ($page['tables'] as $table) {
+                    foreach ($page['tables'] as $tableIndex => $table) {
                         if (!empty($table['data'])) {
-                            $allData = array_merge($allData, $table['data']);
+                            $allTablesData[] = [
+                                'tableIndex' => $tableIndex,
+                                'tableId' => $table['tableId'] ?? null,
+                                'tableClass' => $table['tableClass'] ?? null,
+                                'headers' => $table['headers'] ?? [],
+                                'headerCount' => count($table['headers'] ?? []),
+                                'rowCount' => count($table['data']),
+                                'data' => $table['data']
+                            ];
                             $totalRows += count($table['data']);
-                            
-                            // 保存表頭（使用第一個表格的表頭）
-                            if (empty($headers) && !empty($table['headers'])) {
-                                $headers = $table['headers'];
-                            }
                         }
                     }
                 }
             }
         }
 
-        // 初始化合併後的檔案名稱
-        $mergedFileName = null;
-        
-        // 如果有資料，保存合併後的資料
-        if (!empty($allData)) {
+        // 如果有資料，分別保存每個表格的資料
+        if (!empty($allTablesData)) {
+            // 為每個表格創建單獨的文件
+            foreach ($allTablesData as $tableIndex => $tableData) {
+                $tableFileName = "scraped_data/table_{$tableIndex}_{$timestamp}.json";
+                $tableFileData = [
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'url' => $result['url'] ?? '',
+                        'queryParams' => $queryParams,
+                        'tableIndex' => $tableIndex,
+                        'tableId' => $tableData['tableId'],
+                        'tableClass' => $tableData['tableClass'],
+                        'totalRows' => $tableData['rowCount']
+                    ],
+                    'headers' => $tableData['headers'],
+                    'headerCount' => $tableData['headerCount'],
+                    'rowCount' => $tableData['rowCount'],
+                    'data' => $tableData['data']
+                ];
+                
+                Storage::put($tableFileName, json_encode($tableFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("✅ Table {$tableIndex} data saved to: {$tableFileName}");
+            }
+            
+            // 同時保存舊格式的合併數據（向後兼容，使用第一個表格的數據）
+            $firstTable = $allTablesData[0];
+            $allData = $firstTable['data'];
+            $headers = $firstTable['headers'];
+            
             // 清理"代理"欄位：移除"公司主站代理線"字樣
             foreach ($allData as &$row) {
                 if (isset($row['代理'])) {
