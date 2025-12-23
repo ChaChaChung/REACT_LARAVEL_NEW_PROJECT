@@ -315,6 +315,60 @@ class ScrapeBrowserRsgDOM extends Command
                             
                             console.log('✅ Navigated to Currency detail page');
                             
+                            // ========== 先點擊 Current month 選項，讓表格顯示本月所有日期 ==========
+                            // 注意：Current month 應該在點擊 slim 之前執行
+                            try {
+                                console.log('🗓️  Setting date range to Current month...');
+                                
+                                // 查找 reservation 欄位
+                                const reservationField = await page.evaluate(() => {
+                                    const element = document.querySelector('[id*="reservation"]');
+                                    if (element) {
+                                        return { found: true };
+                                    }
+                                    return { found: false };
+                                });
+                                
+                                if (reservationField.found) {
+                                    // 點擊 reservation 欄位以打開日期選擇器
+                                    await page.evaluate(() => {
+                                        const element = document.querySelector('[id*="reservation"]');
+                                        if (element) {
+                                            element.click();
+                                            element.focus();
+                                        }
+                                    });
+                                    
+                                    // 等待日期選擇器出現
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                    
+                                    // 查找並點擊「Current month」選項
+                                    const currentMonthClicked = await page.evaluate(() => {
+                                        let dropdown = document.querySelector('.ranges');
+                                        if (dropdown) {
+                                            const currentMonthByAttr = dropdown.querySelector('[data-range-key="Current month"]');
+                                            if (currentMonthByAttr) {
+                                                currentMonthByAttr.click();
+                                                return { clicked: true, text: currentMonthByAttr.textContent };
+                                            }
+                                        }
+                                        return { clicked: false };
+                                    });
+                                    
+                                    if (currentMonthClicked.clicked) {
+                                        console.log('✅ Current month selected');
+                                        // 等待日期選擇器關閉和數據載入
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                    } else {
+                                        console.log('⚠️  Could not find Current month option');
+                                    }
+                                } else {
+                                    console.log('⚠️  Could not find reservation field');
+                                }
+                            } catch (e) {
+                                console.log('⚠️  Error clicking "Current month": ' + e.message);
+                            }
+                            
                             // 查找並點擊 slim 連結
                             try {
                                 const slimLinkInfo = await page.evaluate(() => {
@@ -522,70 +576,197 @@ class ScrapeBrowserRsgDOM extends Command
 
                                     // 等待頁面穩定
                                     await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 截圖：進入 account 後的頁面（在點擊 date 之前）
+                                    console.log('📸 Taking screenshot after clicking account...');
+                                    await page.screenshot({ 
+                                        path: 'after_account_screenshot.png',
+                                        fullPage: false
+                                    });
+                                    console.log('✅ Screenshot saved: after_account_screenshot.png');
                                 } else {
                                     console.log('⚠️  Could not find account number link after searching ' + currentPage + ' pages');
                                 }
                             } catch (e) {
                                 console.log('⚠️  Error looking for account number: ' + e.message);
                             }
+                        }
+                        
+                        // ========== 點擊 "Slots (All)" 標籤（無論是否有 account_number）==========
+                        try {
+                            console.log('🎰 Looking for "Slots (All)" tab...');
                             
-                            // ========== 先點擊 Current month 選項，讓表格顯示本月所有日期 ==========
-                            try {
-                                // 查找 reservation 欄位
-                                const reservationField = await page.evaluate(() => {
-                                    const element = document.querySelector('[id*="reservation"]');
-                                    if (element) {
-                                        return { found: true };
-                                    }
-                                    return { found: false };
+                            // 先列出所有可用的標籤（用於調試）
+                            const allTabsInfo = await page.evaluate(() => {
+                                const tabList = document.querySelector('ul#myTab');
+                                if (!tabList) {
+                                    return { found: false, tabs: [] };
+                                }
+                                
+                                const tabs = Array.from(tabList.querySelectorAll('li'));
+                                const tabsData = tabs.map((tab, idx) => {
+                                    const link = tab.querySelector('a');
+                                    return {
+                                        index: idx,
+                                        text: link ? link.textContent.trim() : '',
+                                        isActive: tab.classList.contains('active'),
+                                        href: link ? link.getAttribute('href') : ''
+                                    };
                                 });
                                 
-                                if (reservationField.found) {
-                                    // 點擊 reservation 欄位以打開日期選擇器
-                                    await page.evaluate(() => {
-                                        const element = document.querySelector('[id*="reservation"]');
-                                        if (element) {
-                                            element.click();
-                                            element.focus();
-                                        }
-                                    });
-                                    
-                                    // 等待日期選擇器出現
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                    
-                                    // 查找並點擊「Current month」選項
-                                    const currentMonthClicked = await page.evaluate(() => {
-                                        let dropdown = document.querySelector('.ranges');
-                                        if (dropdown) {
-                                            const currentMonthByAttr = dropdown.querySelector('[data-range-key="Current month"]');
-                                            if (currentMonthByAttr) {
-                                                currentMonthByAttr.click();
-                                                return { clicked: true, text: currentMonthByAttr.textContent };
-                                            }
-                                        }
-                                        return { clicked: false };
-                                    });
-                                    
-                                    if (currentMonthClicked.clicked) {
-                                        // 等待日期選擇器關閉和數據載入
-                                        await new Promise(resolve => setTimeout(resolve, 3000));
-                                    }
-                                }
-                            } catch (e) {
-                                console.log('⚠️  Error clicking "Current month": ' + e.message);
+                                return { found: true, tabs: tabsData };
+                            });
+                            
+                            if (allTabsInfo.found) {
+                                console.log('📋 Available tabs:');
+                                allTabsInfo.tabs.forEach(tab => {
+                                    const activeStatus = tab.isActive ? ' [ACTIVE]' : '';
+                                    console.log('  - ' + tab.text + activeStatus + ' (href: ' + tab.href + ')');
+                                });
                             }
                             
-                            // ========== 如果提供了 date，在表格的 Date 列中查找並點擊該日期的連結 ==========
-                            if (date && date !== null && date !== '') {
+                            // 查找並點擊 Slots (All) 標籤
+                            const slotsTabResult = await page.evaluate(() => {
+                                // 查找 ul#myTab 中的所有 li 元素
+                                const tabList = document.querySelector('ul#myTab');
+                                if (!tabList) {
+                                    return { found: false, reason: 'Tab list #myTab not found' };
+                                }
+                                
+                                // 查找所有 li 元素
+                                const tabs = Array.from(tabList.querySelectorAll('li'));
+                                
+                                // 查找包含 "Slots (All)" 文本的標籤
+                                for (let i = 0; i < tabs.length; i++) {
+                                    const tab = tabs[i];
+                                    const link = tab.querySelector('a');
+                                    if (link) {
+                                        const text = link.textContent.trim();
+                                        // 檢查是否為 "Slots (All)" 或包含 "Slots" 和 "All"
+                                        if (text === 'Slots (All)' || (text.includes('Slots') && text.includes('All'))) {
+                                            // 為連結添加唯一標識
+                                            const uniqueId = 'slots-all-tab-' + Date.now();
+                                            link.setAttribute('data-puppeteer-id', uniqueId);
+                                            
+                                            return {
+                                                found: true,
+                                                selector: 'a[data-puppeteer-id="' + uniqueId + '"]',
+                                                text: text,
+                                                href: link.getAttribute('href'),
+                                                isActive: tab.classList.contains('active')
+                                            };
+                                        }
+                                    }
+                                }
+                                
+                                return { found: false, reason: 'Slots (All) tab not found' };
+                            });
+                            
+                            if (slotsTabResult.found) {
+                                console.log('✅ Found "Slots (All)" tab: ' + slotsTabResult.text);
+                                console.log('   Href: ' + slotsTabResult.href);
+                                console.log('   Currently active: ' + slotsTabResult.isActive);
+                                
+                                // 無論是否已激活，都強制點擊一次以確保顯示正確的內容
+                                console.log('📌 Clicking "Slots (All)" tab to ensure it\'s active...');
+                                
+                                // 使用 evaluate 內部點擊，更可靠
+                                await page.evaluate((selector) => {
+                                    const element = document.querySelector(selector);
+                                    if (element) {
+                                        element.click();
+                                    }
+                                }, slotsTabResult.selector);
+                                
+                                // 等待標籤內容載入（增加等待時間）
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                
+                                // 驗證標籤是否真的被激活了
+                                const verifyResult = await page.evaluate(() => {
+                                    const tabList = document.querySelector('ul#myTab');
+                                    if (!tabList) {
+                                        return { activeTab: 'Unknown', contentVisible: false };
+                                    }
+                                    
+                                    const activeTab = tabList.querySelector('li.active a');
+                                    const activeTabText = activeTab ? activeTab.textContent.trim() : 'None';
+                                    
+                                    // 檢查 #data99991 是否可見（Slots (All) 的內容區域）
+                                    const slotsAllContent = document.querySelector('#data99991');
+                                    const contentVisible = slotsAllContent ? 
+                                        (slotsAllContent.style.display !== 'none' && 
+                                         slotsAllContent.classList.contains('active')) : false;
+                                    
+                                    return {
+                                        activeTab: activeTabText,
+                                        contentVisible: contentVisible,
+                                        contentId: slotsAllContent ? slotsAllContent.id : 'Not found'
+                                    };
+                                });
+                                
+                                console.log('🔍 Verification after click:');
+                                console.log('   Active tab: ' + verifyResult.activeTab);
+                                console.log('   Content visible: ' + verifyResult.contentVisible);
+                                console.log('   Content ID: ' + verifyResult.contentId);
+                                
+                                // 截圖：點擊 Slots (All) 後的狀態
+                                console.log('📸 Taking screenshot after clicking Slots (All) tab...');
+                                await page.screenshot({ 
+                                    path: 'after_slots_all_tab_screenshot.png',
+                                    fullPage: false
+                                });
+                                console.log('✅ Screenshot saved: after_slots_all_tab_screenshot.png');
+                                
+                                if (verifyResult.activeTab === 'Slots (All)' || verifyResult.activeTab.includes('Slots')) {
+                                    console.log('✅ "Slots (All)" tab successfully activated');
+                                } else {
+                                    console.log('⚠️  Warning: Active tab is "' + verifyResult.activeTab + '", not "Slots (All)"');
+                                }
+                            } else {
+                                console.log('⚠️  Could not find "Slots (All)" tab: ' + (slotsTabResult.reason || 'Unknown reason'));
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error clicking "Slots (All)" tab: ' + e.message);
+                        }
+                        
+                        // ========== 如果提供了 date，在表格的 Date 列中查找並點擊該日期的連結 ==========
+                        if (date && date !== null && date !== '') {
                                 try {
                                     console.log('🔍 Looking for date: ' + date);
+                                    
+                                    // 再次驗證當前激活的標籤是否為 "Slots (All)"
+                                    const finalTabCheck = await page.evaluate(() => {
+                                        const tabList = document.querySelector('ul#myTab');
+                                        if (!tabList) {
+                                            return { activeTab: 'Unknown' };
+                                        }
+                                        const activeTab = tabList.querySelector('li.active a');
+                                        return {
+                                            activeTab: activeTab ? activeTab.textContent.trim() : 'None',
+                                            activeHref: activeTab ? activeTab.getAttribute('href') : null
+                                        };
+                                    });
+                                    
+                                    console.log('🔍 Final tab check before searching date:');
+                                    console.log('   Active tab: ' + finalTabCheck.activeTab);
+                                    console.log('   Active href: ' + finalTabCheck.activeHref);
+                                    
                                     // 等待頁面完全載入，確保表格已渲染
                                     await new Promise(resolve => setTimeout(resolve, 2000));
 
-                                    // 在表格的 Date 列中查找日期連結（先查找，不點擊）
+                                    // 在表格的 Date 列中查找日期連結（只在 #data99991 即 Slots (All) 標籤內容區域內查找）
                                     const dateSearchResult = await page.evaluate((dateNum) => {
-                                        // 取得所有表格
-                                        const allTables = Array.from(document.querySelectorAll('table'));
+                                        // 只在 Slots (All) 的內容區域內查找表格
+                                        const slotsAllContent = document.querySelector('#data99991');
+                                        
+                                        if (!slotsAllContent) {
+                                            return { found: false, reason: 'Slots (All) content area (#data99991) not found' };
+                                        }
+                                        
+                                        // 只取得 Slots (All) 區域內的表格
+                                        const allTables = Array.from(slotsAllContent.querySelectorAll('table'));
+                                        
+                                        console.log('Found ' + allTables.length + ' tables in Slots (All) area');
                                         
                                         // 所有表格資料執行迴圈 
                                         for (let tableIdx = 0; tableIdx < allTables.length; tableIdx++) {
@@ -653,14 +834,49 @@ class ScrapeBrowserRsgDOM extends Command
                                     }, date);
                                     
                                     if (dateSearchResult.found) {
+                                        console.log('✅ Found date element: ' + dateSearchResult.date);
+                                        
+                                        // 高亮顯示要點擊的 date 元素
+                                        await page.evaluate((selector) => {
+                                            const element = document.querySelector(selector);
+                                            if (element) {
+                                                // 滾動到元素位置
+                                                element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                                                
+                                                // 添加高亮樣式
+                                                element.style.border = '3px solid red';
+                                                element.style.backgroundColor = 'yellow';
+                                                element.style.padding = '5px';
+                                                element.style.fontWeight = 'bold';
+                                                
+                                                // 在元素旁邊添加標記文字
+                                                const marker = document.createElement('span');
+                                                marker.textContent = ' ← 即將點擊';
+                                                marker.style.color = 'red';
+                                                marker.style.fontWeight = 'bold';
+                                                marker.style.fontSize = '14px';
+                                                marker.style.marginLeft = '10px';
+                                                element.parentElement.appendChild(marker);
+                                            }
+                                        }, dateSearchResult.selector);
+                                        
+                                        // 等待滾動完成
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                        
+                                        // 截圖：顯示即將點擊的 date 元素
+                                        console.log('📸 Taking screenshot of highlighted date element...');
+                                        await page.screenshot({ 
+                                            path: 'before_click_date_screenshot.png',
+                                            fullPage: false
+                                        });
+                                        console.log('✅ Screenshot saved: before_click_date_screenshot.png');
+                                        
                                         // 使用 evaluate 內部點擊，更可靠
                                         try {
-                                            // 先點擊元素
+                                            // 點擊元素
                                             const clicked = await page.evaluate((selector) => {
                                                 const element = document.querySelector(selector);
                                                 if (element) {
-                                                    // 立即滾動到元素位置（不使用動畫）
-                                                    element.scrollIntoView({ block: 'center' });
                                                     // 直接點擊
                                                     element.click();
                                                     return true;
@@ -669,6 +885,7 @@ class ScrapeBrowserRsgDOM extends Command
                                             }, dateSearchResult.selector);
                                             
                                             if (clicked) {
+                                                console.log('✅ Date link clicked');
                                                 // 點擊後等待可能的導航（最多等待 5 秒）
                                                 await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 5000 });
                                                 
@@ -685,7 +902,6 @@ class ScrapeBrowserRsgDOM extends Command
                                     console.log('⚠️  Error looking for date: ' + e.message);
                                 }
                             }
-                        }
                     } catch (e) {
                         console.log('⚠️  Error clicking Currency link: ' + e.message);
                         // 即使出錯，也繼續執行後續的 DOM 提取
@@ -1463,12 +1679,13 @@ class ScrapeBrowserRsgDOM extends Command
                     const domData = mergedDomData;
 
                     // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
+                    console.log('📸 Taking final screenshot...');
                     await page.screenshot({ 
-                        path: 'scraped_page_screenshot.png',
+                        path: 'final_page_screenshot.png',
                         fullPage: false  // 改為 false，只截可見區域，速度更快
                     });
 
-                    console.log('📸 Screenshot saved: scraped_page_screenshot.png');
+                    console.log('✅ Final screenshot saved: final_page_screenshot.png');
 
                     // 合併所有提取的資料和捕獲的 DOM 資料
                     // accountNumberParsed 和 dateParsed 已經在上面定義過了
@@ -1661,12 +1878,40 @@ class ScrapeBrowserRsgDOM extends Command
         }
 
         // 將截圖從臨時目錄移動到永久存儲目錄
-        $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
-        $screenshotDst = storage_path("app/scraped_data/dom_screenshot_{$timestamp}.png");
+        // 1. After account screenshot (如果存在)
+        $afterAccountSrc = storage_path('app/temp/after_account_screenshot.png');
+        $afterAccountDst = storage_path("app/scraped_data/after_account_{$timestamp}.png");
         
-        if (file_exists($screenshotSrc)) {
-            rename($screenshotSrc, $screenshotDst);
-            $this->info("📸 Screenshot saved to: {$screenshotDst}");
+        if (file_exists($afterAccountSrc)) {
+            rename($afterAccountSrc, $afterAccountDst);
+            $this->info("📸 After account screenshot saved to: {$afterAccountDst}");
+        }
+        
+        // 2. After Slots (All) tab screenshot (如果存在)
+        $afterSlotsAllSrc = storage_path('app/temp/after_slots_all_tab_screenshot.png');
+        $afterSlotsAllDst = storage_path("app/scraped_data/after_slots_all_tab_{$timestamp}.png");
+        
+        if (file_exists($afterSlotsAllSrc)) {
+            rename($afterSlotsAllSrc, $afterSlotsAllDst);
+            $this->info("📸 After Slots (All) tab screenshot saved to: {$afterSlotsAllDst}");
+        }
+        
+        // 3. Before click date screenshot (如果存在)
+        $beforeClickDateSrc = storage_path('app/temp/before_click_date_screenshot.png');
+        $beforeClickDateDst = storage_path("app/scraped_data/before_click_date_{$timestamp}.png");
+        
+        if (file_exists($beforeClickDateSrc)) {
+            rename($beforeClickDateSrc, $beforeClickDateDst);
+            $this->info("📸 Before click date screenshot saved to: {$beforeClickDateDst}");
+        }
+        
+        // 4. Final page screenshot
+        $finalScreenshotSrc = storage_path('app/temp/final_page_screenshot.png');
+        $finalScreenshotDst = storage_path("app/scraped_data/final_page_{$timestamp}.png");
+        
+        if (file_exists($finalScreenshotSrc)) {
+            rename($finalScreenshotSrc, $finalScreenshotDst);
+            $this->info("📸 Final page screenshot saved to: {$finalScreenshotDst}");
         }
         
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
