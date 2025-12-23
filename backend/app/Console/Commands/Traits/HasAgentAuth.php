@@ -98,4 +98,32 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 168 Puppeteer cookies 設定程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generate168PuppeteerCookiesCode(string $pageVar = 'page'): string
+    {
+        $auth = env('168_AGENT_AUTH', '');
+        $domain = env('168_AGENT_DOMAIN');
+
+        return <<<JS
+            // console.log('🔐 Setting authentication cookies...');
+
+            // 根據環境變數設定認證 cookies
+            // 這些 cookies 用於通過需要登入的頁面驗證
+            const cookies = [];
+            if ('$auth') cookies.push({ name: 'laravel_session', value: '$auth', domain: '$domain' });
+
+            // 如果有設定 cookies，則應用到頁面
+            if (cookies.length > 0) {
+                await {$pageVar}.setCookie(...cookies);
+                // console.log('✅ Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No cookies found in environment variables');
+            }
+        JS;
+    }
 }
