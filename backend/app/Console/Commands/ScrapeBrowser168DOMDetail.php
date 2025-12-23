@@ -460,44 +460,42 @@ class ScrapeBrowser168DOMDetail extends Command
                             const allTablesData = [];
                             
                             tables.forEach((table, tableIndex) => {
-                            
-                            // 提取表頭
-                            let headers = [];
-                            const thead = table.querySelector('thead');
-                            if (thead) {
-                                const headerRows = Array.from(thead.querySelectorAll('tr'));
-                                if (headerRows.length > 0) {
-                                    const headerCells = headerRows[0].querySelectorAll('th, td');
-                                    headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                                // 提取表頭
+                                let headers = [];
+                                const thead = table.querySelector('thead');
+                                if (thead) {
+                                    const headerRows = Array.from(thead.querySelectorAll('tr'));
+                                    if (headerRows.length > 0) {
+                                        const headerCells = headerRows[0].querySelectorAll('th, td');
+                                        headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                                    }
+                                } else {
+                                    // 如果沒有 thead，嘗試從第一行提取表頭
+                                    const firstRow = table.querySelector('tr');
+                                    if (firstRow) {
+                                        const headerCells = firstRow.querySelectorAll('th, td');
+                                        headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                                    }
                                 }
-                            } else {
-                                // 如果沒有 thead，嘗試從第一行提取表頭
-                                const firstRow = table.querySelector('tr');
-                                if (firstRow) {
-                                    const headerCells = firstRow.querySelectorAll('th, td');
-                                    headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+
+                                // 提取資料行
+                                const tbody = table.querySelector('tbody');
+                                let rows = [];
+                                let dataStartIndex = 0;
+
+                                if (tbody) {
+                                    rows = Array.from(tbody.querySelectorAll('tr'));
+                                } else {
+                                    // 如果沒有 tbody，從表格直接獲取所有行
+                                    rows = Array.from(table.querySelectorAll('tr'));
+                                    // 如果有表頭，跳過第一行
+                                    if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) {
+                                        dataStartIndex = 1;
+                                    }
                                 }
-                            }
 
-                            // 提取資料行
-                            const tbody = table.querySelector('tbody');
-                            let rows = [];
-                            let dataStartIndex = 0;
-
-                            if (tbody) {
-                                rows = Array.from(tbody.querySelectorAll('tr'));
-                            } else {
-                                // 如果沒有 tbody，從表格直接獲取所有行
-                                rows = Array.from(table.querySelectorAll('tr'));
-                                // 如果有表頭，跳過第一行
-                                if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) {
-                                    dataStartIndex = 1;
-                                }
-                            }
-
-                            // 將資料行轉換為對象數組
-                            const dataRows = rows.slice(dataStartIndex)
-                                .map((row, rowIndex) => {
+                                // 將資料行轉換為對象數組
+                                const dataRows = rows.slice(dataStartIndex).map((row, rowIndex) => {
                                     const cells = Array.from(row.querySelectorAll('td'));
                                     const rowData = {};
                                     
