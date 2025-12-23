@@ -39,15 +39,15 @@ class ScrapeBrowser168DOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $date_start = $this->argument('date_start');
-        $date_end = $this->argument('date_end');
-        $account_number = $this->argument('account_number');
+        $dateStart = $this->argument('date_start');
+        $dateEnd = $this->argument('date_end');
+        $accountNumber = $this->argument('account_number');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
-        $this->info("Date Start: {$date_start}");
-        $this->info("Date End: {$date_end}");
-        $this->info("Account Number: {$account_number}");
+        $this->info("Date Start: {$dateStart}");
+        $this->info("Date End: {$dateEnd}");
+        $this->info("Account Number: {$accountNumber}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -57,7 +57,7 @@ class ScrapeBrowser168DOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number);
+        $scriptPath = $this->createPuppeteerScript($url, $dateStart, $dateEnd, $accountNumber);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -117,24 +117,24 @@ class ScrapeBrowser168DOMDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本（從 DOM 提取資料）
      * @param string $url 要爬取的目標網址
-     * @param string|null $date_start 要選擇的開始日期（可選）
-     * @param string|null $date_end 要選擇的結束日期（可選）
-     * @param string|null $account_number 要點擊的帳號號碼（可選）
+     * @param string|null $dateStart 要選擇的開始日期（可選）
+     * @param string|null $dateEnd 要選擇的結束日期（可選）
+     * @param string|null $accountNumber 要點擊的帳號號碼（可選）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null)
+    private function createPuppeteerScript($url, $dateStart = null, $dateEnd = null, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
 
         // 獲取認證 cookies 程式碼片段（只需要一個頁面）
         $cookiesCodeForPage = $this->generate168PuppeteerCookiesCode('page');
 
-        // 將 account_number 轉換為 JavaScript 可用的格式
-        $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
+        // 將 accountNumber 轉換為 JavaScript 可用的格式
+        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
         // 將 date 轉換為 JavaScript 可用的格式
-        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
-        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
+        $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
