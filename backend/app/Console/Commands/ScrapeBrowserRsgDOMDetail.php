@@ -28,7 +28,7 @@ class ScrapeBrowserRsgDOM extends Command
      * 命令描述
      * @var string
      */
-    protected $description = 'Scrape content from RSG DOM elements using browser automation with detailed information';
+    protected $description = 'Scrape content from RSG DOM elements using browser automation (optimized for DataTables AJAX pagination)';
 
     /**
      * 執行命令的主要處理方法
@@ -41,10 +41,13 @@ class ScrapeBrowserRsgDOM extends Command
         $accountNumber = $this->argument('account_number');
         $date = $this->argument('date');
 
-        $this->info('=== Browser DOM Scraper ===');
+        $this->info('=== Browser DOM Scraper (Optimized for DataTables) ===');
         $this->info("Target URL: {$url}");
         $this->info("Account Number: {$accountNumber}");
         $this->info("Date: {$date}");
+        $this->info("Note: Using optimized serial scraping (faster than concurrent for AJAX pagination)");
+
+        $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
@@ -121,7 +124,7 @@ class ScrapeBrowserRsgDOM extends Command
         $this->info('2. Creating browser automation script...');
 
         // 獲取認證 cookies 程式碼片段
-        $cookiesCode = $this->generateRsgPuppeteerCookiesCode();
+        $cookiesCode = $this->generateRsgPuppeteerCookiesCode('page');
 
         // 將 account_number 轉換為 JavaScript 可用的格式
         // 使用 json_encode 確保正確的 JSON 格式，null 值會輸出為字符串 'null'
@@ -137,15 +140,13 @@ class ScrapeBrowserRsgDOM extends Command
 
             /**
              * 從 DOM 提取資料的函數
-             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容
+             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（優化版本）
+             * 針對 DataTables AJAX 分頁系統優化，使用串行爬取以獲得最佳性能
              */
             async function scrapeDOMContent() {
-                console.log('🚀 Starting browser automation for DOM scraping...');
-
                 // 啟動無頭瀏覽器（headless mode）
-                // 使用多個 Chrome 參數來優化性能和穩定性
                 const browser = await puppeteer.launch({
-                    headless: 'new', // 使用新的 headless 模式
+                    headless: 'new',
                     args: [
                         // 安全性相關參數（用於容器環境）
                         '--no-sandbox',
@@ -173,7 +174,10 @@ class ScrapeBrowserRsgDOM extends Command
                         '--disable-web-security',
                         '--disable-features=VizDisplayCompositor',
                         '--temp-profile',
-                        '--memory-pressure-off'
+                        '--memory-pressure-off',
+                        // 額外的性能優化
+                        '--disable-javascript-harmony-shipping',
+                        '--disable-sync'
                     ],
                     // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
@@ -189,28 +193,40 @@ class ScrapeBrowserRsgDOM extends Command
                     // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
+                    // 攔截並阻止不必要的資源載入（大幅提升速度）
+                    await page.setRequestInterception(true);
+                    page.on('request', (req) => {
+                        const resourceType = req.resourceType();
+                        // 只阻止圖片、字體、媒體檔案，保留 CSS 和 JS 以確保分頁功能正常
+                        if (['image', 'font', 'media'].includes(resourceType)) {
+                            req.abort();
+                        } else {
+                            req.continue();
+                        }
+                    });
+
                     $cookiesCode
 
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
                     page.on('console', msg => {
                         if (msg.type() === 'error') {
-                            console.log('❌ Browser console error:', msg.text());
+                            // console.log('❌ Browser console error:', msg.text());
                         }
                     });
 
                     console.log('🌐 Navigating to:', '$url');
 
                     // 導航到目標頁面
-                    // waitUntil: 'networkidle2' 表示等待網路空閒（沒有超過 2 個網路連接）時才繼續
+                    // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
                     // timeout: 30000 設定 30 秒超時
                     await page.goto('$url', {
-                        waitUntil: 'networkidle2',
+                        waitUntil: 'domcontentloaded',
                         timeout: 30000
                     });
 
-                    // 等待額外 5 秒，確保動態內容完全載入
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    // 等待頁面穩定
+                    await new Promise(resolve => setTimeout(resolve, 2000));
 
                     // 點擊 tbody.dataContent 中的 Currency 超連結
                     try {
@@ -952,9 +968,8 @@ class ScrapeBrowserRsgDOM extends Command
                         return false;
                     };
 
-                    // 開始收集所有分頁的資料
-                    // 注意：$accountNumberJs 和 $dateJs 是 JSON 編碼的字符串或字符串 'null'
-                    // 解析這些值以獲取實際的 JavaScript 值
+                    // ========== 並發爬取分頁邏輯 ==========
+                    // 解析參數
                     let accountNumberParsed = null;
                     let dateParsed = null;
                     
@@ -963,7 +978,6 @@ class ScrapeBrowserRsgDOM extends Command
                         try {
                             accountNumberParsed = JSON.parse($accountNumberJs);
                         } catch (e) {
-                            // 如果解析失敗，嘗試直接使用原始值（可能是普通字符串）
                             accountNumberParsed = $accountNumberJs;
                         }
                     }
@@ -973,113 +987,362 @@ class ScrapeBrowserRsgDOM extends Command
                         try {
                             dateParsed = JSON.parse($dateJs);
                         } catch (e) {
-                            // 如果解析失敗，嘗試直接使用原始值（可能是普通字符串）
                             dateParsed = $dateJs;
                         }
                     }
                     
-                    // 判斷是否提供了 account_number（檢查是否為 null 或空字符串）
+                    // 判斷是否提供了 account_number
                     const accountNumberProvided = accountNumberParsed !== null && accountNumberParsed !== '' && accountNumberParsed !== undefined;
-
-                    // 存儲所有分頁的資料
-                    const allPagesData = [];
-                    let currentPage = 1;
-                    const maxPages = 1000; // 設定最大頁數限制，防止無限循環
                     
-                    // 記錄上一頁的數據標識，用於檢測是否重複提取
-                    let previousPageDataHash = null;
+                    // 確保表格已載入
+                    await page.waitForSelector('tbody.dataContent tr', { timeout: 5000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
-                    // 循環遍歷所有分頁
-                    while (currentPage <= maxPages) {
-                        // 在提取數據之前，先檢查當前頁面的狀態
-                        const pageState = await page.evaluate(() => {
-                            const nextButton = document.querySelector('.paginate_button.next');
-                            const currentPageInfo = document.querySelector('.paginate_button.current');
-                            return {
-                                hasNextButton: nextButton !== null,
-                                nextButtonDisabled: nextButton ? nextButton.classList.contains('disabled') : true,
-                                currentPageText: currentPageInfo ? currentPageInfo.textContent.trim() : null,
-                                tableRows: document.querySelectorAll('tbody.dataContent tr').length
-                            };
-                        });
-                        
-                        // 提取當前頁的資料
-                        const pageData = await extractCurrentPageData(accountNumberProvided, accountNumberParsed, dateParsed);
-                        
-                        // 生成當前頁數據的標識（用於檢測是否重複）
-                        let currentPageDataHash = null;
-                        if (pageData && pageData.tables && pageData.tables.length > 0) {
-                            // 使用第一行和最後一行的數據作為標識
-                            const firstTable = pageData.tables[0];
-                            if (firstTable.data && firstTable.data.length > 0) {
-                                const firstRow = JSON.stringify(firstTable.data[0]);
-                                const lastRow = firstTable.data.length > 1 ? JSON.stringify(firstTable.data[firstTable.data.length - 1]) : firstRow;
-                                currentPageDataHash = firstRow + '|' + lastRow + '|' + firstTable.data.length;
-                            }
-                            
-                            // 如果當前頁數據與上一頁相同，可能是重複提取
-                            if (previousPageDataHash !== null && currentPageDataHash === previousPageDataHash) {
-                                // 檢查是否有下一頁
-                                const hasNext = await hasNextPage();
-                                if (!hasNext) {
-                                    // 當前頁是重複的，不要添加，直接停止
-                                    break;
-                                }
-                            }
-                            
-                            // 保存當前頁數據標識
-                            previousPageDataHash = currentPageDataHash;
-                            
-                            // 將當前頁資料添加到總資料中（無論是否有數據都添加，以便後續處理）
-                            allPagesData.push({
-                                data: pageData
-                            });
-                            
-                            const totalRows = pageData.tables.reduce((total, table) => total + (table.rowCount || 0), 0);
-                        } else {
-                            // 即使沒有數據，也添加到 allPagesData 中，以便後續處理
-                            if (pageData) {
-                                allPagesData.push({
-                                    data: pageData
-                                });
-                            }
-                        }
-                        
-                        // 檢查是否有下一頁（在點擊之前檢查）
-                        const hasNext = await hasNextPage();
-                        
-                        if (!hasNext) {
-                            break;
-                        }
-                        
-                        // 點擊下一頁
-                        const nextPageSuccess = await goToNextPage();
-                        if (!nextPageSuccess) {
-                            break;
-                        }
-                        
-                        // 等待頁面更新
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                        
-                        // 驗證頁面是否真的更新了
-                        const pageStateAfterClick = await page.evaluate(() => {
-                            const currentPageInfo = document.querySelector('.paginate_button.current');
-                            const tableRows = document.querySelectorAll('tbody.dataContent tr').length;
-                            return {
-                                currentPageText: currentPageInfo ? currentPageInfo.textContent.trim() : null,
-                                tableRows: tableRows
-                            };
-                        });
-                        
-                        currentPage++;
+                    // 提取第一頁的表格資料
+                    const firstPageData = await extractCurrentPageData(accountNumberProvided, accountNumberParsed, dateParsed);
+                    
+                    if (!firstPageData || !firstPageData.tables || firstPageData.tables.length === 0) {
+                        throw new Error('No table found on first page');
                     }
                     
-                    allPagesData.forEach((pageData, idx) => {
-                        const totalRows = pageData.data.tables ? 
-                            pageData.data.tables.reduce((total, table) => total + (table.rowCount || 0), 0) : 0;
+                    // 獲取所有分頁資訊（DataTables 的分頁按鈕）
+                    const paginationInfo = await page.evaluate(() => {
+                        const pageLinks = [];
+                        
+                        // 查找所有分頁按鈕（除了 Previous 和 Next）
+                        const paginationContainer = document.querySelector('.dataTables_paginate') || 
+                                                   document.querySelector('.pagination');
+                        
+                        if (paginationContainer) {
+                            // 獲取所有數字分頁連結
+                            const links = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next)');
+                            links.forEach(link => {
+                                const pageText = link.textContent.trim();
+                                const pageNum = parseInt(pageText);
+                                if (!isNaN(pageNum)) {
+                                    // DataTables 使用 onclick 事件，我們需要記錄頁碼
+                                    pageLinks.push({
+                                        pageNumber: pageNum,
+                                        url: window.location.href // DataTables 通常在同一頁面切換，所以 URL 相同
+                                    });
+                                }
+                            });
+                        }
+                        
+                        // 如果沒有找到分頁連結，檢查是否有 Next 按鈕
+                        if (pageLinks.length === 0) {
+                            const nextLink = document.querySelector('.paginate_button.next:not(.disabled)');
+                            if (nextLink) {
+                                // 至少有 2 頁
+                                pageLinks.push({ pageNumber: 1, url: window.location.href });
+                            } else {
+                                // 只有 1 頁
+                                pageLinks.push({ pageNumber: 1, url: window.location.href });
+                            }
+                        }
+                        
+                        return {
+                            totalPages: pageLinks.length > 0 ? Math.max(...pageLinks.map(p => p.pageNumber)) : 1,
+                            pageLinks: pageLinks,
+                            currentUrl: window.location.href
+                        };
                     });
                     
-                    // 獲取當前頁面信息（用於 pageInfo）
+                    // ========== 步驟 3：串行爬取其他頁面（優化版本）==========
+                    // 註：RSG 使用 DataTables（AJAX 分頁），串行比並發更快！
+                    // 原因：
+                    // 1. AJAX 切換頁面只需 1-2 秒，非常快
+                    // 2. 並發需要為每頁重複前置操作（Currency/slim/account/date），反而更慢
+                    // 3. 串行在已登錄的頁面上操作，避免重複操作
+                    console.log('🚀 Step 3: Scraping remaining pages (optimized)...');
+                    
+                    // 提取單一頁面資料的函數（在 page 對象上操作，模擬點擊分頁按鈕）
+                    const extractTableData = async (pageObject) => {
+                        return await pageObject.evaluate((accountNumberProvided, accountNumberValue, dateValue) => {
+                            // 先處理表格資料
+                            const allTables = Array.from(document.querySelectorAll('table'));
+                            // 存儲每個表格的表頭
+                            const tableHeaders = {};
+                            
+                            // 第一遍：識別表頭表格（通常包含 th 標籤或 class 包含 header）
+                            allTables.forEach((table, index) => {
+                                // 獲取表格的所有行
+                                const rows = Array.from(table.querySelectorAll('tr'));
+                                // 獲取表格的 class 屬性
+                                const tableClass = table.className || '';
+                                // 檢查表格是否包含表頭
+                                const isHeaderTable = tableClass.includes('header') || 
+                                                    tableClass.includes('Header') ||
+                                                    rows.some(row => row.querySelectorAll('th').length > 0);
+                                // 如果表格包含表頭，則提取表頭
+                                if (isHeaderTable && rows.length > 0) {
+                                    // 提取表頭
+                                    const headerRow = rows[0];
+                                    const headerCells = headerRow.querySelectorAll('th, td');
+                                    if (headerCells.length > 0) {
+                                        const headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                                        // 將表頭存儲，供後續表格使用
+                                        tableHeaders[index] = headers;
+                                    }
+                                }
+                            });
+                            
+                            // 處理表格的函數
+                            function processTable(table, tableIndex) {
+                                // 獲取表格的所有行
+                                let rows = Array.from(table.querySelectorAll('tr'));
+                                // 獲取表格的 class 屬性
+                                const tableClass = table.className || '';
+                                
+                                // 檢查是否有 thead 和 tbody 結構（RSG 特殊結構）
+                                const thead = table.querySelector('thead');
+                                const dataContent = table.querySelector('tbody.dataContent');
+                                
+                                // 如果有 thead，優先從 thead 中提取表頭
+                                let headerRow = null;
+                                // 初始化資料起始索引
+                                let dataStartIndex = 0;
+                                
+                                if (thead) {
+                                    const headerRows = Array.from(thead.querySelectorAll('tr'));
+                                    if (headerRows.length > 0) {
+                                        const headerCells = headerRows[0].querySelectorAll('th, td');
+                                        if (headerCells.length > 0) {
+                                            headerRow = Array.from(headerCells).map((cell, idx) => {
+                                                const text = cell.textContent.trim();
+                                                return text || 'column_' + idx;
+                                            });
+                                        }
+                                    }
+                                }
+                                
+                                // 如果有 dataContent，優先從 tbody 中獲取行
+                                if (dataContent) {
+                                    rows = Array.from(dataContent.querySelectorAll('tr'));
+                                }
+                                
+                                // 檢查表格是否包含表頭（只有在沒有 thead 的情況下才檢查）
+                                const isHeaderTable = !thead && (tableClass.includes('header') || 
+                                                    tableClass.includes('Header') ||
+                                                    (rows.length > 0 && rows[0].querySelectorAll('th').length > 0));
+                                
+                                // 如果是表頭表格，只提取表頭，不提取資料
+                                if (isHeaderTable) {
+                                    // 如果表格的第一行存在，則獲取第一行的所有單元格
+                                    if (rows[0]) {
+                                        // 獲取第一行的所有單元格
+                                        const headerCells = rows[0].querySelectorAll('th, td');
+                                        headerRow = Array.from(headerCells).map((cell, idx) => {
+                                            const text = cell.textContent.trim();
+                                            return text || 'column_' + idx;
+                                        });
+                                    }
+                                    // 表頭表格通常沒有資料行
+                                    dataStartIndex = rows.length;
+                                } else {
+                                    // 資料表格：嘗試找到對應的表頭
+                                    // 1. 如果已經從 thead 提取到表頭，使用它
+                                    if (headerRow) {
+                                        // 所有行都是資料
+                                        dataStartIndex = 0;
+                                    } else {
+                                        // 2. 檢查前面的表格是否有表頭
+                                        let foundHeader = null;
+                                        for (let i = tableIndex - 1; i >= 0; i--) {
+                                            if (tableHeaders[i]) {
+                                                foundHeader = tableHeaders[i];
+                                                break;
+                                            }
+                                        }
+                                        
+                                        // 3. 如果找到表頭，使用它
+                                        if (foundHeader) {
+                                            // 使用找到的表頭
+                                            headerRow = foundHeader;
+                                            // 所有行都是資料
+                                            dataStartIndex = 0;
+                                        } else {
+                                            // 4. 否則檢查第一行是否包含 th（標準表頭）
+                                            if (rows[0]) {
+                                                // 獲取第一行的所有單元格
+                                                const firstRowCells = rows[0].querySelectorAll('th, td');
+                                                // 檢查第一行是否包含 th 標籤
+                                                const hasTh = rows[0].querySelectorAll('th').length > 0;
+                                                // 如果第一行包含 th 標籤，則使用第一行的所有單元格
+                                                if (hasTh) {
+                                                    // 獲取第一行的所有單元格
+                                                    headerRow = Array.from(firstRowCells).map((cell, idx) => {
+                                                        const text = cell.textContent.trim();
+                                                        return text || 'column_' + idx;
+                                                    });
+                                                    dataStartIndex = 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 將資料行轉換為對象數組
+                                const dataRows = rows.slice(dataStartIndex).map((row, rowIndex) => {
+                                    const cells = Array.from(row.querySelectorAll('td'));
+                                    const rowData = {};
+                                    
+                                    if (headerRow && headerRow.length > 0) {
+                                        headerRow.forEach((header, colIndex) => {
+                                            // 清理字段名（移除特殊字符，用於 JSON key）
+                                            // 保留中文字符和基本字符
+                                            let cleanHeader = header
+                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                .replace(/^_+|_+$/g, '');
+                                            
+                                            // 如果清理後為空，使用索引
+                                            if (!cleanHeader) {
+                                                cleanHeader = 'column_' + colIndex;
+                                            }
+                                            
+                                            // 確保字段名唯一（如果重複，添加索引）
+                                            let finalHeader = cleanHeader;
+                                            let counter = 1;
+                                            while (rowData.hasOwnProperty(finalHeader)) {
+                                                finalHeader = cleanHeader + '_' + counter;
+                                                counter++;
+                                            }
+                                            
+                                            rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                        });
+                                    } else {
+                                        // 如果沒有表頭，使用索引作為 key
+                                        cells.forEach((cell, colIndex) => {
+                                            rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
+                                        });
+                                    }
+                                    
+                                    // 添加原始行索引
+                                    rowData._rowIndex = rowIndex;
+                                    
+                                    return rowData;
+                                });
+                                
+                                return {
+                                    tableIndex: tableIndex,
+                                    tableId: table.id || null,
+                                    tableClass: table.className || null,
+                                    isHeaderTable: isHeaderTable,
+                                    headers: headerRow || [],
+                                    headerCount: headerRow ? headerRow.length : 0,
+                                    rowCount: dataRows.length,
+                                    data: dataRows
+                                };
+                            }
+                            
+                            const result = {
+                                tables: (() => {
+                                    const processedTables = allTables.map((table, tableIndex) => processTable(table, tableIndex))
+                                        .filter(table => {
+                                            // 過濾掉只有表頭沒有資料的表格
+                                            return table.rowCount > 0 || !table.isHeaderTable;
+                                        });
+                                    
+                                    if (accountNumberProvided) {
+                                        // 如果提供了 account_number，只保留最後一個有資料的表格
+                                        if (processedTables.length > 0) {
+                                            // 找到最後一個有資料的表格（rowCount > 0）
+                                            let lastTable = null;
+                                            for (let i = processedTables.length - 1; i >= 0; i--) {
+                                                if (processedTables[i].rowCount > 0) {
+                                                    lastTable = processedTables[i];
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            if (lastTable) {
+                                                return [lastTable];
+                                            }
+                                        }
+                                        return [];
+                                    } else {
+                                        // 否則，保留所有有資料的表格
+                                        const filtered = processedTables.filter(table => table.rowCount > 0);
+                                        return filtered;
+                                    }
+                                })()
+                            };
+                            
+                            return result;
+                        }, accountNumberProvided, accountNumberValue, dateValue);
+                    };
+                    
+                    // 串行爬取函數（在同一頁面上快速切換分頁）
+                    // DataTables AJAX 分頁切換只需 1-2 秒，比並發創建新標籤頁更快
+                    const scrapePageSequentially = async (pageNumber) => {
+                        try {
+                            // 點擊指定頁碼的分頁按鈕
+                            const clickResult = await page.evaluate((targetPage) => {
+                                const paginationContainer = document.querySelector('.dataTables_paginate') || 
+                                                           document.querySelector('.pagination');
+                                if (paginationContainer) {
+                                    const links = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next)');
+                                    for (let link of links) {
+                                        const pageText = link.textContent.trim();
+                                        const pageNum = parseInt(pageText);
+                                        if (pageNum === targetPage) {
+                                            link.click();
+                                            return { clicked: true, pageNumber: targetPage };
+                                        }
+                                    }
+                                }
+                                return { clicked: false };
+                            }, pageNumber);
+                            
+                            if (!clickResult.clicked) {
+                                console.error('❌ Failed to click page ' + pageNumber + ' button');
+                                return {
+                                    pageNumber: pageNumber,
+                                    tables: [],
+                                    error: 'Failed to click page button'
+                                };
+                            }
+                            
+                            // 等待 AJAX 數據更新（DataTables 很快，1秒足夠）
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            
+                            // 提取表格資料
+                            const tableData = await extractTableData(page);
+                            
+                            return {
+                                pageNumber: pageNumber,
+                                tables: tableData.tables || []
+                            };
+                            
+                        } catch (error) {
+                            console.error('❌ [Page ' + pageNumber + '] Error: ' + error.message);
+                            return {
+                                pageNumber: pageNumber,
+                                tables: [],
+                                error: error.message
+                            };
+                        }
+                    };
+                    
+                    // 串行爬取所有其他頁面（比並發更快！）
+                    const otherPagesData = [];
+                    for (let i = 2; i <= paginationInfo.totalPages; i++) {
+                        const pageData = await scrapePageSequentially(i);
+                        otherPagesData.push(pageData);
+                    }
+                    
+                    // 合併第一頁和其他頁面的資料
+                    const allPagesData = [
+                        {
+                            pageNumber: 1,
+                            tables: firstPageData.tables || []
+                        },
+                        ...otherPagesData
+                    ];
+                    
+                    console.log('✅ All ' + allPagesData.length + ' pages scraped successfully!');
+                    
+                    // 獲取當前頁面信息
                     const currentPageInfo = await page.evaluate(() => {
                         return {
                             title: document.title,
@@ -1089,14 +1352,12 @@ class ScrapeBrowserRsgDOM extends Command
                     
                     // 合併所有分頁的資料
                     const mergedDomData = {
-                        pageInfo: (allPagesData.length > 0 && allPagesData[0].data && allPagesData[0].data.pageInfo) 
-                            ? allPagesData[0].data.pageInfo 
-                            : currentPageInfo,
+                        pageInfo: firstPageData.pageInfo || currentPageInfo,
                         queryParams: {
                             accountNumber: accountNumberParsed,
                             date: dateParsed
                         },
-                        totalPages: currentPage,
+                        totalPages: allPagesData.length,
                         // 合併所有分頁的表格資料
                         tables: (() => {
                             if (allPagesData.length === 0) {
@@ -1108,8 +1369,8 @@ class ScrapeBrowserRsgDOM extends Command
                                 const mergedTables = [];
                                 
                                 // 為每個分頁找到最後一個有資料的表格
-                                allPagesData.forEach((pageData, pageIndex) => {
-                                    const tables = pageData.data.tables || [];
+                                allPagesData.forEach((pageData) => {
+                                    const tables = pageData.tables || [];
                                     
                                     if (tables.length > 0) {
                                         // 找到最後一個有資料的表格
@@ -1140,7 +1401,7 @@ class ScrapeBrowserRsgDOM extends Command
                                     const firstTable = mergedTables[0];
                                     const allData = [];
                                     
-                                    mergedTables.forEach((table, idx) => {
+                                    mergedTables.forEach((table) => {
                                         allData.push(...table.data);
                                     });
                                     
@@ -1155,11 +1416,11 @@ class ScrapeBrowserRsgDOM extends Command
                                 
                                 return [];
                             } else {
-                                // 否則，合併所有包含 "Account number" 的表格
+                                // 否則，合併所有表格
                                 const mergedTables = [];
                                 
                                 allPagesData.forEach((pageData) => {
-                                    const tables = pageData.data.tables || [];
+                                    const tables = pageData.tables || [];
                                     tables.forEach(table => {
                                         // 只保留有數據的表格
                                         if (table.rowCount > 0 && table.data && table.data.length > 0) {
@@ -1201,11 +1462,10 @@ class ScrapeBrowserRsgDOM extends Command
                     
                     const domData = mergedDomData;
 
-                    // 截圖（用於調試和驗證）
-                    // fullPage: true 表示截取整個頁面，而不只是可見區域
+                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
                     await page.screenshot({ 
                         path: 'scraped_page_screenshot.png',
-                        fullPage: true 
+                        fullPage: false  // 改為 false，只截可見區域，速度更快
                     });
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
@@ -1286,8 +1546,8 @@ class ScrapeBrowserRsgDOM extends Command
         $workingDir = dirname($scriptPath);
 
         // 在指定目錄執行 Node.js 腳本
-        // 增加超時時間到 10 分鐘（600秒），因為需要爬取多頁數據
-        $result = Process::path($workingDir)->timeout(600)->run("node " . basename($scriptPath));
+        // 增加超時時間到 60 分鐘（6000秒），因為需要爬取多頁數據
+        $result = Process::path($workingDir)->timeout(6000)->run("node " . basename($scriptPath));
 
         // 顯示瀏覽器執行的輸出信息
         $this->line(""); // 空行
@@ -1409,6 +1669,7 @@ class ScrapeBrowserRsgDOM extends Command
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
         }
         
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
 }

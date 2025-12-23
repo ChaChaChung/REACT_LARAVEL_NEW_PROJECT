@@ -41,9 +41,10 @@ trait HasAgentAuth
 
     /**
      * 生成 RSG Puppeteer cookies 設定程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateRsgPuppeteerCookiesCode(): string
+    protected function generateRsgPuppeteerCookiesCode(string $pageVar = 'page'): string
     {
         $token = env('RSG_AGENT_TOKEN', '');
         $lang = env('RSG_AGENT_LANGUAGE', 'zh-TW');
@@ -60,7 +61,7 @@ trait HasAgentAuth
 
             // 如果有設定 cookies，則應用到頁面
             if (cookies.length > 0) {
-                await page.setCookie(...cookies);
+                await {$pageVar}.setCookie(...cookies);
                 console.log('✅ Cookies set:', cookies.length);
             } else {
                 console.log('⚠️  No cookies found in environment variables');
