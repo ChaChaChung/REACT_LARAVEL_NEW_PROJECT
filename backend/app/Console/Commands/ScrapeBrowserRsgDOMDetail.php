@@ -231,23 +231,628 @@ class ScrapeBrowserRsgDOM extends Command
 
                     // 等待頁面穩定
                     await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // 截圖：導航到頁面後
+                    await page.screenshot({ 
+                        path: 'step_01_after_navigation.png',
+                        fullPage: false
+                    });
+                    console.log('📸 Screenshot saved: step_01_after_navigation.png');
 
+                    // ========== 步驟 1：處理日期範圍選擇（優先執行）==========
+                    // 如果提供了 date_start 和 date_end，先填入日期
+                    const dateStartProvided = $dateStartJs && $dateStartJs !== 'null';
+                    const dateEndProvided = $dateEndJs && $dateEndJs !== 'null';
+                    
+                    if (dateStartProvided && dateEndProvided) {
+                        console.log('📅 Date parameters provided, attempting to set dates...');
+                        console.log('📅 Date Start:', $dateStartJs.replace(/"/g, ''));
+                        console.log('📅 Date End:', $dateEndJs.replace(/"/g, ''));
+                        
+                        try {
+                            // 查找 reservation 欄位
+                            const reservationField = await page.evaluate(() => {
+                                const element = document.querySelector('[id*="reservation"]');
+                                if (element) {
+                                    return { found: true, id: element.id, value: element.value };
+                                }
+                                return { found: false };
+                            });
+                            
+                            console.log('📅 Reservation field check:', reservationField);
+                            
+                            if (reservationField.found) {
+                                // 點擊 reservation 欄位以打開日期選擇器
+                                await page.evaluate(() => {
+                                    const element = document.querySelector('[id*="reservation"]');
+                                    if (element) {
+                                        element.click();
+                                        element.focus();
+                                    }
+                                });
+                                
+                                // 等待日期選擇器出現
+                                await new Promise(resolve => setTimeout(resolve, 1500));
+                                
+                                // 截圖：打開日期選擇器後
+                                await page.screenshot({ 
+                                    path: 'step_02_date_picker_opened.png',
+                                    fullPage: false
+                                });
+                                console.log('📸 Screenshot saved: step_02_date_picker_opened.png');
+                                
+                                // 查找並點擊「Customize」選項
+                                const customizeClicked = await page.evaluate(() => {
+                                    let dropdown = document.querySelector('.ranges');
+                                    if (dropdown) {
+                                        // 嘗試多個可能的選項名稱
+                                        const possibleKeys = ['Custom Range', 'Customize', 'Custom', '自訂範圍', '自定义范围'];
+                                        
+                                        for (const key of possibleKeys) {
+                                            const customizeByAttr = dropdown.querySelector('[data-range-key="' + key + '"]');
+                                            if (customizeByAttr) {
+                                                customizeByAttr.click();
+                                                return { clicked: true, text: customizeByAttr.textContent, key: key };
+                                            }
+                                        }
+                                        
+                                        // 如果沒有找到，嘗試通過文本內容查找
+                                        const allOptions = Array.from(dropdown.querySelectorAll('li'));
+                                        for (const option of allOptions) {
+                                            const text = option.textContent.trim().toLowerCase();
+                                            if (text.includes('custom') || text.includes('自訂') || text.includes('自定义')) {
+                                                option.click();
+                                                return { clicked: true, text: option.textContent.trim(), method: 'text-match' };
+                                            }
+                                        }
+                                    }
+                                    return { clicked: false };
+                                });
+                                
+                                console.log('📅 Customize clicked:', customizeClicked);
+                                
+                                if (customizeClicked.clicked) {
+                                    // 等待自定義日期輸入框出現
+                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                    
+                                    // 先嘗試使用 daterangepicker API（最可靠的方法）
+                                    const dateSetResult = await page.evaluate((dateStart, dateEnd) => {
+                                        try {
+                                            // 方法 1: 使用 daterangepicker 的 setStartDate 和 setEndDate API（優先使用 moment.js 對象）
+                                            const reservationInput = document.querySelector('[id*="reservation"]');
+                                            if (reservationInput) {
+                                                // 嘗試使用 moment.js（如果可用）
+                                                if (typeof window.moment !== 'undefined') {
+                                                    try {
+                                                        const startMoment = window.moment(dateStart, 'YYYY-MM-DD');
+                                                        const endMoment = window.moment(dateEnd, 'YYYY-MM-DD');
+                                                        
+                                                        if (reservationInput.daterangepicker) {
+                                                            reservationInput.daterangepicker.setStartDate(startMoment);
+                                                            reservationInput.daterangepicker.setEndDate(endMoment);
+                                                            return { method: 'api-moment', success: true };
+                                                        }
+                                                        
+                                                        // 通過 jQuery
+                                                        if (typeof window.$ !== 'undefined') {
+                                                            const jQueryReservation = window.$('[id*="reservation"]');
+                                                            if (jQueryReservation.length > 0 && jQueryReservation.data('daterangepicker')) {
+                                                                jQueryReservation.data('daterangepicker').setStartDate(startMoment);
+                                                                jQueryReservation.data('daterangepicker').setEndDate(endMoment);
+                                                                return { method: 'jquery-moment', success: true };
+                                                            }
+                                                        }
+                                                    } catch (e) {
+                                                        // moment 失敗，繼續嘗試其他方法
+                                                    }
+                                                }
+                                                
+                                                // 方法 2: 使用字符串格式的 API
+                                                if (reservationInput.daterangepicker) {
+                                                    reservationInput.daterangepicker.setStartDate(dateStart);
+                                                    reservationInput.daterangepicker.setEndDate(dateEnd);
+                                                    return { method: 'api-string', success: true };
+                                                }
+                                                
+                                                // 方法 3: 通過 jQuery 使用字符串
+                                                if (typeof window.$ !== 'undefined') {
+                                                    const jQueryReservation = window.$('[id*="reservation"]');
+                                                    if (jQueryReservation.length > 0 && jQueryReservation.data('daterangepicker')) {
+                                                        jQueryReservation.data('daterangepicker').setStartDate(dateStart);
+                                                        jQueryReservation.data('daterangepicker').setEndDate(dateEnd);
+                                                        return { method: 'jquery-string', success: true };
+                                                    }
+                                                }
+                                            }
+                                            
+                                            return { success: false, reason: 'API methods not available' };
+                                        } catch (e) {
+                                            return { success: false, error: e.message };
+                                        }
+                                    }, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
+                                    
+                                    console.log('📅 Date set result (API):', dateSetResult);
+                                    
+                                    // 如果 API 方法失敗，使用 Puppeteer 的 type 方法直接填入
+                                    if (!dateSetResult.success) {
+                                        console.log('⚠️  API method failed, trying Puppeteer type method...');
+                                        
+                                        // 查找日期輸入框
+                                        const inputSelectors = [
+                                            'input[name="daterangepicker_start"]',
+                                            '.daterangepicker input[name="daterangepicker_start"]',
+                                            '.daterangepicker .calendar.left input',
+                                            '.daterangepicker .calendar.right input'
+                                        ];
+                                        
+                                        let startInputSelector = null;
+                                        let endInputSelector = null;
+                                        
+                                        for (const selector of inputSelectors) {
+                                            try {
+                                                const exists = await page.$(selector);
+                                                if (exists) {
+                                                    if (!startInputSelector) {
+                                                        startInputSelector = selector;
+                                                    } else if (!endInputSelector) {
+                                                        endInputSelector = selector;
+                                                        break;
+                                                    }
+                                                }
+                                            } catch (e) {}
+                                        }
+                                        
+                                        // 如果找不到 start，嘗試查找 end
+                                        if (!endInputSelector) {
+                                            const endSelectors = [
+                                                'input[name="daterangepicker_end"]',
+                                                '.daterangepicker input[name="daterangepicker_end"]',
+                                                '.daterangepicker .calendar.right input'
+                                            ];
+                                            for (const selector of endSelectors) {
+                                                try {
+                                                    const exists = await page.$(selector);
+                                                    if (exists) {
+                                                        endInputSelector = selector;
+                                                        break;
+                                                    }
+                                                } catch (e) {}
+                                            }
+                                        }
+                                        
+                                        if (startInputSelector && endInputSelector) {
+                                            try {
+                                                // 獲取輸入框元素
+                                                const startInput = await page.$(startInputSelector);
+                                                const endInput = await page.$(endInputSelector);
+                                                
+                                                if (startInput && endInput) {
+                                                    // 方法 1: 使用 fill 方法（如果可用）
+                                                    try {
+                                                        // 先聚焦並選中所有文本
+                                                        await startInput.click({ clickCount: 3 });
+                                                        await startInput.type($dateStartJs.replace(/"/g, ''), { delay: 30 });
+                                                        
+                                                        await endInput.click({ clickCount: 3 });
+                                                        await endInput.type($dateEndJs.replace(/"/g, ''), { delay: 30 });
+                                                        
+                                                        console.log('✅ Dates typed using elementHandle.type()');
+                                                    } catch (e) {
+                                                        // 如果 type 失敗，使用 evaluate 直接設置
+                                                        console.log('⚠️  type() failed, using evaluate method...');
+                                                        await page.evaluate((startSel, endSel, dateStart, dateEnd) => {
+                                                            const startEl = document.querySelector(startSel);
+                                                            const endEl = document.querySelector(endSel);
+                                                            if (startEl) {
+                                                                startEl.focus();
+                                                                startEl.value = '';
+                                                                startEl.value = dateStart;
+                                                                startEl.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                startEl.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                if (window.$) window.$(startEl).trigger('input').trigger('change');
+                                                            }
+                                                            if (endEl) {
+                                                                endEl.focus();
+                                                                endEl.value = '';
+                                                                endEl.value = dateEnd;
+                                                                endEl.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                endEl.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                if (window.$) window.$(endEl).trigger('input').trigger('change');
+                                                            }
+                                                        }, startInputSelector, endInputSelector, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
+                                                        console.log('✅ Dates set using evaluate method');
+                                                    }
+                                                } else {
+                                                    console.log('⚠️  Could not find input elements');
+                                                }
+                                                
+                                            } catch (e) {
+                                                console.log('⚠️  Error typing dates:', e.message);
+                                            }
+                                        } else {
+                                            console.log('⚠️  Could not find date input selectors');
+                                        }
+                                    }
+                                    
+                                    // 等待一下，確保值已填入
+                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                    
+                                    // 驗證日期是否真的被填入了
+                                    const dateVerification = await page.evaluate((expectedStart, expectedEnd) => {
+                                        const startInput = document.querySelector('input[name="daterangepicker_start"]') ||
+                                                          document.querySelector('.daterangepicker input[name="daterangepicker_start"]');
+                                        const endInput = document.querySelector('input[name="daterangepicker_end"]') ||
+                                                        document.querySelector('.daterangepicker input[name="daterangepicker_end"]');
+                                        
+                                        const actualStart = startInput ? startInput.value : null;
+                                        const actualEnd = endInput ? endInput.value : null;
+                                        
+                                        return {
+                                            expectedStart: expectedStart,
+                                            expectedEnd: expectedEnd,
+                                            actualStart: actualStart,
+                                            actualEnd: actualEnd,
+                                            startMatch: actualStart === expectedStart,
+                                            endMatch: actualEnd === expectedEnd,
+                                            bothMatch: (actualStart === expectedStart && actualEnd === expectedEnd)
+                                        };
+                                    }, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
+                                    
+                                    console.log('📅 Date verification:', dateVerification);
+                                    
+                                    // 截圖：日期填入後（點擊 Apply 前）
+                                    await page.screenshot({ 
+                                        path: 'step_03_after_date_input.png',
+                                        fullPage: false
+                                    });
+                                    console.log('📸 Screenshot saved: step_03_after_date_input.png');
+                                    
+                                    // 點擊 Apply 按鈕
+                                    const applyResult = await page.evaluate(() => {
+                                        const applyBtn = document.querySelector('.applyBtn') || 
+                                                          document.querySelector('button.btn-success') ||
+                                                          document.querySelector('button[type="button"].btn.btn-sm.btn-success') ||
+                                                          document.querySelector('.daterangepicker button.applyBtn');
+                                        if (applyBtn) {
+                                            applyBtn.click();
+                                            return { clicked: true, text: applyBtn.textContent };
+                                        }
+                                        return { clicked: false, reason: 'Apply button not found' };
+                                    });
+                                    
+                                    console.log('📅 Apply button clicked:', applyResult);
+                                    
+                                    // 等待日期選擇器關閉和數據載入
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    // 截圖：點擊 Apply 按鈕後
+                                    await page.screenshot({ 
+                                        path: 'step_04_after_apply_click.png',
+                                        fullPage: false
+                                    });
+                                    console.log('📸 Screenshot saved: step_04_after_apply_click.png');
+                                } else {
+                                    console.log('⚠️  Could not find Customize option');
+                                }
+                            } else {
+                                console.log('⚠️  Could not find reservation field');
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error handling date range selection: ' + e.message);
+                            console.log('⚠️  Error stack:', e.stack);
+                        }
+                    } else {
+                        console.log('📅 No date parameters provided, skipping date selection');
+                    }
+                    
+                    // ========== 步驟 2：處理帳號號碼（在日期處理後）==========
+                    // 解析帳號號碼（從 PHP 變量插值）
+                    let accountNumber = $accountNumberJs;
+                    
+                    if (accountNumber && accountNumber !== null && accountNumber !== '') {
+                        console.log('🔍 Account number provided: ' + accountNumber);
+                        console.log('🔍 Looking for account number: ' + accountNumber);
+                        
+                        // 等待頁面穩定（日期處理後可能需要等待數據載入）
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        // 等待 tbody.dataContent 元素出現（如果存在）
+                        try {
+                            await page.waitForSelector('tbody.dataContent', { timeout: 10000 });
+                            console.log('✅ tbody.dataContent found for account search');
+                        } catch (e) {
+                            console.log('ℹ️  tbody.dataContent not found, continuing account search...');
+                        }
+                        
+                        // 額外等待一下，確保表格數據已載入
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        // 截圖：查找帳號號碼前
+                        await page.screenshot({ 
+                            path: 'step_05_before_account_search.png',
+                            fullPage: false
+                        });
+                        console.log('📸 Screenshot saved: step_05_before_account_search.png');
+                        
+                        try {
+                            // 步驟 1: 點擊 "Designated account" 按鈕
+                            console.log('🔍 Looking for "Designated account" button...');
+                            const designatedAccountButton = await page.evaluate(() => {
+                                // 查找按鈕
+                                const button = document.querySelector('button.btn.btn-warning[onclick*="openSearchAccountModal"]');
+                                if (button) {
+                                    return {
+                                        found: true,
+                                        text: button.textContent.trim(),
+                                        onclick: button.getAttribute('onclick')
+                                    };
+                                }
+                                // 如果找不到，嘗試其他可能的選擇器
+                                const buttons = Array.from(document.querySelectorAll('button.btn.btn-warning'));
+                                for (const btn of buttons) {
+                                    const text = btn.textContent.trim();
+                                    if (text.includes('Designated account') || text.includes('account')) {
+                                        return {
+                                            found: true,
+                                            text: text,
+                                            onclick: btn.getAttribute('onclick')
+                                        };
+                                    }
+                                }
+                                return { found: false, reason: 'Button not found' };
+                            });
+                            
+                            console.log('📋 Designated account button info:', designatedAccountButton);
+                            
+                            if (designatedAccountButton.found) {
+                                // 點擊按鈕
+                                try {
+                                    await page.evaluate(() => {
+                                        const button = document.querySelector('button.btn.btn-warning[onclick*="openSearchAccountModal"]') ||
+                                                      Array.from(document.querySelectorAll('button.btn.btn-warning')).find(btn => 
+                                                          btn.textContent.trim().includes('Designated account') || 
+                                                          btn.textContent.trim().includes('account')
+                                                      );
+                                        if (button) {
+                                            button.click();
+                                        }
+                                    });
+                                    console.log('✅ "Designated account" button clicked');
+                                    
+                                    // 等待彈窗出現
+                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                    
+                                    // 截圖：點擊按鈕後（彈窗應該出現）
+                                    await page.screenshot({ 
+                                        path: 'step_05_after_button_click.png',
+                                        fullPage: false
+                                    });
+                                    console.log('📸 Screenshot saved: step_05_after_button_click.png');
+                                } catch (e) {
+                                    console.log('⚠️  Error clicking "Designated account" button: ' + e.message);
+                                }
+                            } else {
+                                console.log('⚠️  Could not find "Designated account" button: ' + (designatedAccountButton.reason || 'Unknown reason'));
+                            }
+                            
+                            // 步驟 2: 等待輸入框出現並填入帳號
+                            console.log('🔍 Looking for account input field...');
+                            try {
+                                // 等待輸入框出現
+                                await page.waitForSelector('input#account[name="account"]', { timeout: 10000 });
+                                console.log('✅ Account input field found');
+                                
+                                // 填入帳號
+                                await page.evaluate((accountNum) => {
+                                    const input = document.querySelector('input#account[name="account"]');
+                                    if (input) {
+                                        input.focus();
+                                        input.value = '';
+                                        input.value = accountNum;
+                                        // 觸發事件
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        if (window.$) {
+                                            window.$(input).trigger('input').trigger('change');
+                                        }
+                                    }
+                                }, accountNumber);
+                                
+                                // 也可以使用 Puppeteer 的 type 方法
+                                try {
+                                    const accountInput = await page.$('input#account[name="account"]');
+                                    if (accountInput) {
+                                        await accountInput.click({ clickCount: 3 }); // 選中所有文本
+                                        await accountInput.type(accountNumber, { delay: 30 });
+                                        console.log('✅ Account number typed using Puppeteer');
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Error typing account number with Puppeteer: ' + e.message);
+                                    console.log('ℹ️  Using evaluate method instead');
+                                }
+                                
+                                // 驗證帳號是否已填入
+                                const accountValue = await page.evaluate(() => {
+                                    const input = document.querySelector('input#account[name="account"]');
+                                    return input ? input.value : null;
+                                });
+                                
+                                console.log('📋 Account input value:', accountValue);
+                                
+                                if (accountValue === accountNumber) {
+                                    console.log('✅ Account number successfully entered');
+                                } else {
+                                    console.log('⚠️  Account number mismatch. Expected: ' + accountNumber + ', Got: ' + accountValue);
+                                }
+                                
+                                // 截圖：填入帳號後
+                                await page.screenshot({ 
+                                    path: 'step_05_after_account_input.png',
+                                    fullPage: false
+                                });
+                                console.log('📸 Screenshot saved: step_05_after_account_input.png');
+                                
+                            } catch (e) {
+                                console.log('⚠️  Error finding or filling account input field: ' + e.message);
+                                console.log('⚠️  Trying alternative selectors...');
+                                
+                                // 嘗試其他選擇器
+                                const alternativeSelectors = [
+                                    'input#account',
+                                    'input[name="account"]',
+                                    'input[placeholder*="account"]',
+                                    'input.form-control[placeholder*="account"]'
+                                ];
+                                
+                                let inputFound = false;
+                                for (const selector of alternativeSelectors) {
+                                    try {
+                                        const input = await page.$(selector);
+                                        if (input) {
+                                            await input.click({ clickCount: 3 });
+                                            await input.type(accountNumber, { delay: 30 });
+                                            console.log('✅ Account number entered using selector: ' + selector);
+                                            inputFound = true;
+                                            break;
+                                        }
+                                    } catch (e) {
+                                        // 繼續嘗試下一個選擇器
+                                    }
+                                }
+                                
+                                if (!inputFound) {
+                                    console.log('⚠️  Could not find account input field with any selector');
+                                }
+                            }
+                            
+                            // 步驟 3: 點擊搜索按鈕
+                            console.log('🔍 Looking for Search button...');
+                            try {
+                                // 等待搜索按鈕出現
+                                await page.waitForSelector('input.btn.bg-aqua[value="Search"][onclick*="searchAccount"]', { timeout: 5000 });
+                                console.log('✅ Search button found');
+                                
+                                // 點擊搜索按鈕
+                                await page.evaluate(() => {
+                                    const searchBtn = document.querySelector('input.btn.bg-aqua[value="Search"][onclick*="searchAccount"]') ||
+                                                      document.querySelector('input.btn.bg-aqua[value="Search"]') ||
+                                                      Array.from(document.querySelectorAll('input.btn.bg-aqua')).find(btn => 
+                                                          btn.value === 'Search' || btn.getAttribute('onclick')?.includes('searchAccount')
+                                                      );
+                                    if (searchBtn) {
+                                        searchBtn.click();
+                                    }
+                                });
+                                
+                                console.log('✅ Search button clicked');
+                                
+                                // 等待搜索結果載入
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                
+                                // 截圖：點擊搜索按鈕後
+                                await page.screenshot({ 
+                                    path: 'step_06_after_search_click.png',
+                                    fullPage: false
+                                });
+                                console.log('📸 Screenshot saved: step_06_after_search_click.png');
+                                
+                            } catch (e) {
+                                console.log('⚠️  Error finding or clicking Search button: ' + e.message);
+                                console.log('⚠️  Trying alternative methods...');
+                                
+                                // 嘗試直接執行 searchAccount 函數
+                                try {
+                                    await page.evaluate((accountNum) => {
+                                        if (typeof window.searchAccount === 'function') {
+                                            window.searchAccount();
+                                        } else if (typeof searchAccount === 'function') {
+                                            searchAccount();
+                                        }
+                                    }, accountNumber);
+                                    console.log('✅ Search function executed directly');
+                                    
+                                    // 等待搜索結果載入
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                } catch (e2) {
+                                    console.log('⚠️  Error executing searchAccount function: ' + e2.message);
+                                }
+                            }
+                            
+                            // 等待頁面穩定
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                        } catch (e) {
+                            console.log('⚠️  Error in account search process: ' + e.message);
+                            console.log('⚠️  Error stack:', e.stack);
+                        }
+                    } else {
+                        console.log('ℹ️  No account number provided, skipping account search');
+                    }
+                    
+                    // ========== 步驟 3：點擊 Currency 連結（在日期和帳號處理後）==========
                     // 點擊 tbody.dataContent 中的 Currency 超連結
+                    console.log('🔍 Looking for Currency link...');
                     try {
+                        // 等待 tbody.dataContent 元素出現
+                        try {
+                            await page.waitForSelector('tbody.dataContent', { timeout: 15000 });
+                            console.log('✅ tbody.dataContent found');
+                        } catch (e) {
+                            console.log('⚠️  tbody.dataContent not found, trying to continue...');
+                        }
+                        
+                        // 額外等待一下，確保表格數據已載入
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        
+                        // 先檢查頁面狀態
+                        const pageStatus = await page.evaluate(() => {
+                            const dataContent = document.querySelector('tbody.dataContent');
+                            const thead = document.querySelector('thead');
+                            const allTables = document.querySelectorAll('table');
+                            return {
+                                hasDataContent: !!dataContent,
+                                hasThead: !!thead,
+                                tableCount: allTables.length,
+                                dataContentRows: dataContent ? dataContent.querySelectorAll('tr').length : 0
+                            };
+                        });
+                        console.log('📊 Page status:', pageStatus);
+                        
+                        // 截圖：查找 Currency 連結前
+                        await page.screenshot({ 
+                            path: 'step_07_before_currency_search.png',
+                            fullPage: false
+                        });
+                        console.log('📸 Screenshot saved: step_07_before_currency_search.png');
+                        
                         // 尋找 tbody.dataContent 中的超連結
                         const currencyLinkInfo = await page.evaluate(() => {
                             // 初始化 Currency 索引
                             let currencyColumnIndex = -1;
-                            // 查找表頭的第一行中的所有單元格
-                            const headers = Array.from(document.querySelector('thead').querySelector('tr').querySelectorAll('th, td'));
-                            // 找到 Currency 的索引
-                            currencyColumnIndex = headers.findIndex(cell => {
-                                const text = cell.textContent.trim();
-                                return text === 'Currency';
-                            });
+                            
+                            // 檢查 thead 是否存在
+                            const thead = document.querySelector('thead');
+                            if (thead) {
+                                const headerRow = thead.querySelector('tr');
+                                if (headerRow) {
+                                    // 查找表頭的第一行中的所有單元格
+                                    const headers = Array.from(headerRow.querySelectorAll('th, td'));
+                                    // 找到 Currency 的索引
+                                    currencyColumnIndex = headers.findIndex(cell => {
+                                        const text = cell.textContent.trim();
+                                        return text === 'Currency';
+                                    });
+                                }
+                            }
                             
                             // 查找所有行
-                            const rows = Array.from(document.querySelector('tbody.dataContent').querySelectorAll('tr'));
+                            const dataContent = document.querySelector('tbody.dataContent');
+                            if (!dataContent) {
+                                return { found: false, reason: 'tbody.dataContent not found' };
+                            }
+                            
+                            const rows = Array.from(dataContent.querySelectorAll('tr'));
+                            
                             // 如果找不到表頭，嘗試從第一行推斷
                             if (currencyColumnIndex === -1 && rows.length > 0) {
                                 const firstRowCells = Array.from(rows[0].querySelectorAll('td'));
@@ -257,253 +862,274 @@ class ScrapeBrowserRsgDOM extends Command
                                 });
                             }
                             
+                            // 如果還是找不到，嘗試查找所有包含 "Currency" 文本的元素
+                            if (currencyColumnIndex === -1) {
+                                // 查找所有包含 "Currency" 的單元格
+                                for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+                                    const cells = Array.from(rows[rowIdx].querySelectorAll('td'));
+                                    for (let cellIdx = 0; cellIdx < cells.length; cellIdx++) {
+                                        const cellText = cells[cellIdx].textContent.trim();
+                                        if (cellText === 'Currency' || cellText.includes('Currency')) {
+                                            currencyColumnIndex = cellIdx;
+                                            break;
+                                        }
+                                    }
+                                    if (currencyColumnIndex !== -1) break;
+                                }
+                            }
+                            
                             // 如果找到 Currency，查找該列中的第一個超連結
                             if (currencyColumnIndex !== -1) {
-                                for (const row of rows) {
-                                    const cells = Array.from(row.querySelectorAll('td'));
+                                // 調試：檢查該列的所有內容
+                                const columnDebug = [];
+                                for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+                                    const cells = Array.from(rows[rowIdx].querySelectorAll('td'));
                                     if (cells[currencyColumnIndex]) {
+                                        const cell = cells[currencyColumnIndex];
+                                        const cellText = cell.textContent.trim();
+                                        const cellHTML = cell.innerHTML.trim();
+                                        const hasULink = cell.querySelector('u[onclick]');
+                                        const hasALink = cell.querySelector('a');
+                                        const hasU = cell.querySelector('u');
+                                        const hasClickable = cell.querySelector('[onclick]');
+                                        
+                                        columnDebug.push({
+                                            rowIndex: rowIdx,
+                                            text: cellText,
+                                            hasULink: !!hasULink,
+                                            hasALink: !!hasALink,
+                                            hasU: !!hasU,
+                                            hasClickable: !!hasClickable,
+                                            html: cellHTML.substring(0, 100) // 只取前100字符
+                                        });
+                                        
                                         // 優先查找 <u> 標籤（帶有 onclick 的）
-                                        const uLink = cells[currencyColumnIndex].querySelector('u[onclick]');
-                                        if (uLink) {
+                                        if (hasULink) {
                                             return {
                                                 found: true,
-                                                text: uLink.textContent.trim(),
+                                                text: hasULink.textContent.trim(),
                                                 columnIndex: currencyColumnIndex,
                                                 isUTag: true,
-                                                onclick: uLink.getAttribute('onclick')
+                                                onclick: hasULink.getAttribute('onclick'),
+                                                rowIndex: rowIdx
+                                            };
+                                        }
+                                        
+                                        // 查找任何 <u> 標籤（即使沒有 onclick）
+                                        if (hasU) {
+                                            return {
+                                                found: true,
+                                                text: hasU.textContent.trim(),
+                                                columnIndex: currencyColumnIndex,
+                                                isUTag: true,
+                                                onclick: hasU.getAttribute('onclick') || null,
+                                                rowIndex: rowIdx
+                                            };
+                                        }
+                                        
+                                        // 如果沒有 <u> 標籤，查找 <a> 標籤
+                                        if (hasALink) {
+                                            return {
+                                                found: true,
+                                                text: hasALink.textContent.trim(),
+                                                columnIndex: currencyColumnIndex,
+                                                isUTag: false,
+                                                href: hasALink.getAttribute('href'),
+                                                rowIndex: rowIdx
+                                            };
+                                        }
+                                        
+                                        // 查找任何可點擊的元素
+                                        if (hasClickable) {
+                                            const clickable = cell.querySelector('[onclick]');
+                                            return {
+                                                found: true,
+                                                text: clickable.textContent.trim(),
+                                                columnIndex: currencyColumnIndex,
+                                                isUTag: clickable.tagName === 'U',
+                                                onclick: clickable.getAttribute('onclick'),
+                                                rowIndex: rowIdx
                                             };
                                         }
                                     }
                                 }
+                                
+                                // 如果還是找不到，返回調試信息
+                                return { 
+                                    found: false, 
+                                    reason: 'No clickable element found in Currency column', 
+                                    columnIndex: currencyColumnIndex,
+                                    debug: columnDebug
+                                };
                             }
                             
-                            return { found: false, reason: 'No link found in tbody.dataContent' };
+                            // 如果還是找不到，嘗試直接查找所有包含 "Currency" 的連結
+                            const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                            for (const uLink of allULinks) {
+                                const text = uLink.textContent.trim();
+                                // 如果連結文本看起來像貨幣代碼（通常是 3 個大寫字母）
+                                if (text.length === 3 && text === text.toUpperCase() && /^[A-Z]+$/.test(text)) {
+                                    // 檢查是否在 tbody.dataContent 中
+                                    const parentRow = uLink.closest('tr');
+                                    if (parentRow && parentRow.closest('tbody.dataContent')) {
+                                        return {
+                                            found: true,
+                                            text: text,
+                                            columnIndex: -1, // 未知列索引
+                                            isUTag: true,
+                                            onclick: uLink.getAttribute('onclick'),
+                                            method: 'direct-search'
+                                        };
+                                    }
+                                }
+                            }
+                            
+                            return { found: false, reason: 'No link found in tbody.dataContent', columnIndex: currencyColumnIndex };
                         });
                         
-                        if (currencyLinkInfo.found) {                            
+                        console.log('🔍 Currency link search result:', currencyLinkInfo);
+                        
+                        if (currencyLinkInfo.found) {
+                            console.log('✅ Currency link found, clicking...');
+                            console.log('📋 Currency link info:', {
+                                text: currencyLinkInfo.text,
+                                columnIndex: currencyLinkInfo.columnIndex,
+                                isUTag: currencyLinkInfo.isUTag,
+                                method: currencyLinkInfo.method || 'column-based'
+                            });
+                            
                             // 點擊超連結，並等待可能的導航
                             try {
-                                await Promise.all([
-                                    // 等待導航（如果發生）
-                                    page.waitForNavigation({ 
-                                        waitUntil: 'domcontentloaded',
-                                        timeout: 10000 
-                                    }).catch(() => {
-                                        // 如果沒有導航發生，忽略超時錯誤
-                                    }),
-                                    // 點擊 Currency 連結
-                                    page.evaluate((columnIndex, isUTag) => {
-                                        const rows = Array.from(document.querySelector('tbody.dataContent').querySelectorAll('tr'));
+                                if (currencyLinkInfo.method === 'direct-search') {
+                                    // 直接搜索找到的情況，使用 onclick 屬性
+                                    if (currencyLinkInfo.onclick) {
+                                        await page.evaluate((onclickValue) => {
+                                            // 執行 onclick 函數
+                                            eval(onclickValue);
+                                        }, currencyLinkInfo.onclick);
+                                        console.log('✅ Currency link clicked via onclick');
+                                    } else {
+                                        // 如果沒有 onclick，嘗試直接查找並點擊
+                                        await page.evaluate((linkText) => {
+                                            const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                            for (const uLink of allULinks) {
+                                                if (uLink.textContent.trim() === linkText) {
+                                                    uLink.click();
+                                                    return;
+                                                }
+                                            }
+                                        }, currencyLinkInfo.text);
+                                        console.log('✅ Currency link clicked via direct search');
+                                    }
+                                } else {
+                                    // 使用列索引的方式
+                                    const clickResult = await page.evaluate((columnIndex, isUTag, rowIndex) => {
+                                        const dataContent = document.querySelector('tbody.dataContent');
+                                        if (!dataContent) return { success: false, reason: 'No dataContent' };
+                                        
+                                        const rows = Array.from(dataContent.querySelectorAll('tr'));
                                         if (columnIndex !== -1) {
-                                            for (const row of rows) {
+                                            // 如果指定了行索引，只檢查該行
+                                            if (rowIndex !== undefined && rowIndex >= 0 && rowIndex < rows.length) {
+                                                const row = rows[rowIndex];
                                                 const cells = Array.from(row.querySelectorAll('td'));
                                                 if (cells[columnIndex]) {
+                                                    const cell = cells[columnIndex];
+                                                    
+                                                    // 優先查找 <u> 標籤
                                                     if (isUTag) {
-                                                        const uLink = cells[columnIndex].querySelector('u[onclick]');
+                                                        const uLink = cell.querySelector('u[onclick]') || cell.querySelector('u');
                                                         if (uLink) {
                                                             uLink.click();
-                                                            return;
+                                                            return { success: true, method: 'u-tag-click', text: uLink.textContent.trim() };
+                                                        }
+                                                    }
+                                                    
+                                                    // 查找 <a> 標籤
+                                                    const aLink = cell.querySelector('a');
+                                                    if (aLink) {
+                                                        aLink.click();
+                                                        return { success: true, method: 'a-tag-click', text: aLink.textContent.trim() };
+                                                    }
+                                                    
+                                                    // 查找任何可點擊的元素
+                                                    const clickable = cell.querySelector('[onclick]');
+                                                    if (clickable) {
+                                                        clickable.click();
+                                                        return { success: true, method: 'onclick-click', text: clickable.textContent.trim() };
+                                                    }
+                                                    
+                                                    // 如果都沒有，嘗試點擊整個單元格
+                                                    cell.click();
+                                                    return { success: true, method: 'cell-click', text: cell.textContent.trim() };
+                                                }
+                                            } else {
+                                                // 沒有指定行索引，遍歷所有行
+                                                for (const row of rows) {
+                                                    const cells = Array.from(row.querySelectorAll('td'));
+                                                    if (cells[columnIndex]) {
+                                                        const cell = cells[columnIndex];
+                                                        
+                                                        // 優先查找 <u> 標籤
+                                                        if (isUTag) {
+                                                            const uLink = cell.querySelector('u[onclick]') || cell.querySelector('u');
+                                                            if (uLink) {
+                                                                uLink.click();
+                                                                return { success: true, method: 'u-tag-click', text: uLink.textContent.trim() };
+                                                            }
+                                                        }
+                                                        
+                                                        // 查找 <a> 標籤
+                                                        const aLink = cell.querySelector('a');
+                                                        if (aLink) {
+                                                            aLink.click();
+                                                            return { success: true, method: 'a-tag-click', text: aLink.textContent.trim() };
+                                                        }
+                                                        
+                                                        // 查找任何可點擊的元素
+                                                        const clickable = cell.querySelector('[onclick]');
+                                                        if (clickable) {
+                                                            clickable.click();
+                                                            return { success: true, method: 'onclick-click', text: clickable.textContent.trim() };
                                                         }
                                                     }
                                                 }
                                             }
                                         }
-                                    }, currencyLinkInfo.columnIndex, currencyLinkInfo.isUTag || false)
-                                ]);
+                                        return { success: false, reason: 'No clickable element found' };
+                                    }, currencyLinkInfo.columnIndex, currencyLinkInfo.isUTag || false, currencyLinkInfo.rowIndex);
+                                    
+                                    console.log('📋 Click result:', clickResult);
+                                    
+                                    // 等待導航（如果發生）
+                                    try {
+                                        await page.waitForNavigation({ 
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 10000 
+                                        });
+                                        console.log('✅ Navigation occurred');
+                                    } catch (e) {
+                                        // 如果沒有導航發生，忽略超時錯誤
+                                        console.log('ℹ️  No navigation occurred (this is OK)');
+                                    }
+                                    
+                                    console.log('✅ Currency link clicked via column index');
+                                }
                             } catch (e) {
+                                console.log('⚠️  Error clicking Currency link:', e.message);
                                 // 即使出錯也繼續
                             }
                             
                             // 等待頁面穩定
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            console.log('✅ Page stabilized after clicking Currency link');
                             
-                            // ========== 處理日期範圍選擇 ==========
-                            // 如果提供了 date_start 和 date_end，使用 Customize 選項
-                            // 否則，使用 Current month 選項
-                            try {                                
-                                // 查找 reservation 欄位
-                                const reservationField = await page.evaluate(() => {
-                                    const element = document.querySelector('[id*="reservation"]');
-                                    if (element) {
-                                        return { found: true };
-                                    }
-                                    return { found: false };
-                                });
-                                
-                                if (reservationField.found) {
-                                    // 點擊 reservation 欄位以打開日期選擇器
-                                    await page.evaluate(() => {
-                                        const element = document.querySelector('[id*="reservation"]');
-                                        if (element) {
-                                            element.click();
-                                            element.focus();
-                                        }
-                                    });
-                                    
-                                    // 等待日期選擇器出現
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                    
-                                    // 判斷是否提供了自定義日期範圍
-                                    const dateStartProvided = $dateStartJs && $dateStartJs !== 'null';
-                                    const dateEndProvided = $dateEndJs && $dateEndJs !== 'null';
-                                    
-                                    if (dateStartProvided && dateEndProvided) {
-                                        // ========== 使用 Customize 選項 ==========
-                                        // 首先列出所有可用的日期範圍選項
-                                        const availableRanges = await page.evaluate(() => {
-                                            let dropdown = document.querySelector('.ranges');
-                                            if (dropdown) {
-                                                const allOptions = Array.from(dropdown.querySelectorAll('li'));
-                                                return allOptions.map(li => ({
-                                                    text: li.textContent.trim(),
-                                                    dataKey: li.getAttribute('data-range-key')
-                                                }));
-                                            }
-                                            return [];
-                                        });
-                                        
-                                        // 查找並點擊「Customize」選項（嘗試多個可能的名稱）
-                                        const customizeClicked = await page.evaluate(() => {
-                                            let dropdown = document.querySelector('.ranges');
-                                            if (dropdown) {
-                                                // 嘗試多個可能的選項名稱
-                                                const possibleKeys = ['Custom Range', 'Customize', 'Custom', '自訂範圍', '自定义范围'];
-                                                
-                                                for (const key of possibleKeys) {
-                                                    const customizeByAttr = dropdown.querySelector('[data-range-key="' + key + '"]');
-                                                    if (customizeByAttr) {
-                                                        customizeByAttr.click();
-                                                        return { clicked: true, text: customizeByAttr.textContent, key: key };
-                                                    }
-                                                }
-                                                
-                                                // 如果沒有找到，嘗試通過文本內容查找
-                                                const allOptions = Array.from(dropdown.querySelectorAll('li'));
-                                                for (const option of allOptions) {
-                                                    const text = option.textContent.trim().toLowerCase();
-                                                    if (text.includes('custom') || text.includes('自訂') || text.includes('自定义')) {
-                                                        option.click();
-                                                        return { clicked: true, text: option.textContent.trim(), method: 'text-match' };
-                                                    }
-                                                }
-                                            }
-                                            return { clicked: false };
-                                        });
-                                        
-                                        if (customizeClicked.clicked) {
-                                            // 等待自定義日期輸入框出現
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            
-                                            // 使用 daterangepicker 的 API 來設置日期（更可靠的方法）
-                                            const dateSetResult = await page.evaluate((dateStart, dateEnd) => {
-                                                try {
-                                                    // 方法 1: 使用 daterangepicker 的 setStartDate 和 setEndDate API
-                                                    const reservationInput = document.querySelector('[id*="reservation"]');
-                                                    if (reservationInput && reservationInput.daterangepicker) {
-                                                        // 使用 daterangepicker 插件的 API
-                                                        reservationInput.daterangepicker.setStartDate(dateStart);
-                                                        reservationInput.daterangepicker.setEndDate(dateEnd);
-                                                        return { method: 'api', success: true };
-                                                    }
-                                                    
-                                                    // 方法 2: 如果 API 不可用，嘗試通過 jQuery 觸發
-                                                    if (typeof window.$ !== 'undefined') {
-                                                        const jQueryReservation = window.$('[id*="reservation"]');
-                                                        if (jQueryReservation.length > 0 && jQueryReservation.data('daterangepicker')) {
-                                                            jQueryReservation.data('daterangepicker').setStartDate(dateStart);
-                                                            jQueryReservation.data('daterangepicker').setEndDate(dateEnd);
-                                                            return { method: 'jquery', success: true };
-                                                        }
-                                                    }
-                                                    
-                                                    // 方法 3: 直接填入並觸發完整的事件鏈
-                                                    const startInput = document.querySelector('input[name="daterangepicker_start"]');
-                                                    const endInput = document.querySelector('input[name="daterangepicker_end"]');
-                                                    
-                                                    if (startInput && endInput) {
-                                                        // 清空現有值
-                                                        startInput.value = '';
-                                                        endInput.value = '';
-                                                        
-                                                        // 設置新值
-                                                        startInput.value = dateStart;
-                                                        endInput.value = dateEnd;
-                                                        
-                                                        // 觸發多個事件以確保 daterangepicker 識別變化
-                                                        ['input', 'change', 'keyup', 'blur'].forEach(eventType => {
-                                                            startInput.dispatchEvent(new Event(eventType, { bubbles: true }));
-                                                            endInput.dispatchEvent(new Event(eventType, { bubbles: true }));
-                                                        });
-                                                        
-                                                        // 如果有 jQuery，也用 jQuery 觸發事件
-                                                        if (typeof window.$ !== 'undefined') {
-                                                            window.$(startInput).trigger('change');
-                                                            window.$(endInput).trigger('change');
-                                                        }
-                                                        
-                                                        return { method: 'manual', success: true, startValue: startInput.value, endValue: endInput.value };
-                                                    }
-                                                    
-                                                    return { success: false, reason: 'No suitable method found' };
-                                                } catch (e) {
-                                                    return { success: false, error: e.message };
-                                                }
-                                            }, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
-                                            
-                                            // 等待一下，確保值已填入
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            
-                                            // 截圖：確認日期是否已填入
-                                            await page.screenshot({ 
-                                                path: 'after_date_input_screenshot.png',
-                                                fullPage: false
-                                            });
-                                            
-                                            // 點擊 Apply 按鈕
-                                            const applyResult = await page.evaluate(() => {
-                                                const applyBtn = document.querySelector('.applyBtn') || 
-                                                              document.querySelector('button.btn-success') ||
-                                                              document.querySelector('button[type="button"].btn.btn-sm.btn-success') ||
-                                                              document.querySelector('.daterangepicker button.applyBtn');
-                                                if (applyBtn) {
-                                                    applyBtn.click();
-                                                    return { clicked: true, text: applyBtn.textContent };
-                                                }
-                                                return { clicked: false, reason: 'Apply button not found' };
-                                            });
-                                            
-                                            // 等待日期選擇器關閉和數據載入
-                                            await new Promise(resolve => setTimeout(resolve, 3000));
-                                        } else {
-                                            console.log('⚠️  Could not find Customize option');
-                                        }
-                                    } else {
-                                        // ========== 使用 Current month 選項 ==========
-                                        const currentMonthClicked = await page.evaluate(() => {
-                                            let dropdown = document.querySelector('.ranges');
-                                            if (dropdown) {
-                                                const currentMonthByAttr = dropdown.querySelector('[data-range-key="Current month"]');
-                                                if (currentMonthByAttr) {
-                                                    currentMonthByAttr.click();
-                                                    return { clicked: true, text: currentMonthByAttr.textContent };
-                                                }
-                                            }
-                                            return { clicked: false };
-                                        });
-                                        
-                                        if (currentMonthClicked.clicked) {
-                                            // 等待日期選擇器關閉和數據載入
-                                            await new Promise(resolve => setTimeout(resolve, 3000));
-                                        } else {
-                                            console.log('⚠️  Could not find Current month option');
-                                        }
-                                    }
-                                } else {
-                                    console.log('⚠️  Could not find reservation field');
-                                }
-                            } catch (e) {
-                                console.log('⚠️  Error handling date range selection: ' + e.message);
-                            }
+                            // 截圖：點擊 Currency 連結後
+                            await page.screenshot({ 
+                                path: 'step_03_after_currency_click.png',
+                                fullPage: false
+                            });
+                            console.log('📸 Screenshot saved: step_03_after_currency_click.png');
                             
                             // 查找並點擊 slim 連結
                             try {
@@ -555,6 +1181,13 @@ class ScrapeBrowserRsgDOM extends Command
                                     
                                     // 等待頁面穩定
                                     await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 截圖：點擊 slim 連結後
+                                    await page.screenshot({ 
+                                        path: 'step_04_after_slim_click.png',
+                                        fullPage: false
+                                    });
+                                    console.log('📸 Screenshot saved: step_04_after_slim_click.png');
                                 } else {
                                     console.log('⚠️  Could not find slim link: ' + (slimLinkInfo.reason || 'Unknown reason'));
                                 }
@@ -564,148 +1197,83 @@ class ScrapeBrowserRsgDOM extends Command
                             }
                         } else {
                             console.log('⚠️  Could not find Currency link: ' + (currencyLinkInfo.reason || 'Unknown reason'));
-                        }
-                        
-                        // 解析帳號號碼（從 PHP 變量插值）
-                        let accountNumber = $accountNumberJs;
-                        
-                        if (accountNumber && accountNumber !== null && accountNumber !== '') {
-                            try {
-                                // 帳號連結資訊
-                                let accountLinkInfo = null;
-                                // 是否找到帳號連結
-                                let foundInPage = false;
-                                // 當前頁碼
-                                let currentPage = 1;
-                                // 最多查找 100 頁，防止無限循環
-                                const maxPages = 100;
+                            
+                            // 如果找到了 Currency 列索引，嘗試點擊該列的第一個單元格
+                            if (currencyLinkInfo.columnIndex !== undefined && currencyLinkInfo.columnIndex !== -1) {
+                                console.log('🔄 Attempting to click Currency column directly (column index: ' + currencyLinkInfo.columnIndex + ')');
                                 
-                                // 在頁面中查找 account number
-                                const findAccountInCurrentPage = async () => {
-                                    return await page.evaluate((accountNum) => {
-                                        // 尋找所有 <u onclick> 標籤
-                                        const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                try {
+                                    const clickResult = await page.evaluate((columnIndex) => {
+                                        const dataContent = document.querySelector('tbody.dataContent');
+                                        if (!dataContent) return { success: false, reason: 'No dataContent' };
                                         
-                                        // 所有 u[onclick] 資料執行迴圈 
-                                        for (let i = 0; i < allULinks.length; i++) {
-                                            const uLink = allULinks[i];
-                                            // 從 u[onclick] 中取得 text
-                                            const text = uLink.textContent.trim();
-                                            // 判斷是否完全匹配 account number
-                                            if (text === accountNum) {
-                                                // 為元素添加唯一標識，方便 Puppeteer 選擇
-                                                const uniqueId = 'account-link-' + Date.now() + '-' + i;
-                                                uLink.setAttribute('data-puppeteer-id', uniqueId);
+                                        const rows = Array.from(dataContent.querySelectorAll('tr'));
+                                        if (rows.length > 0) {
+                                            const firstRow = rows[0];
+                                            const cells = Array.from(firstRow.querySelectorAll('td'));
+                                            if (cells[columnIndex]) {
+                                                const cell = cells[columnIndex];
                                                 
-                                                return {
-                                                    found: true,
-                                                    text: text,
-                                                    onclick: uLink.getAttribute('onclick'),
-                                                    selector: 'u[data-puppeteer-id="' + uniqueId + '"]'
+                                                // 嘗試點擊整個單元格
+                                                cell.click();
+                                                
+                                                // 也嘗試點擊單元格內的所有元素
+                                                const allClickable = cell.querySelectorAll('*');
+                                                for (const elem of allClickable) {
+                                                    if (elem.onclick || elem.tagName === 'U' || elem.tagName === 'A') {
+                                                        elem.click();
+                                                        break;
+                                                    }
+                                                }
+                                                
+                                                return { 
+                                                    success: true, 
+                                                    method: 'cell-direct-click',
+                                                    text: cell.textContent.trim(),
+                                                    html: cell.innerHTML.substring(0, 100)
                                                 };
                                             }
                                         }
-                                        return { found: false };
-                                    }, accountNumber);
-                                };
-                                
-                                // 尋找並點擊下一頁
-                                const goToNextPage = async () => {
-                                    const nextPageInfo = await page.evaluate(() => {
-                                        // 尋找下一頁按鈕
-                                        const dataTablesNext = document.querySelector('.paginate_button.next:not(.disabled)');
-                                        // 尋找下一頁按鈕中的連結
-                                        const link = dataTablesNext.querySelector('a');
-                                        // 為元素添加唯一標識，方便 Puppeteer 選擇
-                                        const uniqueId = 'next-page-' + Date.now();
-                                        link.setAttribute('data-puppeteer-id', uniqueId);
-                                        return {
-                                            found: true,
-                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                            method: 'click',
-                                            text: link.textContent.trim()
-                                        };
-                                        
-                                        return { found: false };
-                                    });
+                                        return { success: false, reason: 'No cell found' };
+                                    }, currencyLinkInfo.columnIndex);
                                     
-                                    // 判斷是否找到下一頁按鈕
-                                    if (nextPageInfo.found) {
-                                        try {
-                                            // 使用 Puppeteer click
-                                            await page.click(nextPageInfo.selector, { timeout: 5000 });
-                                            
-                                            // 等待表格數據更新（DataTables 通常使用 AJAX，不會導航）
-                                            await new Promise(resolve => setTimeout(resolve, 3000));
-                                            
-                                            return true;
-                                        } catch (e) {
-                                            console.log('⚠️  Error clicking next page: ' + e.message);
-                                            return false;
-                                        }
-                                    }
+                                    console.log('📋 Direct click result:', clickResult);
                                     
-                                    return false;
-                                };
-                                
-                                // 開始查找：先檢查當前頁
-                                accountLinkInfo = await findAccountInCurrentPage();
-                                
-                                // 如果當前頁找不到，開始翻頁查找
-                                while (!accountLinkInfo.found && currentPage < maxPages) {
-                                    const hasNextPage = await goToNextPageForAccount();
-                                    
-                                    if (!hasNextPage) {
-                                        break;
-                                    }
-                                    
-                                    currentPage++;
-                                    
-                                    // 在新頁面查找
-                                    accountLinkInfo = await findAccountInCurrentPage();
-                                    
-                                    if (accountLinkInfo.found) {
-                                        foundInPage = true;
-                                        break;
-                                    }
-                                }
-
-                                // 判斷是否找到帳號連結
-                                if (accountLinkInfo && accountLinkInfo.found) {
-                                    // 點擊帳號連結，並等待可能的導航
+                                    // 等待可能的導航
                                     try {
-                                        await Promise.all([
-                                            // 等待導航（如果發生）
-                                            page.waitForNavigation({ 
-                                                waitUntil: 'domcontentloaded',
-                                                timeout: 10000 
-                                            }).catch(() => {
-                                                // 如果沒有導航發生，忽略超時錯誤
-                                            }),
-                                            // 點擊帳號連結
-                                            page.click(accountLinkInfo.selector, { timeout: 5000 })
-                                        ]);
+                                        await page.waitForNavigation({ 
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 10000 
+                                        });
+                                        console.log('✅ Navigation occurred after direct click');
                                     } catch (e) {
-                                        // 即使出錯也繼續
+                                        console.log('ℹ️  No navigation occurred after direct click (this is OK)');
                                     }
-
-                                    // 等待頁面穩定
-                                    await new Promise(resolve => setTimeout(resolve, 2000));
                                     
-                                    // 截圖：進入 account 後的頁面（在點擊 date 之前）
-                                    await page.screenshot({ 
-                                        path: 'after_account_screenshot.png',
-                                        fullPage: false
-                                    });
-                                } else {
-                                    console.log('⚠️  Could not find account number link after searching ' + currentPage + ' pages');
+                                    // 等待頁面穩定
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                } catch (e) {
+                                    console.log('⚠️  Error clicking Currency column directly:', e.message);
                                 }
-                            } catch (e) {
-                                console.log('⚠️  Error looking for account number: ' + e.message);
+                            } else {
+                                // 如果連列索引都找不到，輸出調試信息
+                                if (currencyLinkInfo.debug) {
+                                    console.log('📋 Currency column debug info:', JSON.stringify(currencyLinkInfo.debug, null, 2));
+                                }
                             }
+                            
+                            // 即使找不到 Currency 連結，也等待一下頁面穩定
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                         }
                         
                         // ========== 點擊 "Slots (All)" 標籤（無論是否有 account_number）==========
+                        // 截圖：點擊 Slots (All) 標籤前
+                        await page.screenshot({ 
+                            path: 'step_10_before_slots_all_click.png',
+                            fullPage: false
+                        });
+                        console.log('📸 Screenshot saved: step_10_before_slots_all_click.png');
+                        
                         try {
                             // 先列出所有可用的標籤（用於調試）
                             const allTabsInfo = await page.evaluate(() => {
@@ -808,9 +1376,10 @@ class ScrapeBrowserRsgDOM extends Command
                                 
                                 // 截圖：點擊 Slots (All) 後的狀態
                                 await page.screenshot({ 
-                                    path: 'after_slots_all_tab_screenshot.png',
+                                    path: 'step_11_after_slots_all_click.png',
                                     fullPage: false
                                 });
+                                console.log('📸 Screenshot saved: step_11_after_slots_all_click.png');
                             } else {
                                 console.log('⚠️  Could not find "Slots (All)" tab: ' + (slotsTabResult.reason || 'Unknown reason'));
                             }
@@ -824,6 +1393,13 @@ class ScrapeBrowserRsgDOM extends Command
 
                     // ========== 步驟 2：提取第一頁資料並獲取分頁資訊 ==========
                     console.log('📄 Step 2: Extracting first page and pagination info...');
+                    
+                    // 截圖：提取數據前
+                    await page.screenshot({ 
+                        path: 'step_12_before_data_extraction.png',
+                        fullPage: false
+                    });
+                    console.log('📸 Screenshot saved: step_12_before_data_extraction.png');
                     
                     // 先檢查頁面上有哪些表格
                     const tableInfo = await page.evaluate(() => {
@@ -1079,183 +1655,8 @@ class ScrapeBrowserRsgDOM extends Command
                         }, accountNumberProvided, accountNumberValue, dateStartValue, dateEndValue);
                     };
 
-                    // 定義檢查是否有下一頁的函數
-                    const hasNextPage = async () => {
-                        return await page.evaluate(() => {
-                            const nextButton = document.querySelector('.paginate_button.next:not(.disabled)');
-                            return nextButton !== null && !nextButton.classList.contains('disabled');
-                        });
-                    };
-
-                    // 定義點擊下一頁的函數（用於查找帳號時翻頁）
-                    const goToNextPageForAccount = async () => {
-                        const nextPageInfo = await page.evaluate(() => {
-                            const dataTablesNext = document.querySelector('.paginate_button.next:not(.disabled)');
-                            if (dataTablesNext) {
-                                const link = dataTablesNext.querySelector('a');
-                                if (link) {
-                                    const uniqueId = 'next-page-' + Date.now();
-                                    link.setAttribute('data-puppeteer-id', uniqueId);
-                                    return {
-                                        found: true,
-                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: link.textContent.trim()
-                                    };
-                                }
-                            }
-                            return { found: false };
-                        });
-                        
-                        if (nextPageInfo.found) {
-                            try {
-                                await page.click(nextPageInfo.selector, { timeout: 5000 });
-                                // 等待表格數據更新
-                                await new Promise(resolve => setTimeout(resolve, 3000));
-                                return true;
-                            } catch (e) {
-                                return false;
-                            }
-                        }
-                        return false;
-                    };
-
-                    // ========== 並發爬取分頁邏輯 ==========
-                    // 解析參數
-                    let accountNumberParsed = null;
-                    let dateStartParsed = null;
-                    let dateEndParsed = null;
-                    
-                    // 解析 account_number
-                    if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
-                        try {
-                            accountNumberParsed = JSON.parse($accountNumberJs);
-                        } catch (e) {
-                            accountNumberParsed = $accountNumberJs;
-                        }
-                    }
-                    
-                    // 解析 date_start
-                    if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
-                        try {
-                            dateStartParsed = JSON.parse($dateStartJs);
-                        } catch (e) {
-                            dateStartParsed = $dateStartJs;
-                        }
-                    }
-                    
-                    // 解析 date_end
-                    if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
-                        try {
-                            dateEndParsed = JSON.parse($dateEndJs);
-                        } catch (e) {
-                            dateEndParsed = $dateEndJs;
-                        }
-                    }
-                    
-                    // 判斷是否提供了 account_number
-                    const accountNumberProvided = accountNumberParsed !== null && accountNumberParsed !== '' && accountNumberParsed !== undefined;
-                    
-                    // 確保表格已載入
-                    await page.waitForSelector('tbody.dataContent tr', { timeout: 5000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    
-                    // 提取第一頁的表格資料
-                    const firstPageData = await extractCurrentPageData(accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
-                    
-                    if (!firstPageData || !firstPageData.tables || firstPageData.tables.length === 0) {
-                        throw new Error('No table found on first page');
-                    }
-                    
-                    // 獲取所有分頁資訊（DataTables 的分頁按鈕）
-                    // 優先使用 DataTables API，再回退其他方式
-                    const paginationInfo = await page.evaluate(() => {
-                        const pageLinks = [];
-                        let maxPageNumber = 1;
-                        let currentPage = 1;
-
-                        // 方法 1: 使用 DataTables API（最可靠）
-                        try {
-                            if (typeof window.$ !== 'undefined' && window.$('#DataTables_Table_0').length) {
-                                const dt = window.$('#DataTables_Table_0').DataTable();
-                                if (dt && dt.page && dt.page.info) {
-                                    const info = dt.page.info();
-                                    if (info) {
-                                        maxPageNumber = info.pages || 1;
-                                        currentPage = (info.page || 0) + 1;
-                                        console.log('📊 DataTables API pages:', maxPageNumber, 'current:', currentPage);
-                                    }
-                                }
-                            }
-                        } catch (e) {
-                            console.log('⚠️  DataTables API unavailable:', e.message);
-                        }
-
-                        // 方法 2: 從可見的頁碼按鈕中找最大頁碼（備援）
-                        const paginationContainer = document.querySelector('#DataTables_Table_0_paginate') ||
-                                                    document.querySelector('.dataTables_paginate') || 
-                                                    document.querySelector('.pagination');
-                        if (paginationContainer) {
-                            const links = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next):not(.disabled)');
-                            links.forEach(link => {
-                                const pageText = link.textContent.trim();
-                                const pageNum = parseInt(pageText);
-                                if (!isNaN(pageNum) && pageText !== '…') {
-                                    pageLinks.push({
-                                        pageNumber: pageNum,
-                                        url: window.location.href
-                                    });
-                                    if (pageNum > maxPageNumber) {
-                                        maxPageNumber = pageNum;
-                                    }
-                                }
-                            });
-
-                            // 方法 3: 從 DataTables 信息文本中解析（Showing X to Y of Z entries）
-                            const infoText = paginationContainer.parentElement?.querySelector('.dataTables_info') ||
-                                             document.querySelector('.dataTables_info');
-                            if (infoText && maxPageNumber === 1) {
-                                const infoContent = infoText.textContent;
-                                const match = infoContent.match(/Showing\s+\d+\s+to\s+(\d+)\s+of\s+(\d+)/i);
-                                if (match) {
-                                    const recordsPerPage = parseInt(match[1]);
-                                    const totalRecords = parseInt(match[2]);
-                                    if (recordsPerPage > 0 && totalRecords > 0) {
-                                        const calculatedPages = Math.ceil(totalRecords / recordsPerPage);
-                                        if (calculatedPages > maxPageNumber) {
-                                            maxPageNumber = calculatedPages;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 如果還是只有 1 頁，檢查是否有 Next 按鈕
-                        if (maxPageNumber === 1) {
-                            const nextLink = document.querySelector('#DataTables_Table_0_paginate .paginate_button.next:not(.disabled)') ||
-                                             document.querySelector('.paginate_button.next:not(.disabled)');
-                            if (nextLink) {
-                                maxPageNumber = 2;
-                            }
-                        }
-
-                        return {
-                            totalPages: maxPageNumber,
-                            currentPage: currentPage,
-                            pageLinks: pageLinks,
-                            currentUrl: window.location.href,
-                            visiblePages: pageLinks.map(p => p.pageNumber).sort((a, b) => a - b)
-                        };
-                    });
-                    
-                    // ========== 步驟 3：串行爬取其他頁面（優化版本）==========
-                    // 註：RSG 使用 DataTables（AJAX 分頁），串行比並發更快！
-                    // 原因：
-                    // 1. AJAX 切換頁面只需 1-2 秒，非常快
-                    // 2. 並發需要為每頁重複前置操作（Currency/slim/account/date），反而更慢
-                    // 3. 串行在已登錄的頁面上操作，避免重複操作
-                    console.log('🚀 Step 3: Scraping remaining pages (optimized)...');
-                    
                     // 提取單一頁面資料的函數（在 page 對象上操作，模擬點擊分頁按鈕）
+                    // 這個函數需要在日期連結點擊代碼之前定義
                     const extractTableData = async (pageObject, accountNumberProvided, accountNumberValue, dateStartValue, dateEndValue) => {
                         return await pageObject.evaluate((accountNumberProvided, accountNumberValue, dateStartValue, dateEndValue) => {
                             // 先處理表格資料
@@ -1477,6 +1878,641 @@ class ScrapeBrowserRsgDOM extends Command
                             return result;
                         }, accountNumberProvided, accountNumberValue, dateStartValue, dateEndValue);
                     };
+
+                    // 定義檢查是否有下一頁的函數
+                    const hasNextPage = async () => {
+                        return await page.evaluate(() => {
+                            const nextButton = document.querySelector('.paginate_button.next:not(.disabled)');
+                            return nextButton !== null && !nextButton.classList.contains('disabled');
+                        });
+                    };
+
+                    // 定義點擊下一頁的函數（用於查找帳號時翻頁）
+                    const goToNextPageForAccount = async () => {
+                        const nextPageInfo = await page.evaluate(() => {
+                            const dataTablesNext = document.querySelector('.paginate_button.next:not(.disabled)');
+                            if (dataTablesNext) {
+                                const link = dataTablesNext.querySelector('a');
+                                if (link) {
+                                    const uniqueId = 'next-page-' + Date.now();
+                                    link.setAttribute('data-puppeteer-id', uniqueId);
+                                    return {
+                                        found: true,
+                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                        text: link.textContent.trim()
+                                    };
+                                }
+                            }
+                            return { found: false };
+                        });
+                        
+                        if (nextPageInfo.found) {
+                            try {
+                                await page.click(nextPageInfo.selector, { timeout: 5000 });
+                                // 等待表格數據更新
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                return true;
+                            } catch (e) {
+                                return false;
+                            }
+                        }
+                        return false;
+                    };
+
+                    // ========== 並發爬取分頁邏輯 ==========
+                    // 解析參數
+                    let accountNumberParsed = null;
+                    let dateStartParsed = null;
+                    let dateEndParsed = null;
+                    
+                    // 解析 account_number
+                    if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                        try {
+                            accountNumberParsed = JSON.parse($accountNumberJs);
+                        } catch (e) {
+                            accountNumberParsed = $accountNumberJs;
+                        }
+                    }
+                    
+                    // 解析 date_start
+                    if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
+                        try {
+                            dateStartParsed = JSON.parse($dateStartJs);
+                        } catch (e) {
+                            dateStartParsed = $dateStartJs;
+                        }
+                    }
+                    
+                    // 解析 date_end
+                    if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
+                        try {
+                            dateEndParsed = JSON.parse($dateEndJs);
+                        } catch (e) {
+                            dateEndParsed = $dateEndJs;
+                        }
+                    }
+                    
+                    // 判斷是否提供了 account_number
+                    const accountNumberProvided = accountNumberParsed !== null && accountNumberParsed !== '' && accountNumberParsed !== undefined;
+                    
+                    // 確保表格已載入
+                    await page.waitForSelector('tbody.dataContent tr', { timeout: 5000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // 提取第一頁的表格資料
+                    const firstPageData = await extractCurrentPageData(accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
+                    
+                    if (!firstPageData || !firstPageData.tables || firstPageData.tables.length === 0) {
+                        throw new Error('No table found on first page');
+                    }
+                    
+                    // ========== 步驟 4：點擊所有 Date 欄位中的日期連結並截圖 ==========
+                    console.log('📅 Looking for Date links to click...');
+                    try {
+                        // 收集所有 Date 欄位中的日期連結
+                        const dateLinks = await page.evaluate(() => {
+                            const links = [];
+                            
+                            // 查找所有表格
+                            const tables = document.querySelectorAll('table');
+                            
+                            tables.forEach((table, tableIndex) => {
+                                // 查找表頭，找到 Date 欄位的索引
+                                const thead = table.querySelector('thead');
+                                let dateColumnIndex = -1;
+                                
+                                if (thead) {
+                                    const headerRow = thead.querySelector('tr');
+                                    if (headerRow) {
+                                        const headers = Array.from(headerRow.querySelectorAll('th, td'));
+                                        dateColumnIndex = headers.findIndex(cell => {
+                                            const text = cell.textContent.trim();
+                                            return text === 'Date' || text.includes('Date') || text === '日期';
+                                        });
+                                    }
+                                }
+                                
+                                // 如果找到 Date 欄位，查找該欄位中的所有 <u onclick> 連結
+                                if (dateColumnIndex !== -1) {
+                                    const tbody = table.querySelector('tbody') || table.querySelector('tbody.dataContent');
+                                    if (tbody) {
+                                        const rows = Array.from(tbody.querySelectorAll('tr'));
+                                        rows.forEach((row, rowIndex) => {
+                                            const cells = Array.from(row.querySelectorAll('td'));
+                                            if (cells[dateColumnIndex]) {
+                                                const cell = cells[dateColumnIndex];
+                                                const uLink = cell.querySelector('u[onclick]');
+                                                if (uLink) {
+                                                    const onclick = uLink.getAttribute('onclick');
+                                                    const dateText = uLink.textContent.trim();
+                                                    
+                                                    // 為元素添加唯一標識
+                                                    const uniqueId = 'date-link-' + tableIndex + '-' + rowIndex + '-' + Date.now();
+                                                    uLink.setAttribute('data-puppeteer-date-id', uniqueId);
+                                                    
+                                                    links.push({
+                                                        tableIndex: tableIndex,
+                                                        rowIndex: rowIndex,
+                                                        dateText: dateText,
+                                                        onclick: onclick,
+                                                        selector: 'u[data-puppeteer-date-id="' + uniqueId + '"]'
+                                                    });
+                                                }
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    // 如果找不到 Date 欄位，嘗試直接查找所有包含日期的 <u onclick> 連結
+                                    const allULinks = Array.from(table.querySelectorAll('u[onclick]'));
+                                    allULinks.forEach((uLink, linkIndex) => {
+                                        const onclick = uLink.getAttribute('onclick');
+                                        const text = uLink.textContent.trim();
+                                        
+                                        // 檢查是否看起來像日期（格式：YYYY-MM-DD）
+                                        if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+                                            const uniqueId = 'date-link-direct-' + tableIndex + '-' + linkIndex + '-' + Date.now();
+                                            uLink.setAttribute('data-puppeteer-date-id', uniqueId);
+                                            
+                                            links.push({
+                                                tableIndex: tableIndex,
+                                                rowIndex: linkIndex,
+                                                dateText: text,
+                                                onclick: onclick,
+                                                selector: 'u[data-puppeteer-date-id="' + uniqueId + '"]',
+                                                method: 'direct-search'
+                                            });
+                                        }
+                                    });
+                                }
+                            });
+                            
+                            return links;
+                        });
+                        
+                        console.log('📅 Found ' + dateLinks.length + ' date links');
+                        
+                        if (dateLinks.length > 0) {
+                            // 逐個點擊每個日期連結並截圖
+                            for (let i = 0; i < dateLinks.length; i++) {
+                                const dateLink = dateLinks[i];
+                                console.log('📅 Clicking date link ' + (i + 1) + '/' + dateLinks.length + ': ' + dateLink.dateText);
+                                console.log('📋 Date link info:', {
+                                    tableIndex: dateLink.tableIndex,
+                                    rowIndex: dateLink.rowIndex,
+                                    dateText: dateLink.dateText,
+                                    onclick: dateLink.onclick ? dateLink.onclick.substring(0, 100) + '...' : null
+                                });
+                                
+                                try {
+                                    // 記錄當前 URL（用於判斷是否導航）
+                                    const urlBeforeClick = await page.url();
+                                    
+                                    // 點擊日期連結
+                                    if (dateLink.onclick) {
+                                        // 方法 1: 直接執行 onclick 函數（最可靠）
+                                        await page.evaluate((onclickValue) => {
+                                            eval(onclickValue);
+                                        }, dateLink.onclick);
+                                        console.log('✅ Date link clicked via onclick');
+                                    } else {
+                                        // 方法 2: 使用選擇器點擊（需要重新查找，因為可能已經導航）
+                                        // 先嘗試重新查找連結
+                                        const linkFound = await page.evaluate((selector) => {
+                                            const link = document.querySelector(selector);
+                                            if (link) {
+                                                link.click();
+                                                return true;
+                                            }
+                                            return false;
+                                        }, dateLink.selector);
+                                        
+                                        if (!linkFound) {
+                                            // 如果找不到，嘗試通過日期文本查找
+                                            await page.evaluate((dateText) => {
+                                                const allULinks = Array.from(document.querySelectorAll('u[onclick]'));
+                                                for (const uLink of allULinks) {
+                                                    if (uLink.textContent.trim() === dateText) {
+                                                        uLink.click();
+                                                        return;
+                                                    }
+                                                }
+                                            }, dateLink.dateText);
+                                        }
+                                        console.log('✅ Date link clicked via selector');
+                                    }
+                                    
+                                    // 等待頁面載入或導航
+                                    let navigated = false;
+                                    try {
+                                        await page.waitForNavigation({ 
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 10000 
+                                        });
+                                        navigated = true;
+                                        console.log('✅ Navigation occurred after clicking date link');
+                                    } catch (e) {
+                                        console.log('ℹ️  No navigation occurred (this is OK)');
+                                    }
+                                    
+                                    // 等待頁面穩定
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 截圖
+                                    const screenshotPath = 'step_date_' + (i + 1) + '_' + dateLink.dateText.replace(/-/g, '_') + '.png';
+                                    try {
+                                        await page.screenshot({ 
+                                            path: screenshotPath,
+                                            fullPage: true
+                                        });
+                                        
+                                        // 驗證截圖是否真的保存了
+                                        const fs = require('fs');
+                                        const path = require('path');
+                                        const fullPath = path.resolve(screenshotPath);
+                                        if (fs.existsSync(fullPath)) {
+                                            const stats = fs.statSync(fullPath);
+                                            console.log('📸 Screenshot saved: ' + screenshotPath);
+                                            console.log('📸 Screenshot path: ' + fullPath);
+                                            console.log('📸 Screenshot size: ' + (stats.size / 1024).toFixed(2) + ' KB');
+                                        } else {
+                                            console.log('⚠️  Screenshot file not found at: ' + fullPath);
+                                        }
+                                    } catch (screenshotError) {
+                                        console.log('⚠️  Error taking screenshot: ' + screenshotError.message);
+                                        console.log('⚠️  Screenshot error stack: ' + screenshotError.stack);
+                                    }
+                                    
+                                    // ========== 爬取該日期頁面的所有分頁數據 ==========
+                                    // 無論是否導航，都嘗試爬取數據（因為有些頁面使用 AJAX，不會觸發導航）
+                                    console.log('📊 Starting to scrape all pages for date: ' + dateLink.dateText);
+                                    console.log('📊 Navigation status: ' + (navigated ? 'navigated' : 'no navigation (AJAX or same page)'));
+                                    
+                                    try {
+                                        // 等待頁面完全載入
+                                            await page.waitForSelector('tbody.dataContent', { timeout: 15000 }).catch(() => {});
+                                            await new Promise(resolve => setTimeout(resolve, 2000));
+                                            
+                                            // 獲取分頁資訊
+                                            const datePagePaginationInfo = await page.evaluate(() => {
+                                                const pageLinks = [];
+                                                let maxPageNumber = 1;
+                                                let currentPage = 1;
+
+                                                // 方法 1: 使用 DataTables API（最可靠）
+                                                try {
+                                                    if (typeof window.$ !== 'undefined' && window.$('#DataTables_Table_0').length) {
+                                                        const dt = window.$('#DataTables_Table_0').DataTable();
+                                                        if (dt && dt.page && dt.page.info) {
+                                                            const info = dt.page.info();
+                                                            if (info) {
+                                                                maxPageNumber = info.pages || 1;
+                                                                currentPage = (info.page || 0) + 1;
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (e) {
+                                                    // DataTables API 不可用，繼續使用其他方法
+                                                }
+
+                                                // 方法 2: 從可見的頁碼按鈕中找最大頁碼
+                                                const paginationContainer = document.querySelector('#DataTables_Table_0_paginate') ||
+                                                                            document.querySelector('.dataTables_paginate') || 
+                                                                            document.querySelector('.pagination');
+                                                if (paginationContainer) {
+                                                    const links = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next):not(.disabled)');
+                                                    links.forEach(link => {
+                                                        const pageText = link.textContent.trim();
+                                                        const pageNum = parseInt(pageText);
+                                                        if (!isNaN(pageNum) && pageText !== '…') {
+                                                            pageLinks.push({
+                                                                pageNumber: pageNum,
+                                                                url: window.location.href
+                                                            });
+                                                            if (pageNum > maxPageNumber) {
+                                                                maxPageNumber = pageNum;
+                                                            }
+                                                        }
+                                                    });
+                                                }
+
+                                                // 方法 3: 從 "Showing X to Y of Z" 文本中提取
+                                                const infoElements = document.querySelectorAll('.dataTables_info');
+                                                for (const infoEl of infoElements) {
+                                                    const infoContent = infoEl.textContent.trim();
+                                                    const match = infoContent.match(/Showing\s+\d+\s+to\s+(\d+)\s+of\s+(\d+)/i);
+                                                    if (match) {
+                                                        const recordsPerPage = parseInt(match[1]);
+                                                        const totalRecords = parseInt(match[2]);
+                                                        if (recordsPerPage > 0 && totalRecords > 0) {
+                                                            const calculatedPages = Math.ceil(totalRecords / recordsPerPage);
+                                                            if (calculatedPages > maxPageNumber) {
+                                                                maxPageNumber = calculatedPages;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // 如果還是只有 1 頁，檢查是否有 Next 按鈕
+                                                if (maxPageNumber === 1) {
+                                                    const nextLink = document.querySelector('#DataTables_Table_0_paginate .paginate_button.next:not(.disabled)') ||
+                                                                     document.querySelector('.paginate_button.next:not(.disabled)');
+                                                    if (nextLink) {
+                                                        maxPageNumber = 2;
+                                                    }
+                                                }
+
+                                                return {
+                                                    totalPages: maxPageNumber,
+                                                    currentPage: currentPage
+                                                };
+                                            });
+                                            
+                                            console.log('📊 Date page pagination info:', datePagePaginationInfo);
+                                            
+                                            // 收集所有頁面的數據
+                                            const allDatePageData = [];
+                                            
+                                            // 提取當前頁（第一頁）的數據
+                                            console.log('📄 Extracting page 1/' + datePagePaginationInfo.totalPages + ' for date: ' + dateLink.dateText);
+                                            const firstPageData = await extractTableData(page, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
+                                            console.log('📊 First page data extracted:', {
+                                                hasData: !!firstPageData,
+                                                hasTables: !!(firstPageData && firstPageData.tables),
+                                                tableCount: firstPageData && firstPageData.tables ? firstPageData.tables.length : 0
+                                            });
+                                            
+                                            if (firstPageData && firstPageData.tables && firstPageData.tables.length > 0) {
+                                                // 計算第一頁的行數
+                                                let firstPageRows = 0;
+                                                firstPageData.tables.forEach(table => {
+                                                    if (table.data) {
+                                                        firstPageRows += table.data.length;
+                                                    }
+                                                });
+                                                console.log('📊 First page rows: ' + firstPageRows);
+                                                
+                                                allDatePageData.push({
+                                                    page: 1,
+                                                    data: firstPageData
+                                                });
+                                            } else {
+                                                console.log('⚠️  No data found on first page');
+                                            }
+                                            
+                                            // 遍歷剩餘頁面
+                                            for (let pageNum = 2; pageNum <= datePagePaginationInfo.totalPages; pageNum++) {
+                                                console.log('📄 Extracting page ' + pageNum + '/' + datePagePaginationInfo.totalPages + ' for date: ' + dateLink.dateText);
+                                                
+                                                try {
+                                                    // 點擊下一頁
+                                                    const nextPageClicked = await page.evaluate((targetPage) => {
+                                                        // 方法 1: 使用 DataTables API
+                                                        try {
+                                                            if (typeof window.$ !== 'undefined' && window.$('#DataTables_Table_0').length) {
+                                                                const dt = window.$('#DataTables_Table_0').DataTable();
+                                                                if (dt && dt.page) {
+                                                                    dt.page(targetPage - 1).draw('page');
+                                                                    return { success: true, method: 'datatables-api' };
+                                                                }
+                                                            }
+                                                        } catch (e) {
+                                                            // API 不可用，繼續使用其他方法
+                                                        }
+                                                        
+                                                        // 方法 2: 點擊分頁按鈕
+                                                        const paginationContainer = document.querySelector('#DataTables_Table_0_paginate') ||
+                                                                                    document.querySelector('.dataTables_paginate') || 
+                                                                                    document.querySelector('.pagination');
+                                                        if (paginationContainer) {
+                                                            const pageButtons = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next):not(.disabled)');
+                                                            for (const btn of pageButtons) {
+                                                                const pageText = btn.textContent.trim();
+                                                                const pageNum = parseInt(pageText);
+                                                                if (pageNum === targetPage) {
+                                                                    btn.click();
+                                                                    return { success: true, method: 'button-click' };
+                                                                }
+                                                            }
+                                                            
+                                                            // 如果找不到特定頁碼，嘗試點擊 Next 按鈕
+                                                            if (targetPage > 1) {
+                                                                const nextBtn = paginationContainer.querySelector('.paginate_button.next:not(.disabled)');
+                                                                if (nextBtn) {
+                                                                    nextBtn.click();
+                                                                    return { success: true, method: 'next-button' };
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        return { success: false, reason: 'No pagination method found' };
+                                                    }, pageNum);
+                                                    
+                                                    if (nextPageClicked.success) {
+                                                        // 等待表格數據更新
+                                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                                        
+                                                        // 提取當前頁數據
+                                                        const pageData = await extractTableData(page, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
+                                                        if (pageData && pageData.tables && pageData.tables.length > 0) {
+                                                            allDatePageData.push({
+                                                                page: pageNum,
+                                                                data: pageData
+                                                            });
+                                                        }
+                                                    } else {
+                                                        console.log('⚠️  Could not navigate to page ' + pageNum);
+                                                        break;
+                                                    }
+                                                } catch (e) {
+                                                    console.log('⚠️  Error extracting page ' + pageNum + ': ' + e.message);
+                                                    break;
+                                                }
+                                            }
+                                            
+                                            // 保存該日期的所有數據到文件
+                                            console.log('💾 Preparing to save data for date: ' + dateLink.dateText);
+                                            console.log('💾 Total pages collected: ' + allDatePageData.length);
+                                            
+                                            if (allDatePageData.length > 0) {
+                                                const fs = require('fs');
+                                                const path = require('path');
+                                                const dateDataFileName = 'date_data_' + dateLink.dateText.replace(/-/g, '_') + '.json';
+                                                const dateDataPath = path.resolve(dateDataFileName);
+                                                
+                                                // 計算總行數
+                                                let totalRows = 0;
+                                                allDatePageData.forEach(pageData => {
+                                                    if (pageData.data && pageData.data.tables) {
+                                                        pageData.data.tables.forEach(table => {
+                                                            if (table.data) {
+                                                                totalRows += table.data.length;
+                                                            }
+                                                        });
+                                                    }
+                                                });
+                                                
+                                                const dateDataToSave = {
+                                                    date: dateLink.dateText,
+                                                    totalPages: datePagePaginationInfo.totalPages,
+                                                    pagesScraped: allDatePageData.length,
+                                                    totalRows: totalRows,
+                                                    data: allDatePageData
+                                                };
+                                                
+                                                console.log('💾 Writing file: ' + dateDataPath);
+                                                console.log('💾 File size (approx): ' + (JSON.stringify(dateDataToSave).length / 1024).toFixed(2) + ' KB');
+                                                
+                                                try {
+                                                    fs.writeFileSync(dateDataPath, JSON.stringify(dateDataToSave, null, 2), 'utf8');
+                                                    
+                                                    // 驗證文件是否真的保存了
+                                                    if (fs.existsSync(dateDataPath)) {
+                                                        const stats = fs.statSync(dateDataPath);
+                                                        console.log('✅ Saved date data to: ' + dateDataFileName);
+                                                        console.log('✅ File path: ' + dateDataPath);
+                                                        console.log('✅ File size: ' + (stats.size / 1024).toFixed(2) + ' KB');
+                                                        console.log('📊 Total pages scraped: ' + allDatePageData.length + '/' + datePagePaginationInfo.totalPages);
+                                                        console.log('📊 Total rows: ' + totalRows);
+                                                    } else {
+                                                        console.log('⚠️  File was not created: ' + dateDataPath);
+                                                    }
+                                                } catch (writeError) {
+                                                    console.log('⚠️  Error writing file: ' + writeError.message);
+                                                    console.log('⚠️  Error stack: ' + writeError.stack);
+                                                }
+                                            } else {
+                                                console.log('⚠️  No data extracted for date: ' + dateLink.dateText);
+                                                console.log('⚠️  This might mean:');
+                                                console.log('   - No tables found on the page');
+                                                console.log('   - Data extraction function failed');
+                                                console.log('   - Page structure is different than expected');
+                                            }
+                                            
+                                    } catch (e) {
+                                        console.log('⚠️  Error scraping date page data: ' + e.message);
+                                        console.log('⚠️  Error stack: ' + e.stack);
+                                    }
+                                    
+                                    // 如果頁面導航了，返回上一頁以便繼續處理下一個連結
+                                    if (navigated) {
+                                        console.log('🔙 Navigating back to continue with next date link...');
+                                        try {
+                                            await page.goBack({ waitUntil: 'domcontentloaded' });
+                                            await new Promise(resolve => setTimeout(resolve, 2000));
+                                            console.log('✅ Returned to previous page');
+                                            
+                                            // 重新等待表格載入
+                                            await page.waitForSelector('tbody.dataContent', { timeout: 10000 }).catch(() => {});
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                        } catch (e) {
+                                            console.log('⚠️  Error navigating back: ' + e.message);
+                                            // 如果返回失敗，可能需要重新載入原始頁面
+                                            // 但這裡我們先繼續，看看能否找到下一個連結
+                                        }
+                                    }
+                                    
+                                } catch (e) {
+                                    console.log('⚠️  Error clicking date link ' + (i + 1) + ': ' + e.message);
+                                }
+                            }
+                        } else {
+                            console.log('ℹ️  No date links found in Date column');
+                        }
+                    } catch (e) {
+                        console.log('⚠️  Error processing date links: ' + e.message);
+                        console.log('⚠️  Error stack:', e.stack);
+                    }
+                    
+                    // 獲取所有分頁資訊（DataTables 的分頁按鈕）
+                    // 優先使用 DataTables API，再回退其他方式
+                    const paginationInfo = await page.evaluate(() => {
+                        const pageLinks = [];
+                        let maxPageNumber = 1;
+                        let currentPage = 1;
+
+                        // 方法 1: 使用 DataTables API（最可靠）
+                        try {
+                            if (typeof window.$ !== 'undefined' && window.$('#DataTables_Table_0').length) {
+                                const dt = window.$('#DataTables_Table_0').DataTable();
+                                if (dt && dt.page && dt.page.info) {
+                                    const info = dt.page.info();
+                                    if (info) {
+                                        maxPageNumber = info.pages || 1;
+                                        currentPage = (info.page || 0) + 1;
+                                        console.log('📊 DataTables API pages:', maxPageNumber, 'current:', currentPage);
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.log('⚠️  DataTables API unavailable:', e.message);
+                        }
+
+                        // 方法 2: 從可見的頁碼按鈕中找最大頁碼（備援）
+                        const paginationContainer = document.querySelector('#DataTables_Table_0_paginate') ||
+                                                    document.querySelector('.dataTables_paginate') || 
+                                                    document.querySelector('.pagination');
+                        if (paginationContainer) {
+                            const links = paginationContainer.querySelectorAll('.paginate_button:not(.previous):not(.next):not(.disabled)');
+                            links.forEach(link => {
+                                const pageText = link.textContent.trim();
+                                const pageNum = parseInt(pageText);
+                                if (!isNaN(pageNum) && pageText !== '…') {
+                                    pageLinks.push({
+                                        pageNumber: pageNum,
+                                        url: window.location.href
+                                    });
+                                    if (pageNum > maxPageNumber) {
+                                        maxPageNumber = pageNum;
+                                    }
+                                }
+                            });
+
+                            // 方法 3: 從 DataTables 信息文本中解析（Showing X to Y of Z entries）
+                            const infoText = paginationContainer.parentElement?.querySelector('.dataTables_info') ||
+                                             document.querySelector('.dataTables_info');
+                            if (infoText && maxPageNumber === 1) {
+                                const infoContent = infoText.textContent;
+                                const match = infoContent.match(/Showing\s+\d+\s+to\s+(\d+)\s+of\s+(\d+)/i);
+                                if (match) {
+                                    const recordsPerPage = parseInt(match[1]);
+                                    const totalRecords = parseInt(match[2]);
+                                    if (recordsPerPage > 0 && totalRecords > 0) {
+                                        const calculatedPages = Math.ceil(totalRecords / recordsPerPage);
+                                        if (calculatedPages > maxPageNumber) {
+                                            maxPageNumber = calculatedPages;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 如果還是只有 1 頁，檢查是否有 Next 按鈕
+                        if (maxPageNumber === 1) {
+                            const nextLink = document.querySelector('#DataTables_Table_0_paginate .paginate_button.next:not(.disabled)') ||
+                                             document.querySelector('.paginate_button.next:not(.disabled)');
+                            if (nextLink) {
+                                maxPageNumber = 2;
+                            }
+                        }
+
+                        return {
+                            totalPages: maxPageNumber,
+                            currentPage: currentPage,
+                            pageLinks: pageLinks,
+                            currentUrl: window.location.href,
+                            visiblePages: pageLinks.map(p => p.pageNumber).sort((a, b) => a - b)
+                        };
+                    });
+                    
+                    // ========== 步驟 3：串行爬取其他頁面（優化版本）==========
+                    // 註：RSG 使用 DataTables（AJAX 分頁），串行比並發更快！
+                    // 原因：
+                    // 1. AJAX 切換頁面只需 1-2 秒，非常快
+                    // 2. 並發需要為每頁重複前置操作（Currency/slim/account/date），反而更慢
+                    // 3. 串行在已登錄的頁面上操作，避免重複操作
+                    console.log('🚀 Step 3: Scraping remaining pages (optimized)...');
+                    
+                    // extractTableData 函數已經在上面定義了，這裡不需要重複定義
                     
                     // 使用 DataTables API 依次翻頁（優先），若失敗再回退 Next 按鈕點擊
                     const goToNextPage = async () => {
@@ -1732,9 +2768,10 @@ class ScrapeBrowserRsgDOM extends Command
                     
                     // 截圖：最終頁面（所有數據爬取完成後）
                     await page.screenshot({ 
-                        path: 'final_page_screenshot.png',
+                        path: 'step_13_final_page.png',
                         fullPage: false
                     });
+                    console.log('📸 Screenshot saved: step_13_final_page.png');
 
                     // 合併所有提取的資料和捕獲的 DOM 資料
                     // accountNumberParsed, dateStartParsed 和 dateEndParsed 已經在上面定義過了
@@ -1926,40 +2963,122 @@ class ScrapeBrowserRsgDOM extends Command
         }
 
         // 將截圖從臨時目錄移動到永久存儲目錄
-        // 1. After account screenshot (如果存在)
-        $afterAccountSrc = storage_path('app/temp/after_account_screenshot.png');
-        $afterAccountDst = storage_path("app/scraped_data/after_account_{$timestamp}.png");
+        $screenshots = [
+            'step_01_after_navigation.png' => "step_01_after_navigation_{$timestamp}.png",
+            'step_02_before_currency_search.png' => "step_02_before_currency_search_{$timestamp}.png",
+            'step_03_after_currency_click.png' => "step_03_after_currency_click_{$timestamp}.png",
+            'step_04_after_slim_click.png' => "step_04_after_slim_click_{$timestamp}.png",
+            'step_05_date_picker_opened.png' => "step_05_date_picker_opened_{$timestamp}.png",
+            'step_06_after_date_input.png' => "step_06_after_date_input_{$timestamp}.png",
+            'step_07_after_apply_click.png' => "step_07_after_apply_click_{$timestamp}.png",
+            'step_08_before_account_search.png' => "step_08_before_account_search_{$timestamp}.png",
+            'step_09_after_account_click.png' => "step_09_after_account_click_{$timestamp}.png",
+            'step_10_before_slots_all_click.png' => "step_10_before_slots_all_click_{$timestamp}.png",
+            'step_11_after_slots_all_click.png' => "step_11_after_slots_all_click_{$timestamp}.png",
+            'step_12_before_data_extraction.png' => "step_12_before_data_extraction_{$timestamp}.png",
+            'step_13_final_page.png' => "step_13_final_page_{$timestamp}.png",
+            // 保留舊的截圖名稱以向後兼容
+            'after_account_screenshot.png' => "after_account_{$timestamp}.png",
+            'after_date_input_screenshot.png' => "after_date_input_{$timestamp}.png",
+            'after_slots_all_tab_screenshot.png' => "after_slots_all_tab_{$timestamp}.png",
+            'final_page_screenshot.png' => "final_page_{$timestamp}.png",
+        ];
         
-        if (file_exists($afterAccountSrc)) {
-            rename($afterAccountSrc, $afterAccountDst);
-            $this->info("📸 After account screenshot saved to: {$afterAccountDst}");
+        foreach ($screenshots as $srcName => $dstName) {
+            $srcPath = storage_path('app/temp/' . $srcName);
+            $dstPath = storage_path("app/scraped_data/{$dstName}");
+            
+            if (file_exists($srcPath)) {
+                rename($srcPath, $dstPath);
+                $this->info("📸 Screenshot saved: {$dstName}");
+            }
         }
         
-        // 2. After date input screenshot (如果存在)
-        $afterDateInputSrc = storage_path('app/temp/after_date_input_screenshot.png');
-        $afterDateInputDst = storage_path("app/scraped_data/after_date_input_{$timestamp}.png");
+        // 移動所有日期連結的截圖文件（step_date_*.png）
+        $tempDir = storage_path('app/temp');
+        $scrapedDataDir = storage_path('app/scraped_data');
         
-        if (file_exists($afterDateInputSrc)) {
-            rename($afterDateInputSrc, $afterDateInputDst);
-            $this->info("📸 After date input screenshot saved to: {$afterDateInputDst}");
+        // 確保目標目錄存在
+        if (!is_dir($scrapedDataDir)) {
+            mkdir($scrapedDataDir, 0755, true);
         }
         
-        // 3. After Slots (All) tab screenshot (如果存在)
-        $afterSlotsAllSrc = storage_path('app/temp/after_slots_all_tab_screenshot.png');
-        $afterSlotsAllDst = storage_path("app/scraped_data/after_slots_all_tab_{$timestamp}.png");
-        
-        if (file_exists($afterSlotsAllSrc)) {
-            rename($afterSlotsAllSrc, $afterSlotsAllDst);
-            $this->info("📸 After Slots (All) tab screenshot saved to: {$afterSlotsAllDst}");
+        if (is_dir($tempDir)) {
+            $dateScreenshots = glob($tempDir . '/step_date_*.png');
+            $this->info("📸 Found " . count($dateScreenshots) . " date link screenshot(s)");
+            
+            foreach ($dateScreenshots as $srcPath) {
+                $fileName = basename($srcPath);
+                // 添加時間戳到文件名
+                $nameWithoutExt = pathinfo($fileName, PATHINFO_FILENAME);
+                $extension = pathinfo($fileName, PATHINFO_EXTENSION);
+                $newFileName = $nameWithoutExt . '_' . $timestamp . '.' . $extension;
+                $dstPath = $scrapedDataDir . '/' . $newFileName;
+                
+                if (file_exists($srcPath)) {
+                    if (rename($srcPath, $dstPath)) {
+                        $this->info("📸 Date link screenshot saved: {$newFileName}");
+                    } else {
+                        $this->warn("⚠️  Failed to move screenshot: {$fileName}");
+                    }
+                } else {
+                    $this->warn("⚠️  Screenshot file not found: {$srcPath}");
+                }
+            }
+        } else {
+            $this->warn("⚠️  Temp directory not found: {$tempDir}");
         }
         
-        // 4. Final page screenshot
-        $finalScreenshotSrc = storage_path('app/temp/final_page_screenshot.png');
-        $finalScreenshotDst = storage_path("app/scraped_data/final_page_{$timestamp}.png");
-        
-        if (file_exists($finalScreenshotSrc)) {
-            rename($finalScreenshotSrc, $finalScreenshotDst);
-            $this->info("📸 Final page screenshot saved to: {$finalScreenshotDst}");
+        // 移動所有日期數據文件（date_data_*.json）
+        if (is_dir($tempDir)) {
+            $dateDataFiles = glob($tempDir . '/date_data_*.json');
+            $this->info("📊 Found " . count($dateDataFiles) . " date data file(s)");
+            
+            foreach ($dateDataFiles as $srcPath) {
+                $fileName = basename($srcPath);
+                // 添加時間戳到文件名
+                $nameWithoutExt = pathinfo($fileName, PATHINFO_FILENAME);
+                $extension = pathinfo($fileName, PATHINFO_EXTENSION);
+                $newFileName = $nameWithoutExt . '_' . $timestamp . '.' . $extension;
+                $dstPath = $scrapedDataDir . '/' . $newFileName;
+                
+                if (file_exists($srcPath)) {
+                    if (rename($srcPath, $dstPath)) {
+                        $this->info("📊 Date data file saved: {$newFileName}");
+                        
+                        // 讀取並顯示數據摘要
+                        try {
+                            $dateData = json_decode(file_get_contents($dstPath), true);
+                            if ($dateData) {
+                                $this->info("   📅 Date: " . ($dateData['date'] ?? 'N/A'));
+                                $this->info("   📄 Total pages: " . ($dateData['totalPages'] ?? 0));
+                                $this->info("   ✅ Pages scraped: " . ($dateData['pagesScraped'] ?? 0));
+                                
+                                // 計算總行數
+                                $totalRows = 0;
+                                if (!empty($dateData['data'])) {
+                                    foreach ($dateData['data'] as $pageData) {
+                                        if (!empty($pageData['data']['tables'])) {
+                                            foreach ($pageData['data']['tables'] as $table) {
+                                                if (!empty($table['data'])) {
+                                                    $totalRows += count($table['data']);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                $this->info("   📊 Total rows: {$totalRows}");
+                            }
+                        } catch (\Exception $e) {
+                            $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
+                        }
+                    } else {
+                        $this->warn("⚠️  Failed to move date data file: {$fileName}");
+                    }
+                } else {
+                    $this->warn("⚠️  Date data file not found: {$srcPath}");
+                }
+            }
         }
         
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
