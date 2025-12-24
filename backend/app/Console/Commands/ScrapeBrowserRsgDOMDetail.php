@@ -2095,6 +2095,9 @@ class ScrapeBrowserRsgDOM extends Command
                                                 const dateDataFileName = 'date_data_' + dateLink.dateText.replace(/-/g, '_') + '.json';
                                                 const dateDataPath = path.resolve(dateDataFileName);
                                                 
+                                                // 獲取當前頁面 URL
+                                                const currentUrl = await page.url();
+                                                
                                                 // 合併所有頁面的數據到一個數組中
                                                 const mergedData = [];
                                                 let totalRows = 0;
@@ -2125,12 +2128,24 @@ class ScrapeBrowserRsgDOM extends Command
                                                     }
                                                 });
                                                 
+                                                // 組裝元數據（參考 ScrapeBrowserFoqqDOMDetail.php 的格式）
                                                 const dateDataToSave = {
-                                                    date: dateLink.dateText,
-                                                    totalPages: datePagePaginationInfo.totalPages,
-                                                    pagesScraped: allDatePageData.length,
-                                                    totalRows: totalRows,
+                                                    metadata: {
+                                                        timestamp: new Date().toISOString(),
+                                                        date: dateLink.dateText,
+                                                        url: currentUrl,
+                                                        queryParams: {
+                                                            date_start: dateStartParsed,
+                                                            date_end: dateEndParsed,
+                                                            account_number: accountNumberParsed
+                                                        },
+                                                        totalPages: datePagePaginationInfo.totalPages,
+                                                        pagesScraped: allDatePageData.length,
+                                                        totalRows: totalRows
+                                                    },
                                                     headers: headers || [],
+                                                    headerCount: headers ? headers.length : 0,
+                                                    rowCount: totalRows,
                                                     data: mergedData  // 所有頁面的數據合併到一個數組中
                                                 };
                                                 
@@ -2777,35 +2792,49 @@ class ScrapeBrowserRsgDOM extends Command
                 $newFileName = $nameWithoutExt . '_' . $timestamp . '.' . $extension;
                 $dstPath = $scrapedDataDir . '/' . $newFileName;
                 
-                if (file_exists($srcPath)) {
-                    if (rename($srcPath, $dstPath)) {
-                        // 讀取並顯示數據摘要
-                        try {
-                            $dateData = json_decode(file_get_contents($dstPath), true);
-                            if ($dateData) {
-                                // 計算總行數
-                                $totalRows = 0;
-                                if (!empty($dateData['data'])) {
-                                    foreach ($dateData['data'] as $pageData) {
-                                        if (!empty($pageData['data']['tables'])) {
-                                            foreach ($pageData['data']['tables'] as $table) {
-                                                if (!empty($table['data'])) {
-                                                    $totalRows += count($table['data']);
-                                                }
-                                            }
+                    if (file_exists($srcPath)) {
+                        if (rename($srcPath, $dstPath)) {
+                            $this->info("📊 Date data file saved: {$newFileName}");
+                            
+                            // 讀取並顯示數據摘要
+                            try {
+                                $dateData = json_decode(file_get_contents($dstPath), true);
+                                if ($dateData) {
+                                    // 從新的數據結構中讀取信息
+                                    $metadata = $dateData['metadata'] ?? [];
+                                    $totalRows = $dateData['rowCount'] ?? 0;
+                                    $totalPages = $metadata['totalPages'] ?? 0;
+                                    $pagesScraped = $metadata['pagesScraped'] ?? 0;
+                                    $date = $metadata['date'] ?? 'N/A';
+                                    $queryParams = $metadata['queryParams'] ?? [];
+                                    
+                                    $this->info("   📅 Date: {$date}");
+                                    $this->info("   📄 Total pages: {$totalPages}");
+                                    $this->info("   ✅ Pages scraped: {$pagesScraped}");
+                                    $this->info("   📊 Total rows: {$totalRows}");
+                                    
+                                    if (!empty($queryParams)) {
+                                        $this->info("   🔍 Query params:");
+                                        if (!empty($queryParams['date_start'])) {
+                                            $this->info("      - Date start: " . $queryParams['date_start']);
+                                        }
+                                        if (!empty($queryParams['date_end'])) {
+                                            $this->info("      - Date end: " . $queryParams['date_end']);
+                                        }
+                                        if (!empty($queryParams['account_number'])) {
+                                            $this->info("      - Account number: " . $queryParams['account_number']);
                                         }
                                     }
                                 }
+                            } catch (\Exception $e) {
+                                $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
                             }
-                        } catch (\Exception $e) {
-                            $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
+                        } else {
+                            $this->warn("⚠️  Failed to move date data file: {$fileName}");
                         }
                     } else {
-                        $this->warn("⚠️  Failed to move date data file: {$fileName}");
+                        $this->warn("⚠️  Date data file not found: {$srcPath}");
                     }
-                } else {
-                    $this->warn("⚠️  Date data file not found: {$srcPath}");
-                }
             }
         }
         
