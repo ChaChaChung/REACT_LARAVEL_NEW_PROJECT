@@ -231,13 +231,6 @@ class ScrapeBrowserRsgDOM extends Command
 
                     // 等待頁面穩定
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                    // 截圖：導航到頁面後
-                    await page.screenshot({ 
-                        path: 'step_01_after_navigation.png',
-                        fullPage: false
-                    });
-                    console.log('📸 Screenshot saved: step_01_after_navigation.png');
 
                     // ========== 步驟 1：處理日期範圍選擇（優先執行）==========
                     // 如果提供了 date_start 和 date_end，先填入日期
@@ -245,10 +238,6 @@ class ScrapeBrowserRsgDOM extends Command
                     const dateEndProvided = $dateEndJs && $dateEndJs !== 'null';
                     
                     if (dateStartProvided && dateEndProvided) {
-                        console.log('📅 Date parameters provided, attempting to set dates...');
-                        console.log('📅 Date Start:', $dateStartJs.replace(/"/g, ''));
-                        console.log('📅 Date End:', $dateEndJs.replace(/"/g, ''));
-                        
                         try {
                             // 查找 reservation 欄位
                             const reservationField = await page.evaluate(() => {
@@ -258,8 +247,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 }
                                 return { found: false };
                             });
-                            
-                            console.log('📅 Reservation field check:', reservationField);
                             
                             if (reservationField.found) {
                                 // 點擊 reservation 欄位以打開日期選擇器
@@ -273,13 +260,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 
                                 // 等待日期選擇器出現
                                 await new Promise(resolve => setTimeout(resolve, 1500));
-                                
-                                // 截圖：打開日期選擇器後
-                                await page.screenshot({ 
-                                    path: 'step_02_date_picker_opened.png',
-                                    fullPage: false
-                                });
-                                console.log('📸 Screenshot saved: step_02_date_picker_opened.png');
                                 
                                 // 查找並點擊「Customize」選項
                                 const customizeClicked = await page.evaluate(() => {
@@ -308,8 +288,6 @@ class ScrapeBrowserRsgDOM extends Command
                                     }
                                     return { clicked: false };
                                 });
-                                
-                                console.log('📅 Customize clicked:', customizeClicked);
                                 
                                 if (customizeClicked.clicked) {
                                     // 等待自定義日期輸入框出現
@@ -371,12 +349,8 @@ class ScrapeBrowserRsgDOM extends Command
                                         }
                                     }, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
                                     
-                                    console.log('📅 Date set result (API):', dateSetResult);
-                                    
                                     // 如果 API 方法失敗，使用 Puppeteer 的 type 方法直接填入
                                     if (!dateSetResult.success) {
-                                        console.log('⚠️  API method failed, trying Puppeteer type method...');
-                                        
                                         // 查找日期輸入框
                                         const inputSelectors = [
                                             'input[name="daterangepicker_start"]',
@@ -435,11 +409,8 @@ class ScrapeBrowserRsgDOM extends Command
                                                         
                                                         await endInput.click({ clickCount: 3 });
                                                         await endInput.type($dateEndJs.replace(/"/g, ''), { delay: 30 });
-                                                        
-                                                        console.log('✅ Dates typed using elementHandle.type()');
                                                     } catch (e) {
                                                         // 如果 type 失敗，使用 evaluate 直接設置
-                                                        console.log('⚠️  type() failed, using evaluate method...');
                                                         await page.evaluate((startSel, endSel, dateStart, dateEnd) => {
                                                             const startEl = document.querySelector(startSel);
                                                             const endEl = document.querySelector(endSel);
@@ -460,12 +431,8 @@ class ScrapeBrowserRsgDOM extends Command
                                                                 if (window.$) window.$(endEl).trigger('input').trigger('change');
                                                             }
                                                         }, startInputSelector, endInputSelector, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
-                                                        console.log('✅ Dates set using evaluate method');
                                                     }
-                                                } else {
-                                                    console.log('⚠️  Could not find input elements');
                                                 }
-                                                
                                             } catch (e) {
                                                 console.log('⚠️  Error typing dates:', e.message);
                                             }
@@ -498,15 +465,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         };
                                     }, $dateStartJs.replace(/"/g, ''), $dateEndJs.replace(/"/g, ''));
                                     
-                                    console.log('📅 Date verification:', dateVerification);
-                                    
-                                    // 截圖：日期填入後（點擊 Apply 前）
-                                    await page.screenshot({ 
-                                        path: 'step_03_after_date_input.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 Screenshot saved: step_03_after_date_input.png');
-                                    
                                     // 點擊 Apply 按鈕
                                     const applyResult = await page.evaluate(() => {
                                         const applyBtn = document.querySelector('.applyBtn') || 
@@ -520,22 +478,9 @@ class ScrapeBrowserRsgDOM extends Command
                                         return { clicked: false, reason: 'Apply button not found' };
                                     });
                                     
-                                    console.log('📅 Apply button clicked:', applyResult);
-                                    
                                     // 等待日期選擇器關閉和數據載入
                                     await new Promise(resolve => setTimeout(resolve, 3000));
-                                    
-                                    // 截圖：點擊 Apply 按鈕後
-                                    await page.screenshot({ 
-                                        path: 'step_04_after_apply_click.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 Screenshot saved: step_04_after_apply_click.png');
-                                } else {
-                                    console.log('⚠️  Could not find Customize option');
                                 }
-                            } else {
-                                console.log('⚠️  Could not find reservation field');
                             }
                         } catch (e) {
                             console.log('⚠️  Error handling date range selection: ' + e.message);
@@ -550,16 +495,12 @@ class ScrapeBrowserRsgDOM extends Command
                     let accountNumber = $accountNumberJs;
                     
                     if (accountNumber && accountNumber !== null && accountNumber !== '') {
-                        console.log('🔍 Account number provided: ' + accountNumber);
-                        console.log('🔍 Looking for account number: ' + accountNumber);
-                        
                         // 等待頁面穩定（日期處理後可能需要等待數據載入）
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         
                         // 等待 tbody.dataContent 元素出現（如果存在）
                         try {
                             await page.waitForSelector('tbody.dataContent', { timeout: 10000 });
-                            console.log('✅ tbody.dataContent found for account search');
                         } catch (e) {
                             console.log('ℹ️  tbody.dataContent not found, continuing account search...');
                         }
@@ -567,16 +508,8 @@ class ScrapeBrowserRsgDOM extends Command
                         // 額外等待一下，確保表格數據已載入
                         await new Promise(resolve => setTimeout(resolve, 2000));
                         
-                        // 截圖：查找帳號號碼前
-                        await page.screenshot({ 
-                            path: 'step_05_before_account_search.png',
-                            fullPage: false
-                        });
-                        console.log('📸 Screenshot saved: step_05_before_account_search.png');
-                        
                         try {
                             // 步驟 1: 點擊 "Designated account" 按鈕
-                            console.log('🔍 Looking for "Designated account" button...');
                             const designatedAccountButton = await page.evaluate(() => {
                                 // 查找按鈕
                                 const button = document.querySelector('button.btn.btn-warning[onclick*="openSearchAccountModal"]');
@@ -602,8 +535,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 return { found: false, reason: 'Button not found' };
                             });
                             
-                            console.log('📋 Designated account button info:', designatedAccountButton);
-                            
                             if (designatedAccountButton.found) {
                                 // 點擊按鈕
                                 try {
@@ -617,30 +548,18 @@ class ScrapeBrowserRsgDOM extends Command
                                             button.click();
                                         }
                                     });
-                                    console.log('✅ "Designated account" button clicked');
                                     
                                     // 等待彈窗出現
                                     await new Promise(resolve => setTimeout(resolve, 1500));
-                                    
-                                    // 截圖：點擊按鈕後（彈窗應該出現）
-                                    await page.screenshot({ 
-                                        path: 'step_05_after_button_click.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 Screenshot saved: step_05_after_button_click.png');
                                 } catch (e) {
                                     console.log('⚠️  Error clicking "Designated account" button: ' + e.message);
                                 }
-                            } else {
-                                console.log('⚠️  Could not find "Designated account" button: ' + (designatedAccountButton.reason || 'Unknown reason'));
                             }
                             
                             // 步驟 2: 等待輸入框出現並填入帳號
-                            console.log('🔍 Looking for account input field...');
                             try {
                                 // 等待輸入框出現
                                 await page.waitForSelector('input#account[name="account"]', { timeout: 10000 });
-                                console.log('✅ Account input field found');
                                 
                                 // 填入帳號
                                 await page.evaluate((accountNum) => {
@@ -664,11 +583,9 @@ class ScrapeBrowserRsgDOM extends Command
                                     if (accountInput) {
                                         await accountInput.click({ clickCount: 3 }); // 選中所有文本
                                         await accountInput.type(accountNumber, { delay: 30 });
-                                        console.log('✅ Account number typed using Puppeteer');
                                     }
                                 } catch (e) {
                                     console.log('⚠️  Error typing account number with Puppeteer: ' + e.message);
-                                    console.log('ℹ️  Using evaluate method instead');
                                 }
                                 
                                 // 驗證帳號是否已填入
@@ -676,25 +593,8 @@ class ScrapeBrowserRsgDOM extends Command
                                     const input = document.querySelector('input#account[name="account"]');
                                     return input ? input.value : null;
                                 });
-                                
-                                console.log('📋 Account input value:', accountValue);
-                                
-                                if (accountValue === accountNumber) {
-                                    console.log('✅ Account number successfully entered');
-                                } else {
-                                    console.log('⚠️  Account number mismatch. Expected: ' + accountNumber + ', Got: ' + accountValue);
-                                }
-                                
-                                // 截圖：填入帳號後
-                                await page.screenshot({ 
-                                    path: 'step_05_after_account_input.png',
-                                    fullPage: false
-                                });
-                                console.log('📸 Screenshot saved: step_05_after_account_input.png');
-                                
                             } catch (e) {
                                 console.log('⚠️  Error finding or filling account input field: ' + e.message);
-                                console.log('⚠️  Trying alternative selectors...');
                                 
                                 // 嘗試其他選擇器
                                 const alternativeSelectors = [
@@ -711,7 +611,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         if (input) {
                                             await input.click({ clickCount: 3 });
                                             await input.type(accountNumber, { delay: 30 });
-                                            console.log('✅ Account number entered using selector: ' + selector);
                                             inputFound = true;
                                             break;
                                         }
@@ -726,11 +625,9 @@ class ScrapeBrowserRsgDOM extends Command
                             }
                             
                             // 步驟 3: 點擊搜索按鈕
-                            console.log('🔍 Looking for Search button...');
                             try {
                                 // 等待搜索按鈕出現
                                 await page.waitForSelector('input.btn.bg-aqua[value="Search"][onclick*="searchAccount"]', { timeout: 5000 });
-                                console.log('✅ Search button found');
                                 
                                 // 點擊搜索按鈕
                                 await page.evaluate(() => {
@@ -744,21 +641,10 @@ class ScrapeBrowserRsgDOM extends Command
                                     }
                                 });
                                 
-                                console.log('✅ Search button clicked');
-                                
                                 // 等待搜索結果載入
                                 await new Promise(resolve => setTimeout(resolve, 3000));
-                                
-                                // 截圖：點擊搜索按鈕後
-                                await page.screenshot({ 
-                                    path: 'step_06_after_search_click.png',
-                                    fullPage: false
-                                });
-                                console.log('📸 Screenshot saved: step_06_after_search_click.png');
-                                
                             } catch (e) {
                                 console.log('⚠️  Error finding or clicking Search button: ' + e.message);
-                                console.log('⚠️  Trying alternative methods...');
                                 
                                 // 嘗試直接執行 searchAccount 函數
                                 try {
@@ -769,7 +655,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             searchAccount();
                                         }
                                     }, accountNumber);
-                                    console.log('✅ Search function executed directly');
                                     
                                     // 等待搜索結果載入
                                     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -791,12 +676,10 @@ class ScrapeBrowserRsgDOM extends Command
                     
                     // ========== 步驟 3：點擊 Currency 連結（在日期和帳號處理後）==========
                     // 點擊 tbody.dataContent 中的 Currency 超連結
-                    console.log('🔍 Looking for Currency link...');
                     try {
                         // 等待 tbody.dataContent 元素出現
                         try {
                             await page.waitForSelector('tbody.dataContent', { timeout: 15000 });
-                            console.log('✅ tbody.dataContent found');
                         } catch (e) {
                             console.log('⚠️  tbody.dataContent not found, trying to continue...');
                         }
@@ -816,14 +699,6 @@ class ScrapeBrowserRsgDOM extends Command
                                 dataContentRows: dataContent ? dataContent.querySelectorAll('tr').length : 0
                             };
                         });
-                        console.log('📊 Page status:', pageStatus);
-                        
-                        // 截圖：查找 Currency 連結前
-                        await page.screenshot({ 
-                            path: 'step_07_before_currency_search.png',
-                            fullPage: false
-                        });
-                        console.log('📸 Screenshot saved: step_07_before_currency_search.png');
                         
                         // 尋找 tbody.dataContent 中的超連結
                         const currencyLinkInfo = await page.evaluate(() => {
@@ -987,17 +862,7 @@ class ScrapeBrowserRsgDOM extends Command
                             return { found: false, reason: 'No link found in tbody.dataContent', columnIndex: currencyColumnIndex };
                         });
                         
-                        console.log('🔍 Currency link search result:', currencyLinkInfo);
-                        
                         if (currencyLinkInfo.found) {
-                            console.log('✅ Currency link found, clicking...');
-                            console.log('📋 Currency link info:', {
-                                text: currencyLinkInfo.text,
-                                columnIndex: currencyLinkInfo.columnIndex,
-                                isUTag: currencyLinkInfo.isUTag,
-                                method: currencyLinkInfo.method || 'column-based'
-                            });
-                            
                             // 點擊超連結，並等待可能的導航
                             try {
                                 if (currencyLinkInfo.method === 'direct-search') {
@@ -1007,7 +872,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             // 執行 onclick 函數
                                             eval(onclickValue);
                                         }, currencyLinkInfo.onclick);
-                                        console.log('✅ Currency link clicked via onclick');
                                     } else {
                                         // 如果沒有 onclick，嘗試直接查找並點擊
                                         await page.evaluate((linkText) => {
@@ -1019,7 +883,6 @@ class ScrapeBrowserRsgDOM extends Command
                                                 }
                                             }
                                         }, currencyLinkInfo.text);
-                                        console.log('✅ Currency link clicked via direct search');
                                     }
                                 } else {
                                     // 使用列索引的方式
@@ -1099,21 +962,16 @@ class ScrapeBrowserRsgDOM extends Command
                                         return { success: false, reason: 'No clickable element found' };
                                     }, currencyLinkInfo.columnIndex, currencyLinkInfo.isUTag || false, currencyLinkInfo.rowIndex);
                                     
-                                    console.log('📋 Click result:', clickResult);
-                                    
                                     // 等待導航（如果發生）
                                     try {
                                         await page.waitForNavigation({ 
                                             waitUntil: 'domcontentloaded',
                                             timeout: 10000 
                                         });
-                                        console.log('✅ Navigation occurred');
                                     } catch (e) {
                                         // 如果沒有導航發生，忽略超時錯誤
                                         console.log('ℹ️  No navigation occurred (this is OK)');
                                     }
-                                    
-                                    console.log('✅ Currency link clicked via column index');
                                 }
                             } catch (e) {
                                 console.log('⚠️  Error clicking Currency link:', e.message);
@@ -1122,14 +980,6 @@ class ScrapeBrowserRsgDOM extends Command
                             
                             // 等待頁面穩定
                             await new Promise(resolve => setTimeout(resolve, 3000));
-                            console.log('✅ Page stabilized after clicking Currency link');
-                            
-                            // 截圖：點擊 Currency 連結後
-                            await page.screenshot({ 
-                                path: 'step_03_after_currency_click.png',
-                                fullPage: false
-                            });
-                            console.log('📸 Screenshot saved: step_03_after_currency_click.png');
                             
                             // 查找並點擊 slim 連結
                             try {
@@ -1181,27 +1031,14 @@ class ScrapeBrowserRsgDOM extends Command
                                     
                                     // 等待頁面穩定
                                     await new Promise(resolve => setTimeout(resolve, 2000));
-                                    
-                                    // 截圖：點擊 slim 連結後
-                                    await page.screenshot({ 
-                                        path: 'step_04_after_slim_click.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 Screenshot saved: step_04_after_slim_click.png');
-                                } else {
-                                    console.log('⚠️  Could not find slim link: ' + (slimLinkInfo.reason || 'Unknown reason'));
                                 }
                             } catch (e) {
                                 console.log('⚠️  Error clicking slim link: ' + e.message);
                                 // 即使出錯，也繼續執行後續的 DOM 提取
                             }
                         } else {
-                            console.log('⚠️  Could not find Currency link: ' + (currencyLinkInfo.reason || 'Unknown reason'));
-                            
                             // 如果找到了 Currency 列索引，嘗試點擊該列的第一個單元格
                             if (currencyLinkInfo.columnIndex !== undefined && currencyLinkInfo.columnIndex !== -1) {
-                                console.log('🔄 Attempting to click Currency column directly (column index: ' + currencyLinkInfo.columnIndex + ')');
-                                
                                 try {
                                     const clickResult = await page.evaluate((columnIndex) => {
                                         const dataContent = document.querySelector('tbody.dataContent');
@@ -1237,15 +1074,12 @@ class ScrapeBrowserRsgDOM extends Command
                                         return { success: false, reason: 'No cell found' };
                                     }, currencyLinkInfo.columnIndex);
                                     
-                                    console.log('📋 Direct click result:', clickResult);
-                                    
                                     // 等待可能的導航
                                     try {
                                         await page.waitForNavigation({ 
                                             waitUntil: 'domcontentloaded',
                                             timeout: 10000 
                                         });
-                                        console.log('✅ Navigation occurred after direct click');
                                     } catch (e) {
                                         console.log('ℹ️  No navigation occurred after direct click (this is OK)');
                                     }
@@ -1267,13 +1101,6 @@ class ScrapeBrowserRsgDOM extends Command
                         }
                         
                         // ========== 點擊 "Slots (All)" 標籤（無論是否有 account_number）==========
-                        // 截圖：點擊 Slots (All) 標籤前
-                        await page.screenshot({ 
-                            path: 'step_10_before_slots_all_click.png',
-                            fullPage: false
-                        });
-                        console.log('📸 Screenshot saved: step_10_before_slots_all_click.png');
-                        
                         try {
                             // 先列出所有可用的標籤（用於調試）
                             const allTabsInfo = await page.evaluate(() => {
@@ -1373,13 +1200,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         contentId: slotsAllContent ? slotsAllContent.id : 'Not found'
                                     };
                                 });
-                                
-                                // 截圖：點擊 Slots (All) 後的狀態
-                                await page.screenshot({ 
-                                    path: 'step_11_after_slots_all_click.png',
-                                    fullPage: false
-                                });
-                                console.log('📸 Screenshot saved: step_11_after_slots_all_click.png');
                             } else {
                                 console.log('⚠️  Could not find "Slots (All)" tab: ' + (slotsTabResult.reason || 'Unknown reason'));
                             }
@@ -1393,13 +1213,6 @@ class ScrapeBrowserRsgDOM extends Command
 
                     // ========== 步驟 2：提取第一頁資料並獲取分頁資訊 ==========
                     console.log('📄 Step 2: Extracting first page and pagination info...');
-                    
-                    // 截圖：提取數據前
-                    await page.screenshot({ 
-                        path: 'step_12_before_data_extraction.png',
-                        fullPage: false
-                    });
-                    console.log('📸 Screenshot saved: step_12_before_data_extraction.png');
                     
                     // 先檢查頁面上有哪些表格
                     const tableInfo = await page.evaluate(() => {
@@ -1967,7 +1780,6 @@ class ScrapeBrowserRsgDOM extends Command
                     }
                     
                     // ========== 步驟 4：點擊所有 Date 欄位中的日期連結並截圖 ==========
-                    console.log('📅 Looking for Date links to click...');
                     try {
                         // 收集所有 Date 欄位中的日期連結
                         const dateLinks = await page.evaluate(() => {
@@ -2049,19 +1861,10 @@ class ScrapeBrowserRsgDOM extends Command
                             return links;
                         });
                         
-                        console.log('📅 Found ' + dateLinks.length + ' date links');
-                        
                         if (dateLinks.length > 0) {
                             // 逐個點擊每個日期連結並截圖
                             for (let i = 0; i < dateLinks.length; i++) {
                                 const dateLink = dateLinks[i];
-                                console.log('📅 Clicking date link ' + (i + 1) + '/' + dateLinks.length + ': ' + dateLink.dateText);
-                                console.log('📋 Date link info:', {
-                                    tableIndex: dateLink.tableIndex,
-                                    rowIndex: dateLink.rowIndex,
-                                    dateText: dateLink.dateText,
-                                    onclick: dateLink.onclick ? dateLink.onclick.substring(0, 100) + '...' : null
-                                });
                                 
                                 try {
                                     // 記錄當前 URL（用於判斷是否導航）
@@ -2073,7 +1876,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         await page.evaluate((onclickValue) => {
                                             eval(onclickValue);
                                         }, dateLink.onclick);
-                                        console.log('✅ Date link clicked via onclick');
                                     } else {
                                         // 方法 2: 使用選擇器點擊（需要重新查找，因為可能已經導航）
                                         // 先嘗試重新查找連結
@@ -2098,7 +1900,6 @@ class ScrapeBrowserRsgDOM extends Command
                                                 }
                                             }, dateLink.dateText);
                                         }
-                                        console.log('✅ Date link clicked via selector');
                                     }
                                     
                                     // 等待頁面載入或導航
@@ -2109,7 +1910,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             timeout: 10000 
                                         });
                                         navigated = true;
-                                        console.log('✅ Navigation occurred after clicking date link');
                                     } catch (e) {
                                         console.log('ℹ️  No navigation occurred (this is OK)');
                                     }
@@ -2117,35 +1917,8 @@ class ScrapeBrowserRsgDOM extends Command
                                     // 等待頁面穩定
                                     await new Promise(resolve => setTimeout(resolve, 2000));
                                     
-                                    // 截圖
-                                    const screenshotPath = 'step_date_' + (i + 1) + '_' + dateLink.dateText.replace(/-/g, '_') + '.png';
-                                    try {
-                                        await page.screenshot({ 
-                                            path: screenshotPath,
-                                            fullPage: true
-                                        });
-                                        
-                                        // 驗證截圖是否真的保存了
-                                        const fs = require('fs');
-                                        const path = require('path');
-                                        const fullPath = path.resolve(screenshotPath);
-                                        if (fs.existsSync(fullPath)) {
-                                            const stats = fs.statSync(fullPath);
-                                            console.log('📸 Screenshot saved: ' + screenshotPath);
-                                            console.log('📸 Screenshot path: ' + fullPath);
-                                            console.log('📸 Screenshot size: ' + (stats.size / 1024).toFixed(2) + ' KB');
-                                        } else {
-                                            console.log('⚠️  Screenshot file not found at: ' + fullPath);
-                                        }
-                                    } catch (screenshotError) {
-                                        console.log('⚠️  Error taking screenshot: ' + screenshotError.message);
-                                        console.log('⚠️  Screenshot error stack: ' + screenshotError.stack);
-                                    }
-                                    
                                     // ========== 爬取該日期頁面的所有分頁數據 ==========
                                     // 無論是否導航，都嘗試爬取數據（因為有些頁面使用 AJAX，不會觸發導航）
-                                    console.log('📊 Starting to scrape all pages for date: ' + dateLink.dateText);
-                                    console.log('📊 Navigation status: ' + (navigated ? 'navigated' : 'no navigation (AJAX or same page)'));
                                     
                                     try {
                                         // 等待頁面完全載入
@@ -2227,19 +2000,11 @@ class ScrapeBrowserRsgDOM extends Command
                                                 };
                                             });
                                             
-                                            console.log('📊 Date page pagination info:', datePagePaginationInfo);
-                                            
                                             // 收集所有頁面的數據
                                             const allDatePageData = [];
                                             
                                             // 提取當前頁（第一頁）的數據
-                                            console.log('📄 Extracting page 1/' + datePagePaginationInfo.totalPages + ' for date: ' + dateLink.dateText);
                                             const firstPageData = await extractTableData(page, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
-                                            console.log('📊 First page data extracted:', {
-                                                hasData: !!firstPageData,
-                                                hasTables: !!(firstPageData && firstPageData.tables),
-                                                tableCount: firstPageData && firstPageData.tables ? firstPageData.tables.length : 0
-                                            });
                                             
                                             if (firstPageData && firstPageData.tables && firstPageData.tables.length > 0) {
                                                 // 計算第一頁的行數
@@ -2249,20 +2014,15 @@ class ScrapeBrowserRsgDOM extends Command
                                                         firstPageRows += table.data.length;
                                                     }
                                                 });
-                                                console.log('📊 First page rows: ' + firstPageRows);
                                                 
                                                 allDatePageData.push({
                                                     page: 1,
                                                     data: firstPageData
                                                 });
-                                            } else {
-                                                console.log('⚠️  No data found on first page');
                                             }
                                             
                                             // 遍歷剩餘頁面
                                             for (let pageNum = 2; pageNum <= datePagePaginationInfo.totalPages; pageNum++) {
-                                                console.log('📄 Extracting page ' + pageNum + '/' + datePagePaginationInfo.totalPages + ' for date: ' + dateLink.dateText);
-                                                
                                                 try {
                                                     // 點擊下一頁
                                                     const nextPageClicked = await page.evaluate((targetPage) => {
@@ -2329,10 +2089,6 @@ class ScrapeBrowserRsgDOM extends Command
                                                 }
                                             }
                                             
-                                            // 保存該日期的所有數據到文件
-                                            console.log('💾 Preparing to save data for date: ' + dateLink.dateText);
-                                            console.log('💾 Total pages collected: ' + allDatePageData.length);
-                                            
                                             if (allDatePageData.length > 0) {
                                                 const fs = require('fs');
                                                 const path = require('path');
@@ -2359,33 +2115,14 @@ class ScrapeBrowserRsgDOM extends Command
                                                     data: allDatePageData
                                                 };
                                                 
-                                                console.log('💾 Writing file: ' + dateDataPath);
-                                                console.log('💾 File size (approx): ' + (JSON.stringify(dateDataToSave).length / 1024).toFixed(2) + ' KB');
-                                                
                                                 try {
                                                     fs.writeFileSync(dateDataPath, JSON.stringify(dateDataToSave, null, 2), 'utf8');
-                                                    
-                                                    // 驗證文件是否真的保存了
-                                                    if (fs.existsSync(dateDataPath)) {
-                                                        const stats = fs.statSync(dateDataPath);
-                                                        console.log('✅ Saved date data to: ' + dateDataFileName);
-                                                        console.log('✅ File path: ' + dateDataPath);
-                                                        console.log('✅ File size: ' + (stats.size / 1024).toFixed(2) + ' KB');
-                                                        console.log('📊 Total pages scraped: ' + allDatePageData.length + '/' + datePagePaginationInfo.totalPages);
-                                                        console.log('📊 Total rows: ' + totalRows);
-                                                    } else {
-                                                        console.log('⚠️  File was not created: ' + dateDataPath);
-                                                    }
                                                 } catch (writeError) {
                                                     console.log('⚠️  Error writing file: ' + writeError.message);
                                                     console.log('⚠️  Error stack: ' + writeError.stack);
                                                 }
                                             } else {
                                                 console.log('⚠️  No data extracted for date: ' + dateLink.dateText);
-                                                console.log('⚠️  This might mean:');
-                                                console.log('   - No tables found on the page');
-                                                console.log('   - Data extraction function failed');
-                                                console.log('   - Page structure is different than expected');
                                             }
                                             
                                     } catch (e) {
@@ -2395,11 +2132,9 @@ class ScrapeBrowserRsgDOM extends Command
                                     
                                     // 如果頁面導航了，返回上一頁以便繼續處理下一個連結
                                     if (navigated) {
-                                        console.log('🔙 Navigating back to continue with next date link...');
                                         try {
                                             await page.goBack({ waitUntil: 'domcontentloaded' });
                                             await new Promise(resolve => setTimeout(resolve, 2000));
-                                            console.log('✅ Returned to previous page');
                                             
                                             // 重新等待表格載入
                                             await page.waitForSelector('tbody.dataContent', { timeout: 10000 }).catch(() => {});
@@ -2410,7 +2145,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             // 但這裡我們先繼續，看看能否找到下一個連結
                                         }
                                     }
-                                    
                                 } catch (e) {
                                     console.log('⚠️  Error clicking date link ' + (i + 1) + ': ' + e.message);
                                 }
@@ -2439,7 +2173,6 @@ class ScrapeBrowserRsgDOM extends Command
                                     if (info) {
                                         maxPageNumber = info.pages || 1;
                                         currentPage = (info.page || 0) + 1;
-                                        console.log('📊 DataTables API pages:', maxPageNumber, 'current:', currentPage);
                                     }
                                 }
                             }
@@ -2964,24 +2697,7 @@ class ScrapeBrowserRsgDOM extends Command
 
         // 將截圖從臨時目錄移動到永久存儲目錄
         $screenshots = [
-            'step_01_after_navigation.png' => "step_01_after_navigation_{$timestamp}.png",
-            'step_02_before_currency_search.png' => "step_02_before_currency_search_{$timestamp}.png",
-            'step_03_after_currency_click.png' => "step_03_after_currency_click_{$timestamp}.png",
-            'step_04_after_slim_click.png' => "step_04_after_slim_click_{$timestamp}.png",
-            'step_05_date_picker_opened.png' => "step_05_date_picker_opened_{$timestamp}.png",
-            'step_06_after_date_input.png' => "step_06_after_date_input_{$timestamp}.png",
-            'step_07_after_apply_click.png' => "step_07_after_apply_click_{$timestamp}.png",
-            'step_08_before_account_search.png' => "step_08_before_account_search_{$timestamp}.png",
-            'step_09_after_account_click.png' => "step_09_after_account_click_{$timestamp}.png",
-            'step_10_before_slots_all_click.png' => "step_10_before_slots_all_click_{$timestamp}.png",
-            'step_11_after_slots_all_click.png' => "step_11_after_slots_all_click_{$timestamp}.png",
-            'step_12_before_data_extraction.png' => "step_12_before_data_extraction_{$timestamp}.png",
             'step_13_final_page.png' => "step_13_final_page_{$timestamp}.png",
-            // 保留舊的截圖名稱以向後兼容
-            'after_account_screenshot.png' => "after_account_{$timestamp}.png",
-            'after_date_input_screenshot.png' => "after_date_input_{$timestamp}.png",
-            'after_slots_all_tab_screenshot.png' => "after_slots_all_tab_{$timestamp}.png",
-            'final_page_screenshot.png' => "final_page_{$timestamp}.png",
         ];
         
         foreach ($screenshots as $srcName => $dstName) {
@@ -3044,16 +2760,10 @@ class ScrapeBrowserRsgDOM extends Command
                 
                 if (file_exists($srcPath)) {
                     if (rename($srcPath, $dstPath)) {
-                        $this->info("📊 Date data file saved: {$newFileName}");
-                        
                         // 讀取並顯示數據摘要
                         try {
                             $dateData = json_decode(file_get_contents($dstPath), true);
                             if ($dateData) {
-                                $this->info("   📅 Date: " . ($dateData['date'] ?? 'N/A'));
-                                $this->info("   📄 Total pages: " . ($dateData['totalPages'] ?? 0));
-                                $this->info("   ✅ Pages scraped: " . ($dateData['pagesScraped'] ?? 0));
-                                
                                 // 計算總行數
                                 $totalRows = 0;
                                 if (!empty($dateData['data'])) {
@@ -3067,7 +2777,6 @@ class ScrapeBrowserRsgDOM extends Command
                                         }
                                     }
                                 }
-                                $this->info("   📊 Total rows: {$totalRows}");
                             }
                         } catch (\Exception $e) {
                             $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
