@@ -337,6 +337,18 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     });
                     console.log('✅ Screenshot saved: target_page_screenshot.png');
 
+                    // 構建登入結果（在日期處理之前創建，以便可以添加表格資料）
+                    const loginResult = {
+                        timestamp: new Date().toISOString(),
+                        loginUrl: $loginDomainJs,
+                        targetUrl: '$url',
+                        success: true,
+                        loginPageInfo: loginPageInfo,
+                        targetPageInfo: targetPageInfo,
+                        cookiesCount: loginCookies.length,
+                        cookies: loginCookies
+                    };
+
                     // 解析 date 參數
                     // 先將 PHP 替換的值存儲到 JavaScript 變量中
                     // $dateStartJs 在 heredoc 中會被替換為實際值（可能是 null 或 "2025-12-20"）
@@ -352,6 +364,14 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         try {
                             console.log('📅 Processing date range: ' + dateStartParsed + ' to ' + dateEndParsed);
                             
+                            // 截圖 1：點擊日期選擇器之前
+                            console.log('📸 Taking screenshot before clicking date picker...');
+                            await page.screenshot({ 
+                                path: 'date_before_click_screenshot.png',
+                                fullPage: false
+                            });
+                            console.log('✅ Screenshot saved: date_before_click_screenshot.png');
+                            
                             // 等待日期選擇器輸入框出現
                             await page.waitForSelector('input.el-range-input[placeholder="Start Time"]', { timeout: 10000 });
                             console.log('✅ Found date range input');
@@ -361,39 +381,128 @@ class ScrapeBrowserSplusDOMDetail extends Command
                             console.log('✅ Clicked date range input to open picker');
                             
                             // 等待日期選擇面板出現
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            await new Promise(resolve => setTimeout(resolve, 1500));
+                            
+                            // 截圖 2：日期面板打開後
+                            console.log('📸 Taking screenshot after date picker opened...');
+                            await page.screenshot({ 
+                                path: 'date_picker_opened_screenshot.png',
+                                fullPage: false
+                            });
+                            console.log('✅ Screenshot saved: date_picker_opened_screenshot.png');
                             
                             // 填入開始日期
                             await page.waitForSelector('input.el-input__inner[placeholder="Start Date"]', { timeout: 10000 });
-                            await page.evaluate((dateStartValue) => {
-                                const startDateInput = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
-                                if (startDateInput) {
-                                    startDateInput.value = '';
-                                    startDateInput.value = dateStartValue;
-                                    startDateInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                    startDateInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                            }, dateStartParsed);
-                            console.log('✅ Filled start date: ' + dateStartParsed);
+                            
+                            // 使用更可靠的方法填入日期：先聚焦，清空，然後輸入
+                            const startDateInput = await page.$('input.el-input__inner[placeholder="Start Date"]');
+                            if (startDateInput) {
+                                await startDateInput.click({ clickCount: 3 }); // 三擊選中所有文字
+                                await startDateInput.type(dateStartParsed, { delay: 100 }); // 使用 type 方法，更可靠
+                                console.log('✅ Filled start date: ' + dateStartParsed);
+                                
+                                // 觸發事件確保 Element UI 識別輸入
+                                await page.evaluate((dateStartValue) => {
+                                    const input = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
+                                    if (input) {
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    }
+                                }, dateStartParsed);
+                            }
                             
                             // 等待一下確保輸入完成
-                            await new Promise(resolve => setTimeout(resolve, 500));
+                            await new Promise(resolve => setTimeout(resolve, 800));
+                            
+                            // 截圖 3：填入開始日期後
+                            console.log('📸 Taking screenshot after filling start date...');
+                            await page.screenshot({ 
+                                path: 'date_start_filled_screenshot.png',
+                                fullPage: false
+                            });
+                            console.log('✅ Screenshot saved: date_start_filled_screenshot.png');
                             
                             // 填入結束日期
                             await page.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 10000 });
-                            await page.evaluate((dateEndValue) => {
-                                const endDateInput = document.querySelector('input.el-input__inner[placeholder="End Date"]');
-                                if (endDateInput) {
-                                    endDateInput.value = '';
-                                    endDateInput.value = dateEndValue;
-                                    endDateInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                    endDateInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                            }, dateEndParsed);
-                            console.log('✅ Filled end date: ' + dateEndParsed);
+                            
+                            // 使用更可靠的方法填入日期
+                            const endDateInput = await page.$('input.el-input__inner[placeholder="End Date"]');
+                            if (endDateInput) {
+                                await endDateInput.click({ clickCount: 3 }); // 三擊選中所有文字
+                                await endDateInput.type(dateEndParsed, { delay: 100 }); // 使用 type 方法，更可靠
+                                console.log('✅ Filled end date: ' + dateEndParsed);
+                                
+                                // 觸發事件確保 Element UI 識別輸入
+                                await page.evaluate((dateEndValue) => {
+                                    const input = document.querySelector('input.el-input__inner[placeholder="End Date"]');
+                                    if (input) {
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    }
+                                }, dateEndParsed);
+                            }
                             
                             // 等待一下確保輸入完成
+                            await new Promise(resolve => setTimeout(resolve, 800));
+                            
+                            // 使用 page.evaluate 同時設置兩個日期值，確保兩個值都正確（防止開始日期被清空）
+                            const dateValues = await page.evaluate((dateStartValue, dateEndValue) => {
+                                const startInput = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
+                                const endInput = document.querySelector('input.el-input__inner[placeholder="End Date"]');
+                                
+                                const startValueBefore = startInput ? startInput.value : '';
+                                const endValueBefore = endInput ? endInput.value : '';
+                                
+                                // 同時設置兩個值，確保都正確
+                                if (startInput) {
+                                    startInput.value = dateStartValue;
+                                    startInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    startInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                                
+                                if (endInput) {
+                                    endInput.value = dateEndValue;
+                                    endInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    endInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                                
+                                // 再次觸發事件確保 Element UI 識別
+                                if (startInput) {
+                                    startInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+                                if (endInput) {
+                                    endInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+                                
+                                return {
+                                    startValue: startInput ? startInput.value : '',
+                                    endValue: endInput ? endInput.value : '',
+                                    startWasFixed: startValueBefore !== dateStartValue,
+                                    endWasFixed: endValueBefore !== dateEndValue
+                                };
+                            }, dateStartParsed, dateEndParsed);
+                            
+                            if (dateValues.startWasFixed) {
+                                console.log('⚠️  Start date was lost, re-filled: ' + dateStartParsed);
+                            }
+                            if (dateValues.endWasFixed) {
+                                console.log('⚠️  End date was lost, re-filled: ' + dateEndParsed);
+                            }
+                            
+                            console.log('📋 Final date values - Start: ' + dateValues.startValue + ', End: ' + dateValues.endValue);
+                            
+                            // 等待一下確保修正完成
                             await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // 截圖 4：填入結束日期後
+                            console.log('📸 Taking screenshot after filling end date...');
+                            await page.screenshot({ 
+                                path: 'date_end_filled_screenshot.png',
+                                fullPage: false
+                            });
+                            console.log('✅ Screenshot saved: date_end_filled_screenshot.png');
                             
                             // 查找並點擊 OK 按鈕
                             const okButton = await page.evaluate(() => {
@@ -424,20 +533,469 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                 console.log('✅ Clicked OK button');
                                 
                                 // 等待日期選擇器關閉
-                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                await new Promise(resolve => setTimeout(resolve, 1500));
                                 
-                                // 截圖（日期選擇後）
-                                console.log('📸 Taking screenshot after date selection...');
+                                // 截圖 5：點擊 OK 按鈕後
+                                console.log('📸 Taking screenshot after clicking OK button...');
                                 await page.screenshot({ 
                                     path: 'date_selected_screenshot.png',
                                     fullPage: false
                                 });
                                 console.log('✅ Screenshot saved: date_selected_screenshot.png');
+                                
+                                // 查找並點擊 Search 按鈕
+                                console.log('🔍 Looking for Search button...');
+                                const searchButton = await page.evaluate(() => {
+                                    // 查找包含 "Search" 文本的按鈕
+                                    const allButtons = Array.from(document.querySelectorAll('button.default-btn, button.base_button'));
+                                    let searchBtn = allButtons.find(btn => {
+                                        const span = btn.querySelector('span.v-btn__content');
+                                        return span && span.textContent.trim() === 'Search';
+                                    });
+
+                                    // 判斷 searchBtn 是否存在
+                                    if (searchBtn) {
+                                        const uniqueId = 'search-btn-' + Date.now();
+                                        searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                        return {
+                                            found: true,
+                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                            text: searchBtn.querySelector('span.v-btn__content').textContent.trim()
+                                        };
+                                    }
+                                    
+                                    return { found: false };
+                                });
+
+                                // 判斷是否有找到 Search 按鈕
+                                if (searchButton.found) {
+                                    console.log('✅ Found Search button, clicking...');
+                                    await page.click(searchButton.selector, { timeout: 5000 });
+                                    console.log('✅ Clicked Search button');
+                                    
+                                    // 等待搜索結果載入
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    // 截圖 6：點擊 Search 按鈕後
+                                    console.log('📸 Taking screenshot after clicking Search button...');
+                                    await page.screenshot({ 
+                                        path: 'date_search_clicked_screenshot.png',
+                                        fullPage: false
+                                    });
+                                    console.log('✅ Screenshot saved: date_search_clicked_screenshot.png');
+                                    
+                                    // 等待表格出現
+                                    console.log('🔍 Waiting for table to load...');
+                                    await page.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {
+                                        console.log('⚠️  Table not found, waiting 2 more seconds...');
+                                    });
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                    
+                                    // 提取分頁信息
+                                    console.log('📄 Extracting pagination info...');
+                                    const paginationInfo = await page.evaluate(() => {
+                                        const pagination = document.querySelector('div.el-pagination');
+                                        if (!pagination) {
+                                            return { found: false, error: 'Pagination not found' };
+                                        }
+                                        
+                                        // 獲取總數
+                                        const totalSpan = pagination.querySelector('span.el-pagination__total');
+                                        const totalText = totalSpan ? totalSpan.textContent.trim() : '';
+                                        const totalMatch = totalText.match(/Total\s+(\d+)/);
+                                        const total = totalMatch ? parseInt(totalMatch[1]) : 0;
+                                        
+                                        // 獲取當前頁
+                                        const activePage = pagination.querySelector('li.number.active');
+                                        const currentPage = activePage ? parseInt(activePage.textContent.trim()) : 1;
+                                        
+                                        // 獲取所有頁碼
+                                        const pageNumbers = [];
+                                        const pageItems = pagination.querySelectorAll('li.number');
+                                        pageItems.forEach(item => {
+                                            if (!item.classList.contains('more')) {
+                                                const pageNum = parseInt(item.textContent.trim());
+                                                if (!isNaN(pageNum)) {
+                                                    pageNumbers.push(pageNum);
+                                                }
+                                            }
+                                        });
+                                        
+                                        // 獲取最後一頁的頁碼（從分頁器中）
+                                        let lastPage = currentPage;
+                                        if (pageNumbers.length > 0) {
+                                            lastPage = Math.max(...pageNumbers);
+                                        }
+                                        
+                                        // 如果有 "more" 按鈕，嘗試獲取最後一頁
+                                        const lastPageItem = pagination.querySelector('li.number:last-child');
+                                        if (lastPageItem && !lastPageItem.classList.contains('more')) {
+                                            const lastPageNum = parseInt(lastPageItem.textContent.trim());
+                                            if (!isNaN(lastPageNum)) {
+                                                lastPage = lastPageNum;
+                                            }
+                                        }
+                                        
+                                        return {
+                                            found: true,
+                                            total: total,
+                                            currentPage: currentPage,
+                                            lastPage: lastPage,
+                                            pageNumbers: pageNumbers
+                                        };
+                                    });
+                                    
+                                    if (!paginationInfo.found) {
+                                        console.log('⚠️  Pagination not found, extracting single page only');
+                                    } else {
+                                        console.log('📊 Pagination info: Total=' + paginationInfo.total + ', Current Page=' + paginationInfo.currentPage + ', Last Page=' + paginationInfo.lastPage);
+                                    }
+                                    
+                                    // 提取表格資料的函數（可重用）
+                                    const extractTableData = async () => {
+                                        return await page.evaluate(() => {
+                                            const table = document.querySelector('table');
+                                            if (!table) {
+                                                return { found: false, error: 'Table not found' };
+                                            }
+                                            
+                                            // 提取表頭
+                                            const headers = [];
+                                            const thead = table.querySelector('thead');
+                                            if (thead) {
+                                                const headerRow = thead.querySelector('tr');
+                                                if (headerRow) {
+                                                    const headerCells = headerRow.querySelectorAll('th');
+                                                    headerCells.forEach(cell => {
+                                                        const span = cell.querySelector('span span');
+                                                        const headerText = span ? span.textContent.trim() : cell.textContent.trim();
+                                                        if (headerText) {
+                                                            headers.push(headerText);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                            
+                                            // 提取資料行
+                                            const tbody = table.querySelector('tbody#ele-table-body');
+                                            if (!tbody) {
+                                                return { found: false, error: 'Table body not found' };
+                                            }
+                                            
+                                            const rows = [];
+                                            const allRows = Array.from(tbody.querySelectorAll('tr'));
+                                            
+                                            for (let i = 0; i < allRows.length; i++) {
+                                                const row = allRows[i];
+                                                
+                                                // 跳過 detail-row（詳細信息行）
+                                                if (row.classList.contains('detail-row')) {
+                                                    continue;
+                                                }
+                                                
+                                                // 跳過 Subtotal 行
+                                                const firstCell = row.querySelector('td');
+                                                if (firstCell) {
+                                                    const firstCellText = firstCell.textContent.trim();
+                                                    if (firstCellText === 'Subtotal') {
+                                                        continue;
+                                                    }
+                                                }
+                                                
+                                                // 提取主行數據
+                                                const cells = row.querySelectorAll('td');
+                                                const rowData = {};
+                                                
+                                                cells.forEach((cell, index) => {
+                                                    // 獲取實際文本內容
+                                                    const div = cell.querySelector('div.inner-row--1');
+                                                    let cellText = '';
+                                                    
+                                                    if (div) {
+                                                        // 檢查是否有嵌套的 div
+                                                        const innerDiv = div.querySelector('div');
+                                                        if (innerDiv) {
+                                                            cellText = innerDiv.textContent.trim();
+                                                        } else {
+                                                            cellText = div.textContent.trim();
+                                                        }
+                                                    } else {
+                                                        cellText = cell.textContent.trim();
+                                                    }
+                                                    
+                                                    // 使用表頭作為 key，如果沒有表頭則使用索引
+                                                    if (headers[index]) {
+                                                        // 清理字段名
+                                                        let cleanHeader = headers[index]
+                                                            .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                            .replace(/^_+|_+$/g, '');
+                                                        
+                                                        if (!cleanHeader) {
+                                                            cleanHeader = 'column_' + index;
+                                                        }
+                                                        
+                                                        // 確保字段名唯一
+                                                        let finalHeader = cleanHeader;
+                                                        let counter = 1;
+                                                        while (rowData.hasOwnProperty(finalHeader)) {
+                                                            finalHeader = cleanHeader + '_' + counter;
+                                                            counter++;
+                                                        }
+                                                        
+                                                        rowData[finalHeader] = cellText;
+                                                    } else {
+                                                        rowData['column_' + index] = cellText;
+                                                    }
+                                                });
+                                                
+                                                // 檢查下一行是否是 detail-row
+                                                if (i + 1 < allRows.length && allRows[i + 1].classList.contains('detail-row')) {
+                                                    const detailRow = allRows[i + 1];
+                                                    const detailGrid = detailRow.querySelector('div.detail-grid');
+                                                    
+                                                    if (detailGrid) {
+                                                        const detailItems = detailGrid.querySelectorAll('div.detail-item');
+                                                        const details = {};
+                                                        
+                                                        detailItems.forEach(item => {
+                                                            const label = item.querySelector('div.detail-label');
+                                                            const value = item.querySelector('div.detail-value');
+                                                            
+                                                            if (label && value) {
+                                                                const labelText = label.textContent.trim().replace(':', '');
+                                                                let cleanLabel = labelText
+                                                                    .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                                    .replace(/^_+|_+$/g, '');
+                                                                
+                                                                // 獲取值（可能包含按鈕，只取文本）
+                                                                let valueText = value.textContent.trim();
+                                                                
+                                                                // 如果值包含按鈕，標記為有按鈕
+                                                                const button = value.querySelector('button');
+                                                                if (button) {
+                                                                    valueText = valueText.replace(button.textContent.trim(), '').trim();
+                                                                    details[cleanLabel + '_hasButton'] = true;
+                                                                }
+                                                                
+                                                                details[cleanLabel] = valueText;
+                                                            }
+                                                        });
+                                                        
+                                                        rowData.details = details;
+                                                    }
+                                                    
+                                                    // 跳過 detail-row
+                                                    i++;
+                                                }
+                                                
+                                                if (Object.keys(rowData).length > 0) {
+                                                    rows.push(rowData);
+                                                }
+                                            }
+                                            
+                                            return {
+                                                found: true,
+                                                headers: headers,
+                                                rowCount: rows.length,
+                                                data: rows
+                                            };
+                                        });
+                                    };
+                                    
+                                    // ========== 步驟 1：爬取第一頁 ==========
+                                    console.log('📄 Step 1: Extracting first page data...');
+                                    const firstPageData = await extractTableData();
+                                    
+                                    if (!firstPageData.found) {
+                                        console.log('⚠️  Failed to extract first page data: ' + (firstPageData.error || 'Unknown error'));
+                                    } else {
+                                        console.log('✅ First page extracted: ' + firstPageData.rowCount + ' rows');
+                                    }
+                                    
+                                    // ========== 步驟 2：爬取所有其他頁面 ==========
+                                    let allPagesData = [];
+                                    let allRows = [];
+                                    let headers = firstPageData.headers || [];
+                                    
+                                    if (firstPageData.found) {
+                                        allPagesData.push({
+                                            pageNumber: 1,
+                                            rowCount: firstPageData.rowCount,
+                                            data: firstPageData.data
+                                        });
+                                        allRows = allRows.concat(firstPageData.data);
+                                    }
+                                    
+                                    // 如果有分頁，爬取其他頁面
+                                    if (paginationInfo.found && paginationInfo.lastPage > 1) {
+                                        console.log('📄 Step 2: Starting to scrape pages 2 to ' + paginationInfo.lastPage + '...');
+                                        
+                                        // 使用"下一頁"按鈕逐頁爬取（更可靠）
+                                        let currentPageNum = 1;
+                                        let consecutiveFailures = 0;
+                                        const maxFailures = 3;
+                                        
+                                        while (currentPageNum < paginationInfo.lastPage) {
+                                            try {
+                                                // 檢查是否還有下一頁
+                                                const hasNext = await page.evaluate(() => {
+                                                    const pagination = document.querySelector('div.el-pagination');
+                                                    if (!pagination) return false;
+                                                    const nextButton = pagination.querySelector('button.btn-next');
+                                                    return nextButton && !nextButton.disabled;
+                                                });
+                                                
+                                                if (!hasNext) {
+                                                    console.log('✅ No more pages available, stopping...');
+                                                    break;
+                                                }
+                                                
+                                                // 點擊"下一頁"按鈕（先導航，再提取）
+                                                const nextClicked = await page.evaluate(() => {
+                                                    const pagination = document.querySelector('div.el-pagination');
+                                                    if (!pagination) return { success: false };
+                                                    
+                                                    const nextButton = pagination.querySelector('button.btn-next:not([disabled])');
+                                                    if (nextButton) {
+                                                        nextButton.click();
+                                                        return { success: true };
+                                                    }
+                                                    
+                                                    return { success: false, error: 'Next button not available' };
+                                                });
+                                                
+                                                if (!nextClicked.success) {
+                                                    console.log('⚠️  Cannot navigate to next page: ' + (nextClicked.error || 'Unknown error'));
+                                                    break;
+                                                }
+                                                
+                                                // 等待頁面載入
+                                                await new Promise(resolve => setTimeout(resolve, 2500));
+                                                
+                                                // 等待表格更新
+                                                await page.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {});
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                
+                                                // 獲取當前頁碼（點擊下一頁後）
+                                                const actualPage = await page.evaluate(() => {
+                                                    const pagination = document.querySelector('div.el-pagination');
+                                                    if (!pagination) return null;
+                                                    const activePage = pagination.querySelector('li.number.active');
+                                                    return activePage ? parseInt(activePage.textContent.trim()) : null;
+                                                });
+                                                
+                                                if (!actualPage || actualPage <= currentPageNum) {
+                                                    // 頁碼沒有改變或減少，可能已經到最後一頁
+                                                    console.log('⚠️  Page number did not increase (current: ' + currentPageNum + ', actual: ' + actualPage + '), may have reached last page');
+                                                    break;
+                                                }
+                                                
+                                                currentPageNum = actualPage;
+                                                console.log('📄 Scraping page ' + currentPageNum + ' of ' + paginationInfo.lastPage + '...');
+                                                
+                                                // 提取當前頁的數據
+                                                const pageData = await extractTableData();
+                                                
+                                                if (pageData.found && pageData.rowCount > 0) {
+                                                    // 檢查是否已經爬取過這一頁
+                                                    const alreadyScraped = allPagesData.some(p => p.pageNumber === currentPageNum);
+                                                    
+                                                    if (!alreadyScraped) {
+                                                        allPagesData.push({
+                                                            pageNumber: currentPageNum,
+                                                            rowCount: pageData.rowCount,
+                                                            data: pageData.data
+                                                        });
+                                                        allRows = allRows.concat(pageData.data);
+                                                        console.log('✅ Page ' + currentPageNum + ' extracted: ' + pageData.rowCount + ' rows');
+                                                        consecutiveFailures = 0;
+                                                    } else {
+                                                        console.log('⚠️  Page ' + currentPageNum + ' already scraped, skipping...');
+                                                    }
+                                                } else {
+                                                    console.log('⚠️  Failed to extract page data: ' + (pageData.error || 'No data'));
+                                                    consecutiveFailures++;
+                                                    
+                                                    if (consecutiveFailures >= maxFailures) {
+                                                        console.log('⚠️  Too many consecutive failures, stopping...');
+                                                        break;
+                                                    }
+                                                }
+                                                
+                                                // 每爬取 10 頁顯示一次進度
+                                                if (currentPageNum % 10 === 0) {
+                                                    console.log('📊 Progress: ' + currentPageNum + '/' + paginationInfo.lastPage + ' pages, ' + allRows.length + ' total rows');
+                                                }
+                                                
+                                                // 如果已經到達最後一頁，停止
+                                                if (currentPageNum >= paginationInfo.lastPage) {
+                                                    console.log('✅ Reached last page, stopping...');
+                                                    break;
+                                                }
+                                                
+                                            } catch (error) {
+                                                console.log('⚠️  Error scraping page: ' + error.message);
+                                                consecutiveFailures++;
+                                                
+                                                if (consecutiveFailures >= maxFailures) {
+                                                    console.log('⚠️  Too many consecutive failures, stopping...');
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        
+                                        console.log('✅ All pages scraped! Total rows: ' + allRows.length);
+                                    }
+                                    
+                                    // ========== 步驟 3：合併所有數據 ==========
+                                    const mergedTableData = {
+                                        found: true,
+                                        headers: headers,
+                                        totalPages: allPagesData.length,
+                                        totalRows: allRows.length,
+                                        pages: allPagesData,
+                                        data: allRows
+                                    };
+                                    
+                                    if (mergedTableData.found) {
+                                        console.log('✅ Merged table data: ' + mergedTableData.totalRows + ' rows from ' + mergedTableData.totalPages + ' pages');
+                                        
+                                        // 將表格資料添加到登入結果中
+                                        loginResult.tableData = mergedTableData;
+                                        
+                                        // 重新保存登入結果（包含表格資料）
+                                        fs.writeFileSync('login_result.json', JSON.stringify(loginResult, null, 2));
+                                        console.log('💾 Login result updated with all table data');
+                                        
+                                        // 截圖表格
+                                        console.log('📸 Taking screenshot of table...');
+                                        await page.screenshot({ 
+                                            path: 'table_screenshot.png',
+                                            fullPage: false
+                                        });
+                                        console.log('✅ Screenshot saved: table_screenshot.png');
+                                    } else {
+                                        console.log('⚠️  Failed to merge table data');
+                                    }
+                                } else {
+                                    console.log('⚠️  Search button not found');
+                                    // 即使沒找到按鈕也截圖
+                                    await page.screenshot({ 
+                                        path: 'date_search_button_not_found_screenshot.png',
+                                        fullPage: false
+                                    });
+                                }
                             } else {
                                 console.log('⚠️  OK button not found');
+                                // 即使沒找到按鈕也截圖
+                                await page.screenshot({ 
+                                    path: 'date_ok_button_not_found_screenshot.png',
+                                    fullPage: false
+                                });
                             }
                         } catch (e) {
                             console.log('⚠️  Error processing date range: ' + e.message);
+                            console.log('Stack trace: ' + e.stack);
                             // 即使出錯也截圖
                             await page.screenshot({ 
                                 path: 'date_error_screenshot.png',
@@ -446,19 +1004,7 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         }
                     }
 
-                    // 構建登入結果
-                    const loginResult = {
-                        timestamp: new Date().toISOString(),
-                        loginUrl: $loginDomainJs,
-                        targetUrl: '$url',
-                        success: true,
-                        loginPageInfo: loginPageInfo,
-                        targetPageInfo: targetPageInfo,
-                        cookiesCount: loginCookies.length,
-                        cookies: loginCookies
-                    };
-
-                    // 將登入結果保存為 JSON 文件
+                    // 將登入結果保存為 JSON 文件（可能已包含表格資料）
                     fs.writeFileSync('login_result.json', JSON.stringify(loginResult, null, 2));
                     console.log('💾 Login result saved to: login_result.json');
                     
@@ -1025,7 +1571,15 @@ class ScrapeBrowserSplusDOMDetail extends Command
                 'login_after_screenshot.png',
                 'login_error_screenshot.png',
                 'target_page_screenshot.png',
+                'date_before_click_screenshot.png',
+                'date_picker_opened_screenshot.png',
+                'date_start_filled_screenshot.png',
+                'date_end_filled_screenshot.png',
                 'date_selected_screenshot.png',
+                'date_ok_button_not_found_screenshot.png',
+                'date_search_clicked_screenshot.png',
+                'date_search_button_not_found_screenshot.png',
+                'table_screenshot.png',
                 'date_error_screenshot.png'
             ];
             
@@ -1036,6 +1590,46 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     rename($screenshotSrc, $screenshotDst);
                     $this->info("📸 Screenshot saved: {$screenshotDst}");
                 }
+            }
+            
+            // 處理表格資料（如果有）
+            if (isset($result['tableData'])) {
+                $this->info('📊 Processing table data...');
+                $tableData = $result['tableData'];
+                
+                if (isset($tableData['found']) && $tableData['found']) {
+                    $totalRows = $tableData['totalRows'] ?? $tableData['rowCount'] ?? 0;
+                    $totalPages = $tableData['totalPages'] ?? 1;
+                    
+                    $this->info('📋 Total pages: ' . $totalPages);
+                    $this->info('📋 Total rows: ' . $totalRows);
+                    $this->info('📋 Table headers: ' . (count($tableData['headers'] ?? []) . ' columns'));
+                    
+                    // 保存表格資料（包含所有頁面的合併數據）
+                    $tableFileName = "scraped_data/table_data_{$timestamp}.json";
+                    $tableFileData = [
+                        'metadata' => [
+                            'timestamp' => $timestamp,
+                            'url' => $result['targetUrl'] ?? '',
+                            'totalPages' => $totalPages,
+                            'totalRows' => $totalRows,
+                            'headers' => $tableData['headers'] ?? []
+                        ],
+                        'headers' => $tableData['headers'] ?? [],
+                        'totalPages' => $totalPages,
+                        'totalRows' => $totalRows,
+                        'pages' => $tableData['pages'] ?? [],
+                        'data' => $tableData['data'] ?? []
+                    ];
+                    
+                    Storage::put($tableFileName, json_encode($tableFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                    $this->info("✅ Table data saved: {$tableFileName}");
+                    $this->info("📊 Merged data from {$totalPages} pages with {$totalRows} total rows");
+                } else {
+                    $this->warn('⚠️  Table data extraction failed: ' . ($tableData['error'] ?? 'Unknown error'));
+                }
+            } else {
+                $this->warn('⚠️  No table data found in result');
             }
             
             $this->info('End of command at: ' . date('Y-m-d H:i:s'));
