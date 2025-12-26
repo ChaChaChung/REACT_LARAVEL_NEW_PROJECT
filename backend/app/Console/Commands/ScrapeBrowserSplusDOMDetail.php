@@ -670,12 +670,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                     // ========== 步驟 1：爬取第一頁 ==========
                                     const firstPageData = await extractTableData();
                                     
-                                    if (!firstPageData.found) {
-                                        console.log('⚠️  Failed to extract first page data: ' + (firstPageData.error || 'Unknown error'));
-                                    } else {
-                                        console.log('✅ First page extracted: ' + firstPageData.rowCount + ' rows');
-                                    }
-                                    
                                     // ========== 步驟 2：爬取所有其他頁面 ==========
                                     let allPagesData = [];
                                     let allRows = [];
@@ -755,7 +749,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                                 }
                                                 
                                                 currentPageNum = actualPage;
-                                                console.log('📄 Scraping page ' + currentPageNum + ' of ' + paginationInfo.lastPage + '...');
                                                 
                                                 // 提取當前頁的數據
                                                 const pageData = await extractTableData();
@@ -771,24 +764,15 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                                             data: pageData.data
                                                         });
                                                         allRows = allRows.concat(pageData.data);
-                                                        console.log('✅ Page ' + currentPageNum + ' extracted: ' + pageData.rowCount + ' rows');
                                                         consecutiveFailures = 0;
-                                                    } else {
-                                                        console.log('⚠️  Page ' + currentPageNum + ' already scraped, skipping...');
                                                     }
                                                 } else {
-                                                    console.log('⚠️  Failed to extract page data: ' + (pageData.error || 'No data'));
                                                     consecutiveFailures++;
                                                     
                                                     if (consecutiveFailures >= maxFailures) {
                                                         console.log('⚠️  Too many consecutive failures, stopping...');
                                                         break;
                                                     }
-                                                }
-                                                
-                                                // 每爬取 10 頁顯示一次進度
-                                                if (currentPageNum % 10 === 0) {
-                                                    console.log('📊 Progress: ' + currentPageNum + '/' + paginationInfo.lastPage + ' pages, ' + allRows.length + ' total rows');
                                                 }
                                                 
                                                 // 如果已經到達最後一頁，停止
@@ -807,8 +791,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                                 }
                                             }
                                         }
-                                        
-                                        console.log('✅ All pages scraped! Total rows: ' + allRows.length);
                                     }
                                     
                                     // ========== 步驟 3：合併所有數據 ==========
@@ -822,8 +804,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                     };
                                     
                                     if (mergedTableData.found) {
-                                        console.log('✅ Merged table data: ' + mergedTableData.totalRows + ' rows from ' + mergedTableData.totalPages + ' pages');
-                                        
                                         // 保存表格資料到文件
                                         const tableDataFile = {
                                             timestamp: new Date().toISOString(),
@@ -833,7 +813,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                             tableData: mergedTableData
                                         };
                                         fs.writeFileSync('table_data.json', JSON.stringify(tableDataFile, null, 2));
-                                        console.log('💾 Table data saved to: table_data.json');
                                         
                                         // 截圖表格
                                         console.log('📸 Taking screenshot of table...');
