@@ -126,4 +126,117 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 Splus Puppeteer 登入流程程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateSplusPuppeteerLoginCode(string $pageVar = 'page'): string
+    {
+        $domain = env('SPLUS_AGENT_DOMAIN', '');
+        $account = env('SPLUS_AGENT_ACCOUNT', '');
+        $password = env('SPLUS_AGENT_PASSWORD', '');
+        
+        // 轉義 JavaScript 字符串，避免注入問題
+        $domainJs = json_encode($domain);
+        $accountJs = json_encode($account);
+        $passwordJs = json_encode($password);
+
+        return <<<JS
+            console.log('🔐 Starting Splus login process...');
+            
+            // 導航到登入頁面
+            await {$pageVar}.goto($domainJs, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+            });
+            
+            // 等待頁面載入
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 查找並填入帳號欄位
+            const accountInput = await {$pageVar}.waitForSelector('input[id="input-10"]', { timeout: 10000 }).catch(() => null);
+            
+            if (accountInput) {
+                await {$pageVar}.evaluate((account) => {
+                    const input = document.querySelector('input[id="input-10"]');
+                    if (input) {
+                        input.value = '';
+                        input.value = account;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }, $accountJs);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 查找並填入密碼欄位
+            const passwordInput = await {$pageVar}.waitForSelector('input[id="input-13"]', { timeout: 10000 }).catch(() => null);
+            
+            if (passwordInput) {
+                await {$pageVar}.evaluate((password) => {
+                    const input = document.querySelector('input[id="input-13"]');
+                    if (input) {
+                        input.value = '';
+                        input.value = password;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }, $passwordJs);
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 使用 evaluate 查找並點擊登入按鈕
+            const buttonFound = await {$pageVar}.evaluate(() => {
+                // 查找所有可能的按鈕
+                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], a[class*="btn"]'));
+                const loginBtn = buttons.find(btn => {
+                    const text = (btn.textContent || btn.value || btn.innerText || '').trim().toLowerCase();
+                    const className = (btn.className || '').toLowerCase();
+                    const id = (btn.id || '').toLowerCase();
+                    
+                    // 檢查是否包含登入相關的文字
+                    return text.includes('登入') || text.includes('login');
+                });
+                
+                if (loginBtn) {
+                    // 先嘗試點擊
+                    try {
+                        loginBtn.click();
+                        return { found: true, method: 'click' };
+                    } catch (e) {
+                        // 如果點擊失敗，嘗試觸發事件
+                        const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+                        loginBtn.dispatchEvent(event);
+                        return { found: true, method: 'dispatchEvent' };
+                    }
+                }
+                
+                // 如果找不到按鈕，嘗試提交表單
+                const forms = document.querySelectorAll('form');
+                if (forms.length > 0) {
+                    forms[0].submit();
+                    return { found: true, method: 'formSubmit' };
+                }
+                
+                return { found: false };
+            });
+
+            // 等待登入完成（等待頁面導航或 URL 變化）
+            await {$pageVar}.waitForNavigation({ 
+                waitUntil: 'domcontentloaded',
+                timeout: 30000 
+            }).catch(() => {
+                console.log('⚠️  Navigation timeout, waiting 3 seconds...');
+            });
+            
+            // 額外等待確保頁面完全載入
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        JS;
+    }
 }
