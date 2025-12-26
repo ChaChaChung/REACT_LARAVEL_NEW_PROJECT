@@ -284,44 +284,32 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     await new Promise(resolve => setTimeout(resolve, 2000));
 
                     // 解析 date 參數
-                    const dateStartJsValue = $dateStartJs;
-                    const dateEndJsValue = $dateEndJs;
+                    let dateStartParsed = null;
+                    let dateEndParsed = null;
                     
-                    // 直接使用值，因為 PHP 已經將 json_encode 的結果替換為 JavaScript 字符串
-                    let dateStartParsed = (dateStartJsValue !== null && dateStartJsValue !== undefined) ? dateStartJsValue : null;
-                    let dateEndParsed = (dateEndJsValue !== null && dateEndJsValue !== undefined) ? dateEndJsValue : null;
-
+                    try {
+                        if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
+                            dateStartParsed = JSON.parse($dateStartJs);
+                        }
+                        if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
+                            dateEndParsed = JSON.parse($dateEndJs);
+                        }
+                    } catch (e) {
+                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
+                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                    }
+                    
                     // 如果提供了 date_start 和 date_end，處理 Element UI 日期選擇器
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
-                            console.log('📅 Processing date range: ' + dateStartParsed + ' to ' + dateEndParsed);
-                            
-                            // 截圖 1：點擊日期選擇器之前
-                            console.log('📸 Taking screenshot before clicking date picker...');
-                            await page.screenshot({ 
-                                path: 'date_before_click_screenshot.png',
-                                fullPage: false
-                            });
-                            console.log('✅ Screenshot saved: date_before_click_screenshot.png');
-                            
                             // 等待日期選擇器輸入框出現
                             await page.waitForSelector('input.el-range-input[placeholder="Start Time"]', { timeout: 10000 });
-                            console.log('✅ Found date range input');
                             
                             // 點擊打開日期選擇器
                             await page.click('input.el-range-input[placeholder="Start Time"]');
-                            console.log('✅ Clicked date range input to open picker');
                             
                             // 等待日期選擇面板出現
                             await new Promise(resolve => setTimeout(resolve, 1500));
-                            
-                            // 截圖 2：日期面板打開後
-                            console.log('📸 Taking screenshot after date picker opened...');
-                            await page.screenshot({ 
-                                path: 'date_picker_opened_screenshot.png',
-                                fullPage: false
-                            });
-                            console.log('✅ Screenshot saved: date_picker_opened_screenshot.png');
                             
                             // 填入開始日期
                             await page.waitForSelector('input.el-input__inner[placeholder="Start Date"]', { timeout: 10000 });
@@ -331,7 +319,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                             if (startDateInput) {
                                 await startDateInput.click({ clickCount: 3 }); // 三擊選中所有文字
                                 await startDateInput.type(dateStartParsed, { delay: 100 }); // 使用 type 方法，更可靠
-                                console.log('✅ Filled start date: ' + dateStartParsed);
                                 
                                 // 觸發事件確保 Element UI 識別輸入
                                 await page.evaluate((dateStartValue) => {
@@ -347,14 +334,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                             // 等待一下確保輸入完成
                             await new Promise(resolve => setTimeout(resolve, 800));
                             
-                            // 截圖 3：填入開始日期後
-                            console.log('📸 Taking screenshot after filling start date...');
-                            await page.screenshot({ 
-                                path: 'date_start_filled_screenshot.png',
-                                fullPage: false
-                            });
-                            console.log('✅ Screenshot saved: date_start_filled_screenshot.png');
-                            
                             // 填入結束日期
                             await page.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 10000 });
                             
@@ -363,7 +342,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                             if (endDateInput) {
                                 await endDateInput.click({ clickCount: 3 }); // 三擊選中所有文字
                                 await endDateInput.type(dateEndParsed, { delay: 100 }); // 使用 type 方法，更可靠
-                                console.log('✅ Filled end date: ' + dateEndParsed);
                                 
                                 // 觸發事件確保 Element UI 識別輸入
                                 await page.evaluate((dateEndValue) => {
@@ -416,25 +394,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                 };
                             }, dateStartParsed, dateEndParsed);
                             
-                            if (dateValues.startWasFixed) {
-                                console.log('⚠️  Start date was lost, re-filled: ' + dateStartParsed);
-                            }
-                            if (dateValues.endWasFixed) {
-                                console.log('⚠️  End date was lost, re-filled: ' + dateEndParsed);
-                            }
-                            
-                            console.log('📋 Final date values - Start: ' + dateValues.startValue + ', End: ' + dateValues.endValue);
-                            
                             // 等待一下確保修正完成
                             await new Promise(resolve => setTimeout(resolve, 500));
-                            
-                            // 截圖 4：填入結束日期後
-                            console.log('📸 Taking screenshot after filling end date...');
-                            await page.screenshot({ 
-                                path: 'date_end_filled_screenshot.png',
-                                fullPage: false
-                            });
-                            console.log('✅ Screenshot saved: date_end_filled_screenshot.png');
                             
                             // 查找並點擊 OK 按鈕
                             const okButton = await page.evaluate(() => {
@@ -462,21 +423,11 @@ class ScrapeBrowserSplusDOMDetail extends Command
                             // 判斷是否有找到 OK 按鈕
                             if (okButton.found) {
                                 await page.click(okButton.selector, { timeout: 5000 });
-                                console.log('✅ Clicked OK button');
                                 
                                 // 等待日期選擇器關閉
                                 await new Promise(resolve => setTimeout(resolve, 1500));
                                 
-                                // 截圖 5：點擊 OK 按鈕後
-                                console.log('📸 Taking screenshot after clicking OK button...');
-                                await page.screenshot({ 
-                                    path: 'date_selected_screenshot.png',
-                                    fullPage: false
-                                });
-                                console.log('✅ Screenshot saved: date_selected_screenshot.png');
-                                
                                 // 查找並點擊 Search 按鈕
-                                console.log('🔍 Looking for Search button...');
                                 const searchButton = await page.evaluate(() => {
                                     // 查找包含 "Search" 文本的按鈕
                                     const allButtons = Array.from(document.querySelectorAll('button.default-btn, button.base_button'));
@@ -501,30 +452,18 @@ class ScrapeBrowserSplusDOMDetail extends Command
 
                                 // 判斷是否有找到 Search 按鈕
                                 if (searchButton.found) {
-                                    console.log('✅ Found Search button, clicking...');
                                     await page.click(searchButton.selector, { timeout: 5000 });
-                                    console.log('✅ Clicked Search button');
                                     
                                     // 等待搜索結果載入
                                     await new Promise(resolve => setTimeout(resolve, 3000));
                                     
-                                    // 截圖 6：點擊 Search 按鈕後
-                                    console.log('📸 Taking screenshot after clicking Search button...');
-                                    await page.screenshot({ 
-                                        path: 'date_search_clicked_screenshot.png',
-                                        fullPage: false
-                                    });
-                                    console.log('✅ Screenshot saved: date_search_clicked_screenshot.png');
-                                    
                                     // 等待表格出現
-                                    console.log('🔍 Waiting for table to load...');
                                     await page.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {
                                         console.log('⚠️  Table not found, waiting 2 more seconds...');
                                     });
                                     await new Promise(resolve => setTimeout(resolve, 1000));
                                     
                                     // 提取分頁信息
-                                    console.log('📄 Extracting pagination info...');
                                     const paginationInfo = await page.evaluate(() => {
                                         const pagination = document.querySelector('div.el-pagination');
                                         if (!pagination) {
@@ -576,12 +515,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                             pageNumbers: pageNumbers
                                         };
                                     });
-                                    
-                                    if (!paginationInfo.found) {
-                                        console.log('⚠️  Pagination not found, extracting single page only');
-                                    } else {
-                                        console.log('📊 Pagination info: Total=' + paginationInfo.total + ', Current Page=' + paginationInfo.currentPage + ', Last Page=' + paginationInfo.lastPage);
-                                    }
                                     
                                     // 提取表格資料的函數（可重用）
                                     const extractTableData = async () => {
@@ -735,7 +668,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                     };
                                     
                                     // ========== 步驟 1：爬取第一頁 ==========
-                                    console.log('📄 Step 1: Extracting first page data...');
                                     const firstPageData = await extractTableData();
                                     
                                     if (!firstPageData.found) {
