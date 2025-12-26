@@ -51,23 +51,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
-        // 檢查必要的環境變數
-        if (empty(env('SPLUS_AGENT_DOMAIN'))) {
-            $this->error('❌ SPLUS_AGENT_DOMAIN environment variable is not set');
-            $this->line('Please set SPLUS_AGENT_DOMAIN in your .env file');
-            return 1;
-        }
-        if (empty(env('SPLUS_AGENT_ACCOUNT'))) {
-            $this->error('❌ SPLUS_AGENT_ACCOUNT environment variable is not set');
-            $this->line('Please set SPLUS_AGENT_ACCOUNT in your .env file');
-            return 1;
-        }
-        if (empty(env('SPLUS_AGENT_PASSWORD'))) {
-            $this->error('❌ SPLUS_AGENT_PASSWORD environment variable is not set');
-            $this->line('Please set SPLUS_AGENT_PASSWORD in your .env file');
-            return 1;
-        }
-
         // 檢查 Node.js 是否安裝
         if (!$this->checkNodeJs()) {
             return 1;
@@ -144,13 +127,9 @@ class ScrapeBrowserSplusDOMDetail extends Command
         $this->info('2. Creating browser automation script...');
 
         // 獲取 Splus 登入流程程式碼片段（主頁面用）
-        $loginCodeForPage = $this->generateSplusPuppeteerLoginCode('page');
+        $cookiesCodeForPage = $this->generateSplusPuppeteerLoginCode('page');
         // 獲取認證 cookies 程式碼片段（併發頁面用，登入後可以重用 cookies）
         $cookiesCodeForNewPage = $this->generateSplusPuppeteerLoginCode('newPage');
-
-        // 獲取登入域名（用於結果保存）
-        $loginDomain = env('SPLUS_AGENT_DOMAIN', '');
-        $loginDomainJs = json_encode($loginDomain);
 
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
@@ -280,6 +259,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         }
                     });
 
+                    $cookiesCodeForPage
+
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
                     page.on('console', msg => {
@@ -288,26 +269,11 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         }
                     });
 
-                    // ========== 執行 Splus 登入流程 ==========
-                    $loginCodeForPage
+                    console.log('🌐 Navigating to:', '$url');
                     
-                    // 登入後獲取當前頁面信息
-                    const loginPageInfo = await page.evaluate(() => {
-                        return {
-                            title: document.title,
-                            url: window.location.href
-                        };
-                    });
-                    
-                    console.log('✅ Login process completed!');
-                    console.log('📍 Current URL:', loginPageInfo.url);
-                    console.log('📄 Page Title:', loginPageInfo.title);
-                    
-                    // 獲取登入後的 cookies
-                    const loginCookies = await page.cookies();
-                    console.log('🍪 Login cookies obtained:', loginCookies.length);
-
-                    // 導航到目標 URL
+                    // 導航到目標頁面
+                    // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
+                    // timeout: 30000 設定 30 秒超時
                     console.log('🌐 Navigating to target URL:', '$url');
                     await page.goto('$url', {
                         waitUntil: 'domcontentloaded',
@@ -316,42 +282,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     
                     // 等待頁面載入
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                    // 獲取目標頁面信息
-                    const targetPageInfo = await page.evaluate(() => {
-                        return {
-                            title: document.title,
-                            url: window.location.href
-                        };
-                    });
-                    
-                    console.log('✅ Navigated to target page!');
-                    console.log('📍 Target URL:', targetPageInfo.url);
-                    console.log('📄 Page Title:', targetPageInfo.title);
-                    
-                    // 截圖（目標頁面）
-                    console.log('📸 Taking screenshot of target page...');
-                    await page.screenshot({ 
-                        path: 'target_page_screenshot.png',
-                        fullPage: false
-                    });
-                    console.log('✅ Screenshot saved: target_page_screenshot.png');
-
-                    // 構建登入結果（在日期處理之前創建，以便可以添加表格資料）
-                    const loginResult = {
-                        timestamp: new Date().toISOString(),
-                        loginUrl: $loginDomainJs,
-                        targetUrl: '$url',
-                        success: true,
-                        loginPageInfo: loginPageInfo,
-                        targetPageInfo: targetPageInfo,
-                        cookiesCount: loginCookies.length,
-                        cookies: loginCookies
-                    };
 
                     // 解析 date 參數
-                    // 先將 PHP 替換的值存儲到 JavaScript 變量中
-                    // $dateStartJs 在 heredoc 中會被替換為實際值（可能是 null 或 "2025-12-20"）
                     const dateStartJsValue = $dateStartJs;
                     const dateEndJsValue = $dateEndJs;
                     
@@ -960,12 +892,16 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                     if (mergedTableData.found) {
                                         console.log('✅ Merged table data: ' + mergedTableData.totalRows + ' rows from ' + mergedTableData.totalPages + ' pages');
                                         
-                                        // 將表格資料添加到登入結果中
-                                        loginResult.tableData = mergedTableData;
-                                        
-                                        // 重新保存登入結果（包含表格資料）
-                                        fs.writeFileSync('login_result.json', JSON.stringify(loginResult, null, 2));
-                                        console.log('💾 Login result updated with all table data');
+                                        // 保存表格資料到文件
+                                        const tableDataFile = {
+                                            timestamp: new Date().toISOString(),
+                                            url: '$url',
+                                            dateStart: dateStartParsed,
+                                            dateEnd: dateEndParsed,
+                                            tableData: mergedTableData
+                                        };
+                                        fs.writeFileSync('table_data.json', JSON.stringify(tableDataFile, null, 2));
+                                        console.log('💾 Table data saved to: table_data.json');
                                         
                                         // 截圖表格
                                         console.log('📸 Taking screenshot of table...');
@@ -974,8 +910,12 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                             fullPage: false
                                         });
                                         console.log('✅ Screenshot saved: table_screenshot.png');
+                                        
+                                        // 返回表格資料
+                                        return tableDataFile;
                                     } else {
                                         console.log('⚠️  Failed to merge table data');
+                                        return { success: false, error: 'Failed to merge table data' };
                                     }
                                 } else {
                                     console.log('⚠️  Search button not found');
@@ -1004,12 +944,13 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         }
                     }
 
-                    // 將登入結果保存為 JSON 文件（可能已包含表格資料）
-                    fs.writeFileSync('login_result.json', JSON.stringify(loginResult, null, 2));
-                    console.log('💾 Login result saved to: login_result.json');
-                    
-                    // 登入完成，直接返回結果，不繼續爬取表格
-                    return loginResult;
+                    // 如果沒有表格資料，返回簡單的成功標誌
+                    return {
+                        success: true,
+                        timestamp: new Date().toISOString(),
+                        url: '$url',
+                        message: 'Login and navigation completed, but no table data found'
+                    };
 
                     // 導航到目標頁面
                     // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
@@ -1336,10 +1277,7 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                 }
                             });
                             
-                            // 從主頁面複製登入後的 cookies 到新頁面
-                            if (loginCookies && loginCookies.length > 0) {
-                                await newPage.setCookie(...loginCookies);
-                            }
+                            $cookiesCodeForNewPage
                             
                             // 導航到頁面
                             await newPage.goto(pageInfo.url, {
@@ -1524,12 +1462,17 @@ class ScrapeBrowserSplusDOMDetail extends Command
             return null;
         }
 
-        // 讀取腳本生成的結果文件（優先讀取登入結果，如果沒有則讀取爬取結果）
+        // 讀取腳本生成的結果文件（優先讀取表格資料，如果沒有則讀取其他結果）
+        $tableDataFile = $workingDir . '/table_data.json';
         $loginResultFile = $workingDir . '/login_result.json';
         $scrapedResultFile = $workingDir . '/scraped_result.json';
 
-        if (file_exists($loginResultFile)) {
-            // 讀取並解析登入結果 JSON 文件
+        if (file_exists($tableDataFile)) {
+            // 讀取並解析表格資料 JSON 文件
+            $content = file_get_contents($tableDataFile);
+            return json_decode($content, true);
+        } elseif (file_exists($loginResultFile)) {
+            // 讀取並解析登入結果 JSON 文件（向後兼容）
             $content = file_get_contents($loginResultFile);
             return json_decode($content, true);
         } elseif (file_exists($scrapedResultFile)) {
@@ -1550,17 +1493,85 @@ class ScrapeBrowserSplusDOMDetail extends Command
     {
         $this->info('4. Processing scraped data...');
 
-        // 檢查是否為登入結果（只有登入，沒有爬取表格）
+        // 檢查是否為表格資料結果（新格式）
+        if (isset($result['tableData'])) {
+            $this->info('✅ Table data extraction completed successfully!');
+            $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
+            if (isset($result['dateStart']) && isset($result['dateEnd'])) {
+                $this->info('📅 Date Range: ' . $result['dateStart'] . ' to ' . $result['dateEnd']);
+            }
+            
+            // 處理表格資料
+            $tableData = $result['tableData'];
+            
+            if (isset($tableData['found']) && $tableData['found']) {
+                $totalRows = $tableData['totalRows'] ?? $tableData['rowCount'] ?? 0;
+                $totalPages = $tableData['totalPages'] ?? 1;
+                
+                $this->info('📋 Total pages: ' . $totalPages);
+                $this->info('📋 Total rows: ' . $totalRows);
+                $this->info('📋 Table headers: ' . (count($tableData['headers'] ?? []) . ' columns'));
+                
+                // 保存表格資料
+                $timestamp = date('Y-m-d_H-i-s');
+                $tableFileName = "scraped_data/table_data_{$timestamp}.json";
+                $tableFileData = [
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'url' => $result['url'] ?? '',
+                        'dateStart' => $result['dateStart'] ?? null,
+                        'dateEnd' => $result['dateEnd'] ?? null,
+                        'totalPages' => $totalPages,
+                        'totalRows' => $totalRows,
+                        'headers' => $tableData['headers'] ?? []
+                    ],
+                    'headers' => $tableData['headers'] ?? [],
+                    'totalPages' => $totalPages,
+                    'totalRows' => $totalRows,
+                    'pages' => $tableData['pages'] ?? [],
+                    'data' => $tableData['data'] ?? []
+                ];
+                
+                Storage::put($tableFileName, json_encode($tableFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("✅ Table data saved: {$tableFileName}");
+                $this->info("📊 Merged data from {$totalPages} pages with {$totalRows} total rows");
+            } else {
+                $this->warn('⚠️  Table data extraction failed: ' . ($tableData['error'] ?? 'Unknown error'));
+            }
+            
+            // 處理截圖
+            $timestamp = date('Y-m-d_H-i-s');
+            $screenshots = [
+                'target_page_screenshot.png',
+                'date_before_click_screenshot.png',
+                'date_picker_opened_screenshot.png',
+                'date_start_filled_screenshot.png',
+                'date_end_filled_screenshot.png',
+                'date_selected_screenshot.png',
+                'date_search_clicked_screenshot.png',
+                'table_screenshot.png'
+            ];
+            
+            foreach ($screenshots as $screenshot) {
+                $screenshotSrc = storage_path('app/temp/' . $screenshot);
+                if (file_exists($screenshotSrc)) {
+                    $screenshotDst = storage_path("app/scraped_data/{$screenshot}_{$timestamp}.png");
+                    rename($screenshotSrc, $screenshotDst);
+                    $this->info("📸 Screenshot saved: {$screenshotDst}");
+                }
+            }
+            
+            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+            $this->info("✅ Data processing completed!");
+            return;
+        }
+        
+        // 檢查是否為登入結果（向後兼容，舊格式）
         if (isset($result['loginUrl']) && !isset($result['domData'])) {
             $this->info('✅ Login process completed successfully!');
             $this->info('📍 Login URL: ' . ($result['loginUrl'] ?? 'N/A'));
             if (isset($result['loginPageInfo'])) {
                 $this->info('📄 Login Page: ' . ($result['loginPageInfo']['url'] ?? 'N/A'));
-            }
-            if (isset($result['targetPageInfo'])) {
-                $this->info('🌐 Target URL: ' . ($result['targetUrl'] ?? 'N/A'));
-                $this->info('📄 Target Page: ' . ($result['targetPageInfo']['url'] ?? 'N/A'));
-                $this->info('📄 Target Page Title: ' . ($result['targetPageInfo']['title'] ?? 'N/A'));
             }
             $this->info('🍪 Cookies obtained: ' . ($result['cookiesCount'] ?? 0));
             
