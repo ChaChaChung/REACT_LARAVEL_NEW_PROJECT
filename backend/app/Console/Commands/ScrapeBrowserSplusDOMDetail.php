@@ -337,6 +337,115 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     });
                     console.log('✅ Screenshot saved: target_page_screenshot.png');
 
+                    // 解析 date 參數
+                    // 先將 PHP 替換的值存儲到 JavaScript 變量中
+                    // $dateStartJs 在 heredoc 中會被替換為實際值（可能是 null 或 "2025-12-20"）
+                    const dateStartJsValue = $dateStartJs;
+                    const dateEndJsValue = $dateEndJs;
+                    
+                    // 直接使用值，因為 PHP 已經將 json_encode 的結果替換為 JavaScript 字符串
+                    let dateStartParsed = (dateStartJsValue !== null && dateStartJsValue !== undefined) ? dateStartJsValue : null;
+                    let dateEndParsed = (dateEndJsValue !== null && dateEndJsValue !== undefined) ? dateEndJsValue : null;
+
+                    // 如果提供了 date_start 和 date_end，處理 Element UI 日期選擇器
+                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                        try {
+                            console.log('📅 Processing date range: ' + dateStartParsed + ' to ' + dateEndParsed);
+                            
+                            // 等待日期選擇器輸入框出現
+                            await page.waitForSelector('input.el-range-input[placeholder="Start Time"]', { timeout: 10000 });
+                            console.log('✅ Found date range input');
+                            
+                            // 點擊打開日期選擇器
+                            await page.click('input.el-range-input[placeholder="Start Time"]');
+                            console.log('✅ Clicked date range input to open picker');
+                            
+                            // 等待日期選擇面板出現
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            
+                            // 填入開始日期
+                            await page.waitForSelector('input.el-input__inner[placeholder="Start Date"]', { timeout: 10000 });
+                            await page.evaluate((dateStartValue) => {
+                                const startDateInput = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
+                                if (startDateInput) {
+                                    startDateInput.value = '';
+                                    startDateInput.value = dateStartValue;
+                                    startDateInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    startDateInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }, dateStartParsed);
+                            console.log('✅ Filled start date: ' + dateStartParsed);
+                            
+                            // 等待一下確保輸入完成
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // 填入結束日期
+                            await page.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 10000 });
+                            await page.evaluate((dateEndValue) => {
+                                const endDateInput = document.querySelector('input.el-input__inner[placeholder="End Date"]');
+                                if (endDateInput) {
+                                    endDateInput.value = '';
+                                    endDateInput.value = dateEndValue;
+                                    endDateInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    endDateInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }, dateEndParsed);
+                            console.log('✅ Filled end date: ' + dateEndParsed);
+                            
+                            // 等待一下確保輸入完成
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            // 查找並點擊 OK 按鈕
+                            const okButton = await page.evaluate(() => {
+                                // 查找包含 "OK" 文本的按鈕
+                                const allButtons = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn'));
+                                let okBtn = allButtons.find(btn => {
+                                    const span = btn.querySelector('span');
+                                    return span && span.textContent.trim() === 'OK';
+                                });
+
+                                // 判斷 okBtn 是否存在
+                                if (okBtn) {
+                                    const uniqueId = 'ok-btn-' + Date.now();
+                                    okBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                    return {
+                                        found: true,
+                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                        text: okBtn.querySelector('span').textContent.trim()
+                                    };
+                                }
+                                
+                                return { found: false };
+                            });
+
+                            // 判斷是否有找到 OK 按鈕
+                            if (okButton.found) {
+                                await page.click(okButton.selector, { timeout: 5000 });
+                                console.log('✅ Clicked OK button');
+                                
+                                // 等待日期選擇器關閉
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                // 截圖（日期選擇後）
+                                console.log('📸 Taking screenshot after date selection...');
+                                await page.screenshot({ 
+                                    path: 'date_selected_screenshot.png',
+                                    fullPage: false
+                                });
+                                console.log('✅ Screenshot saved: date_selected_screenshot.png');
+                            } else {
+                                console.log('⚠️  OK button not found');
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error processing date range: ' + e.message);
+                            // 即使出錯也截圖
+                            await page.screenshot({ 
+                                path: 'date_error_screenshot.png',
+                                fullPage: false
+                            });
+                        }
+                    }
+
                     // 構建登入結果
                     const loginResult = {
                         timestamp: new Date().toISOString(),
@@ -370,24 +479,19 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     });
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
-                    // 解析 date
-                    let dateStartParsed = null;
-                    let dateEndParsed = null;
+                    // 解析 date（此處代碼在 return 之後，不會執行，但為了語法正確性使用不同的變量名）
+                    // 先將 PHP 替換的值存儲到 JavaScript 變量中
+                    // $dateStartJs 在 heredoc 中會被替換為實際值（可能是 null 或 "2025-12-20"）
+                    const dateStartJsValue2 = $dateStartJs;
+                    const dateEndJsValue2 = $dateEndJs;
                     
-                    try {
-                        if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
-                            dateStartParsed = JSON.parse($dateStartJs);
-                        }
-                        if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
-                            dateEndParsed = JSON.parse($dateEndJs);
-                        }
-                    } catch (e) {
-                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
-                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
-                    }
+                    // 直接使用值，因為 PHP 已經將 json_encode 的結果替換為 JavaScript 字符串
+                    // 注意：使用不同的變量名避免與前面的 dateStartParsed 衝突
+                    let dateStartParsed2 = (dateStartJsValue2 !== null && dateStartJsValue2 !== undefined) ? dateStartJsValue2 : null;
+                    let dateEndParsed2 = (dateEndJsValue2 !== null && dateEndJsValue2 !== undefined) ? dateEndJsValue2 : null;
 
                     // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
-                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                    if ((dateStartParsed2 && dateStartParsed2 !== null && dateStartParsed2 !== '') && (dateEndParsed2 && dateEndParsed2 !== null && dateEndParsed2 !== '')) {
                         try {
                             // 查找 input#find1 和 input#find2 欄位
                             await page.waitForSelector('#find1', { timeout: 10000 });
@@ -411,7 +515,7 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                     input2.dispatchEvent(new Event('input', { bubbles: true }));
                                     input2.dispatchEvent(new Event('change', { bubbles: true }));
                                 }
-                            }, dateStartParsed, dateEndParsed);
+                            }, dateStartParsed2, dateEndParsed2);
 
                             // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
@@ -762,8 +866,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
-                            date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_start: dateStartParsed2,
+                            date_end: dateEndParsed2
                         },
                         totalPages: allPagesData.length,
                         pages: allPagesData,
@@ -789,8 +893,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         timestamp: new Date().toISOString(),
                         url: '$url',
                         queryParams: {
-                            date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_start: dateStartParsed2,
+                            date_end: dateEndParsed2
                         },
                         domData: domData,
                         success: true
@@ -920,7 +1024,9 @@ class ScrapeBrowserSplusDOMDetail extends Command
                 'login_form_screenshot.png',
                 'login_after_screenshot.png',
                 'login_error_screenshot.png',
-                'target_page_screenshot.png'
+                'target_page_screenshot.png',
+                'date_selected_screenshot.png',
+                'date_error_screenshot.png'
             ];
             
             foreach ($screenshots as $screenshot) {
