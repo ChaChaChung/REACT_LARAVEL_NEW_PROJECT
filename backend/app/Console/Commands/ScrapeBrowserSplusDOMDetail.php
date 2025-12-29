@@ -261,6 +261,34 @@ class ScrapeBrowserSplusDOMDetail extends Command
 
                     $cookiesCodeForPage
 
+                    // 保存登入資訊到 LocalStorage（用於併發爬取時恢復登入狀態）
+                    console.log('💾 Saving login information from LocalStorage...');
+                    const savedLocalStorage = await page.evaluate(() => {
+                        const storage = {};
+                        for (let i = 0; i < window.localStorage.length; i++) {
+                            const key = window.localStorage.key(i);
+                            storage[key] = window.localStorage.getItem(key);
+                        }
+                        return storage;
+                    });
+                    console.log('✅ Login information saved (' + Object.keys(savedLocalStorage).length + ' items)');
+                    
+                    /**
+                     * 恢復 LocalStorage 到指定頁面
+                     * @param {Page} targetPage - 目標頁面對象
+                     * @param {Object} storageData - 要恢復的 LocalStorage 數據
+                     */
+                    async function restoreLocalStorage(targetPage, storageData) {
+                        await targetPage.evaluate((data) => {
+                            // 清空現有的 LocalStorage
+                            window.localStorage.clear();
+                            // 恢復保存的數據
+                            Object.keys(data).forEach(key => {
+                                window.localStorage.setItem(key, data[key]);
+                            });
+                        }, storageData);
+                    }
+                    
                     // 監聽瀏覽器控制台的錯誤訊息
                     // 這有助於調試頁面載入問題
                     page.on('console', msg => {
@@ -685,113 +713,399 @@ class ScrapeBrowserSplusDOMDetail extends Command
                                         allRows = allRows.concat(firstPageData.data);
                                     }
                                     
-                                    // 如果有分頁，爬取其他頁面
+                                    // 如果有分頁，使用併發爬取其他頁面
                                     if (paginationInfo.found && paginationInfo.lastPage > 1) {
-                                        console.log('📄 Step 2: Starting to scrape pages 2 to ' + paginationInfo.lastPage + '...');
+                                        console.log('📄 Step 2: Starting concurrent scraping for pages 2 to ' + paginationInfo.lastPage + '...');
                                         
-                                        // 使用"下一頁"按鈕逐頁爬取（更可靠）
-                                        let currentPageNum = 1;
-                                        let consecutiveFailures = 0;
-                                        const maxFailures = 3;
+                                        // 創建要爬取的頁面列表
+                                        const pagesToScrape = [];
+                                        for (let i = 2; i <= paginationInfo.lastPage; i++) {
+                                            pagesToScrape.push(i);
+                                        }
                                         
-                                        while (currentPageNum < paginationInfo.lastPage) {
+                                        /**
+                                         * 併發爬取單個頁面的函數
+                                         * @param {Number} pageNum - 要爬取的頁碼
+                                         * @param {Number} index - 索引（用於日誌）
+                                         */
+                                        async function scrapePageConcurrently(pageNum, index) {
+                                            const newPage = await browser.newPage();
+                                            
                                             try {
-                                                // 檢查是否還有下一頁
-                                                const hasNext = await page.evaluate(() => {
-                                                    const pagination = document.querySelector('div.el-pagination');
-                                                    if (!pagination) return false;
-                                                    const nextButton = pagination.querySelector('button.btn-next');
-                                                    return nextButton && !nextButton.disabled;
+                                                // 設定視窗大小
+                                                await newPage.setViewport({ width: 1920, height: 1080 });
+                                                
+                                                // 設定 User Agent
+                                                await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                                                
+                                                // 攔截並阻止不必要的資源載入
+                                                await newPage.setRequestInterception(true);
+                                                newPage.on('request', (req) => {
+                                                    const resourceType = req.resourceType();
+                                                    if (['image', 'font', 'media'].includes(resourceType)) {
+                                                        req.abort();
+                                                    } else {
+                                                        req.continue();
+                                                    }
                                                 });
                                                 
-                                                if (!hasNext) {
-                                                    console.log('✅ No more pages available, stopping...');
-                                                    break;
+                                                // 導航到目標 URL
+                                                await newPage.goto('$url', {
+                                                    waitUntil: 'domcontentloaded',
+                                                    timeout: 30000
+                                                });
+                                                
+                                                // 等待頁面載入
+                                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                                
+                                                // 恢復 LocalStorage（恢復登入狀態）
+                                                await restoreLocalStorage(newPage, savedLocalStorage);
+                                                
+                                                // 等待一下確保 LocalStorage 已恢復
+                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                                
+                                                // 重新載入頁面以應用 LocalStorage
+                                                await newPage.reload({ waitUntil: 'domcontentloaded' });
+                                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                                
+                                                // 設置日期範圍
+                                                if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                                                    try {
+                                                        // 等待日期選擇器輸入框出現
+                                                        await newPage.waitForSelector('input.el-range-input[placeholder="Start Time"]', { timeout: 10000 });
+                                                        
+                                                        // 點擊打開日期選擇器
+                                                        await newPage.click('input.el-range-input[placeholder="Start Time"]');
+                                                        await new Promise(resolve => setTimeout(resolve, 1500));
+                                                        
+                                                        // 填入開始日期
+                                                        await newPage.waitForSelector('input.el-input__inner[placeholder="Start Date"]', { timeout: 10000 });
+                                                        const startDateInput = await newPage.$('input.el-input__inner[placeholder="Start Date"]');
+                                                        if (startDateInput) {
+                                                            await startDateInput.click({ clickCount: 3 });
+                                                            await startDateInput.type(dateStartParsed, { delay: 100 });
+                                                            await newPage.evaluate((dateStartValue) => {
+                                                                const input = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
+                                                                if (input) {
+                                                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                                }
+                                                            }, dateStartParsed);
+                                                        }
+                                                        await new Promise(resolve => setTimeout(resolve, 800));
+                                                        
+                                                        // 填入結束日期
+                                                        await newPage.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 10000 });
+                                                        const endDateInput = await newPage.$('input.el-input__inner[placeholder="End Date"]');
+                                                        if (endDateInput) {
+                                                            await endDateInput.click({ clickCount: 3 });
+                                                            await endDateInput.type(dateEndParsed, { delay: 100 });
+                                                            await newPage.evaluate((dateEndValue) => {
+                                                                const input = document.querySelector('input.el-input__inner[placeholder="End Date"]');
+                                                                if (input) {
+                                                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                                }
+                                                            }, dateEndParsed);
+                                                        }
+                                                        await new Promise(resolve => setTimeout(resolve, 800));
+                                                        
+                                                        // 同時設置兩個日期值
+                                                        await newPage.evaluate((dateStartValue, dateEndValue) => {
+                                                            const startInput = document.querySelector('input.el-input__inner[placeholder="Start Date"]');
+                                                            const endInput = document.querySelector('input.el-input__inner[placeholder="End Date"]');
+                                                            if (startInput) {
+                                                                startInput.value = dateStartValue;
+                                                                startInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                startInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                startInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                            }
+                                                            if (endInput) {
+                                                                endInput.value = dateEndValue;
+                                                                endInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                endInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                endInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                            }
+                                                        }, dateStartParsed, dateEndParsed);
+                                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                                        
+                                                        // 點擊 OK 按鈕
+                                                        const okButton = await newPage.evaluate(() => {
+                                                            const allButtons = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn'));
+                                                            let okBtn = allButtons.find(btn => {
+                                                                const span = btn.querySelector('span');
+                                                                return span && span.textContent.trim() === 'OK';
+                                                            });
+                                                            if (okBtn) {
+                                                                const uniqueId = 'ok-btn-' + Date.now();
+                                                                okBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                                                return {
+                                                                    found: true,
+                                                                    selector: '[data-puppeteer-id="' + uniqueId + '"]'
+                                                                };
+                                                            }
+                                                            return { found: false };
+                                                        });
+                                                        
+                                                        if (okButton.found) {
+                                                            await newPage.click(okButton.selector, { timeout: 5000 });
+                                                            await new Promise(resolve => setTimeout(resolve, 1500));
+                                                            
+                                                            // 點擊 Search 按鈕
+                                                            const searchButton = await newPage.evaluate(() => {
+                                                                const allButtons = Array.from(document.querySelectorAll('button.default-btn, button.base_button'));
+                                                                let searchBtn = allButtons.find(btn => {
+                                                                    const span = btn.querySelector('span.v-btn__content');
+                                                                    return span && span.textContent.trim() === 'Search';
+                                                                });
+                                                                if (searchBtn) {
+                                                                    const uniqueId = 'search-btn-' + Date.now();
+                                                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                                                    return {
+                                                                        found: true,
+                                                                        selector: '[data-puppeteer-id="' + uniqueId + '"]'
+                                                                    };
+                                                                }
+                                                                return { found: false };
+                                                            });
+                                                            
+                                                            if (searchButton.found) {
+                                                                await newPage.click(searchButton.selector, { timeout: 5000 });
+                                                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                                                await newPage.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {});
+                                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                            }
+                                                        }
+                                                    } catch (e) {
+                                                        console.log('⚠️  [Page ' + pageNum + '] Error setting date range: ' + e.message);
+                                                    }
                                                 }
                                                 
-                                                // 點擊"下一頁"按鈕（先導航，再提取）
-                                                const nextClicked = await page.evaluate(() => {
+                                                // 跳轉到指定頁碼
+                                                const pageJumped = await newPage.evaluate((targetPage) => {
                                                     const pagination = document.querySelector('div.el-pagination');
-                                                    if (!pagination) return { success: false };
+                                                    if (!pagination) return { success: false, error: 'Pagination not found' };
                                                     
-                                                    const nextButton = pagination.querySelector('button.btn-next:not([disabled])');
-                                                    if (nextButton) {
-                                                        nextButton.click();
+                                                    // 查找指定頁碼的按鈕
+                                                    const pageButtons = pagination.querySelectorAll('li.number');
+                                                    let targetButton = null;
+                                                    
+                                                    for (let btn of pageButtons) {
+                                                        if (!btn.classList.contains('more')) {
+                                                            const pageNum = parseInt(btn.textContent.trim());
+                                                            if (pageNum === targetPage) {
+                                                                targetButton = btn;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                    
+                                                    if (targetButton) {
+                                                        targetButton.click();
                                                         return { success: true };
                                                     }
                                                     
-                                                    return { success: false, error: 'Next button not available' };
-                                                });
+                                                    // 如果找不到按鈕，嘗試使用輸入框跳轉
+                                                    const jumpInput = pagination.querySelector('input.el-pagination__editor');
+                                                    if (jumpInput) {
+                                                        jumpInput.value = targetPage;
+                                                        jumpInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                                        jumpInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                                        jumpInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                                                        jumpInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+                                                        return { success: true, method: 'input' };
+                                                    }
+                                                    
+                                                    return { success: false, error: 'Cannot find page ' + targetPage };
+                                                }, pageNum);
                                                 
-                                                if (!nextClicked.success) {
-                                                    console.log('⚠️  Cannot navigate to next page: ' + (nextClicked.error || 'Unknown error'));
-                                                    break;
+                                                if (pageJumped.success) {
+                                                    // 等待頁面載入
+                                                    await new Promise(resolve => setTimeout(resolve, 2500));
+                                                    await newPage.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {});
+                                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                                } else {
+                                                    console.log('⚠️  [Page ' + pageNum + '] Cannot jump to page: ' + (pageJumped.error || 'Unknown error'));
                                                 }
-                                                
-                                                // 等待頁面載入
-                                                await new Promise(resolve => setTimeout(resolve, 2500));
-                                                
-                                                // 等待表格更新
-                                                await page.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {});
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                                
-                                                // 獲取當前頁碼（點擊下一頁後）
-                                                const actualPage = await page.evaluate(() => {
-                                                    const pagination = document.querySelector('div.el-pagination');
-                                                    if (!pagination) return null;
-                                                    const activePage = pagination.querySelector('li.number.active');
-                                                    return activePage ? parseInt(activePage.textContent.trim()) : null;
-                                                });
-                                                
-                                                if (!actualPage || actualPage <= currentPageNum) {
-                                                    // 頁碼沒有改變或減少，可能已經到最後一頁
-                                                    console.log('⚠️  Page number did not increase (current: ' + currentPageNum + ', actual: ' + actualPage + '), may have reached last page');
-                                                    break;
-                                                }
-                                                
-                                                currentPageNum = actualPage;
                                                 
                                                 // 提取當前頁的數據
-                                                const pageData = await extractTableData();
-                                                
-                                                if (pageData.found && pageData.rowCount > 0) {
-                                                    // 檢查是否已經爬取過這一頁
-                                                    const alreadyScraped = allPagesData.some(p => p.pageNumber === currentPageNum);
+                                                const pageData = await newPage.evaluate(() => {
+                                                    const table = document.querySelector('table');
+                                                    if (!table) {
+                                                        return { found: false, error: 'Table not found' };
+                                                    }
                                                     
-                                                    if (!alreadyScraped) {
-                                                        allPagesData.push({
-                                                            pageNumber: currentPageNum,
-                                                            rowCount: pageData.rowCount,
-                                                            data: pageData.data
+                                                    const headers = [];
+                                                    const thead = table.querySelector('thead');
+                                                    if (thead) {
+                                                        const headerRow = thead.querySelector('tr');
+                                                        if (headerRow) {
+                                                            const headerCells = headerRow.querySelectorAll('th');
+                                                            headerCells.forEach(cell => {
+                                                                const span = cell.querySelector('span span');
+                                                                const headerText = span ? span.textContent.trim() : cell.textContent.trim();
+                                                                if (headerText) {
+                                                                    headers.push(headerText);
+                                                                }
+                                                            });
+                                                        }
+                                                    }
+                                                    
+                                                    const tbody = table.querySelector('tbody#ele-table-body');
+                                                    if (!tbody) {
+                                                        return { found: false, error: 'Table body not found' };
+                                                    }
+                                                    
+                                                    const rows = [];
+                                                    const allRows = Array.from(tbody.querySelectorAll('tr'));
+                                                    
+                                                    for (let i = 0; i < allRows.length; i++) {
+                                                        const row = allRows[i];
+                                                        if (row.classList.contains('detail-row')) {
+                                                            continue;
+                                                        }
+                                                        
+                                                        const firstCell = row.querySelector('td');
+                                                        if (firstCell) {
+                                                            const firstCellText = firstCell.textContent.trim();
+                                                            if (firstCellText === 'Subtotal') {
+                                                                continue;
+                                                            }
+                                                        }
+                                                        
+                                                        const cells = row.querySelectorAll('td');
+                                                        const rowData = {};
+                                                        
+                                                        cells.forEach((cell, index) => {
+                                                            const div = cell.querySelector('div.inner-row--1');
+                                                            let cellText = '';
+                                                            
+                                                            if (div) {
+                                                                const innerDiv = div.querySelector('div');
+                                                                if (innerDiv) {
+                                                                    cellText = innerDiv.textContent.trim();
+                                                                } else {
+                                                                    cellText = div.textContent.trim();
+                                                                }
+                                                            } else {
+                                                                cellText = cell.textContent.trim();
+                                                            }
+                                                            
+                                                            if (headers[index]) {
+                                                                let cleanHeader = headers[index]
+                                                                    .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                                    .replace(/^_+|_+$/g, '');
+                                                                
+                                                                if (!cleanHeader) {
+                                                                    cleanHeader = 'column_' + index;
+                                                                }
+                                                                
+                                                                let finalHeader = cleanHeader;
+                                                                let counter = 1;
+                                                                while (rowData.hasOwnProperty(finalHeader)) {
+                                                                    finalHeader = cleanHeader + '_' + counter;
+                                                                    counter++;
+                                                                }
+                                                                
+                                                                rowData[finalHeader] = cellText;
+                                                            } else {
+                                                                rowData['column_' + index] = cellText;
+                                                            }
                                                         });
-                                                        allRows = allRows.concat(pageData.data);
-                                                        consecutiveFailures = 0;
+                                                        
+                                                        if (i + 1 < allRows.length && allRows[i + 1].classList.contains('detail-row')) {
+                                                            const detailRow = allRows[i + 1];
+                                                            const detailGrid = detailRow.querySelector('div.detail-grid');
+                                                            
+                                                            if (detailGrid) {
+                                                                const detailItems = detailGrid.querySelectorAll('div.detail-item');
+                                                                const details = {};
+                                                                
+                                                                detailItems.forEach(item => {
+                                                                    const label = item.querySelector('div.detail-label');
+                                                                    const value = item.querySelector('div.detail-value');
+                                                                    
+                                                                    if (label && value) {
+                                                                        const labelText = label.textContent.trim().replace(':', '');
+                                                                        let cleanLabel = labelText
+                                                                            .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                                            .replace(/^_+|_+$/g, '');
+                                                                        
+                                                                        let valueText = value.textContent.trim();
+                                                                        const button = value.querySelector('button');
+                                                                        if (button) {
+                                                                            valueText = valueText.replace(button.textContent.trim(), '').trim();
+                                                                            details[cleanLabel + '_hasButton'] = true;
+                                                                        }
+                                                                        
+                                                                        details[cleanLabel] = valueText;
+                                                                    }
+                                                                });
+                                                                
+                                                                rowData.details = details;
+                                                            }
+                                                            
+                                                            i++;
+                                                        }
+                                                        
+                                                        if (Object.keys(rowData).length > 0) {
+                                                            rows.push(rowData);
+                                                        }
                                                     }
-                                                } else {
-                                                    consecutiveFailures++;
                                                     
-                                                    if (consecutiveFailures >= maxFailures) {
-                                                        console.log('⚠️  Too many consecutive failures, stopping...');
-                                                        break;
-                                                    }
-                                                }
+                                                    return {
+                                                        found: true,
+                                                        headers: headers,
+                                                        rowCount: rows.length,
+                                                        data: rows
+                                                    };
+                                                });
                                                 
-                                                // 如果已經到達最後一頁，停止
-                                                if (currentPageNum >= paginationInfo.lastPage) {
-                                                    console.log('✅ Reached last page, stopping...');
-                                                    break;
-                                                }
+                                                return {
+                                                    success: true,
+                                                    pageNumber: pageNum,
+                                                    data: pageData
+                                                };
                                                 
                                             } catch (error) {
-                                                console.log('⚠️  Error scraping page: ' + error.message);
-                                                consecutiveFailures++;
-                                                
-                                                if (consecutiveFailures >= maxFailures) {
-                                                    console.log('⚠️  Too many consecutive failures, stopping...');
-                                                    break;
-                                                }
+                                                console.log('⚠️  [Page ' + pageNum + '] Error: ' + error.message);
+                                                return {
+                                                    success: false,
+                                                    pageNumber: pageNum,
+                                                    error: error.message
+                                                };
+                                            } finally {
+                                                await newPage.close();
                                             }
                                         }
+                                        
+                                        // 使用併發控制器執行爬取
+                                        const concurrencyLimit = {$concurrency};
+                                        console.log('🚀 Starting concurrent scraping with limit: ' + concurrencyLimit);
+                                        const concurrentResults = await promiseAllWithLimit(
+                                            pagesToScrape,
+                                            concurrencyLimit,
+                                            scrapePageConcurrently
+                                        );
+                                        
+                                        // 處理併發爬取的結果
+                                        concurrentResults.forEach(result => {
+                                            if (result.success && result.data && result.data.found) {
+                                                allPagesData.push({
+                                                    pageNumber: result.pageNumber,
+                                                    rowCount: result.data.rowCount,
+                                                    data: result.data.data
+                                                });
+                                                allRows = allRows.concat(result.data.data);
+                                                console.log('✅ [Page ' + result.pageNumber + '] Scraped ' + result.data.rowCount + ' rows');
+                                            } else {
+                                                console.log('⚠️  [Page ' + result.pageNumber + '] Failed: ' + (result.error || 'Unknown error'));
+                                            }
+                                        });
+                                        
+                                        console.log('✅ Concurrent scraping completed! Total pages scraped: ' + allPagesData.length);
                                     }
                                     
                                     // ========== 步驟 3：合併所有數據 ==========
