@@ -223,15 +223,7 @@ class ScrapeBrowserSplusDOMDetail extends Command
             // 調試：顯示實際的響應結構（僅第一頁）
             if ($currentPage === 1) {
                 $this->line("   🔍 Debug - Response keys: " . implode(', ', array_keys($data ?? [])));
-                
-                // 顯示所有可能的 meta/pagination 信息
-                if (isset($data['meta'])) {
-                    $this->line("   📋 Meta: " . json_encode($data['meta'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                }
-                if (isset($data['pagination'])) {
-                    $this->line("   📋 Pagination: " . json_encode($data['pagination'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                }
-                
+
                 // 顯示所有頂層字段（排除 data 數組）
                 $metaFields = [];
                 foreach ($data as $key => $value) {
@@ -239,22 +231,13 @@ class ScrapeBrowserSplusDOMDetail extends Command
                         $metaFields[$key] = $value;
                     }
                 }
-                if (!empty($metaFields)) {
-                    $this->line("   📋 All meta fields: " . json_encode($metaFields, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                }
                 
                 // 顯示具體的分頁字段
-                if (isset($data['totalPages'])) {
-                    $this->line("   🔍 totalPages: " . $data['totalPages']);
+                if (isset($data['meta']['totalPages'])) {
+                    $this->line("   🔍 totalPages: " . $data['meta']['totalPages']);
                 }
-                if (isset($data['totalCounts'])) {
-                    $this->line("   🔍 totalCounts: " . $data['totalCounts']);
-                }
-                if (isset($data['currentPage'])) {
-                    $this->line("   🔍 currentPage: " . $data['currentPage']);
-                }
-                if (isset($data['perPage'])) {
-                    $this->line("   🔍 perPage: " . $data['perPage']);
+                if (isset($data['meta']['totalCounts'])) {
+                    $this->line("   🔍 totalCounts: " . $data['meta']['totalCounts']);
                 }
             }
             
@@ -279,11 +262,9 @@ class ScrapeBrowserSplusDOMDetail extends Command
 
             // 獲取分頁信息（支持多種格式）
             if ($totalPages === null) {
-                $totalCounts = $data['totalCounts'] ?? $data['total_counts'] ?? $data['total'] ?? $data['count'] ?? null;
-                $perPage = $data['perPage'] ?? $data['per_page'] ?? 20;
-                
-                // 優先使用 API 返回的 totalPages
-                $apiTotalPages = $data['totalPages'] ?? $data['total_pages'] ?? $data['pagination']['totalPages'] ?? null;
+                $totalCounts = $data['meta']['totalCounts'] ?? null;
+                $perPage = $data['meta']['perPage'] ?? 20;
+                $apiTotalPages = $data['meta']['totalPages'] ?? null;
                 
                 // 如果 API 返回了 totalCounts，根據它計算總頁數（更可靠）
                 if ($totalCounts !== null && $perPage > 0) {
