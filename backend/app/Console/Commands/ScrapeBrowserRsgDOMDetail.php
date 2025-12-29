@@ -2341,18 +2341,150 @@ class ScrapeBrowserRsgDOM extends Command
                         };
                     });
                     
-                    // ========== 步驟 3：串行爬取其他頁面（優化版本）==========
-                    // 註：RSG 使用 DataTables（AJAX 分頁），串行比並發更快！
-                    // 原因：
-                    // 1. AJAX 切換頁面只需 1-2 秒，非常快
-                    // 2. 並發需要為每頁重複前置操作（Currency/slim/account/date），反而更慢
-                    // 3. 串行在已登錄的頁面上操作，避免重複操作
-                    console.log('🚀 Step 3: Scraping remaining pages (optimized)...');
+                    // ========== 步驟 3：提取所有數據（優化版本）==========
+                    // 註：如果數據已經一次性載入到 DOM（客戶端分頁），直接提取所有數據
+                    // 否則才使用翻頁方式逐頁提取
+                    console.log('🚀 Step 3: Extracting all data (optimized)...');
                     
-                    // extractTableData 函數已經在上面定義了，這裡不需要重複定義
+                    // 嘗試一次性獲取所有數據（如果數據已在 DOM 中）
+                    const extractAllDataAtOnce = async () => {
+                        return await page.evaluate((accountNumberProvided, accountNumberValue, dateStartValue, dateEndValue) => {
+                            // 嘗試使用 DataTables API 獲取所有數據
+                            try {
+                                if (typeof window.$ !== 'undefined' && window.$('#DataTables_Table_0').length) {
+                                    const dt = window.$('#DataTables_Table_0').DataTable();
+                                    if (dt) {
+                                        // 獲取所有行（包括隱藏的）
+                                        const allRows = dt.rows({ page: 'all' });
+                                        if (allRows && allRows.count && allRows.count() > 0) {
+                                            console.log('✅ Found all data via DataTables API, total rows: ' + allRows.count());
+                                            // 如果 API 可以獲取所有數據，使用 API
+                                            const rowsData = [];
+                                            allRows.every((row) => {
+                                                const rowNode = row.node();
+                                                if (rowNode) {
+                                                    const cells = Array.from(rowNode.querySelectorAll('td'));
+                                                    const rowData = {};
+                                                    cells.forEach((cell, idx) => {
+                                                        rowData['column_' + idx] = cell ? cell.textContent.trim() : null;
+                                                    });
+                                                    rowsData.push(rowData);
+                                                }
+                                                return true;
+                                            });
+                                            
+                                            if (rowsData.length > 0) {
+                                                return { success: true, data: rowsData, method: 'datatables-api' };
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.log('⚠️  DataTables API method failed: ' + e.message);
+                            }
+                            
+                            // 方法 2: 直接從 DOM 提取所有行（包括隱藏的）
+                            try {
+                                const dataContent = document.querySelector('tbody.dataContent');
+                                if (dataContent) {
+                                    // 獲取所有行（包括隱藏的，因為 DataTables 只是用 CSS 隱藏）
+                                    const allRows = Array.from(dataContent.querySelectorAll('tr'));
+                                    if (allRows.length > 0) {
+                                        console.log('✅ Found all rows in DOM, total rows: ' + allRows.length);
+                                        
+                                        // 獲取表頭
+                                        const thead = document.querySelector('thead');
+                                        let headerRow = [];
+                                        if (thead) {
+                                            const headerRows = Array.from(thead.querySelectorAll('tr'));
+                                            if (headerRows.length > 0) {
+                                                const headerCells = headerRows[0].querySelectorAll('th, td');
+                                                if (headerCells.length > 0) {
+                                                    headerRow = Array.from(headerCells).map((cell, idx) => {
+                                                        const text = cell.textContent.trim();
+                                                        return text || 'column_' + idx;
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 提取所有行的數據
+                                        const rowsData = allRows.map((row, rowIndex) => {
+                                            const cells = Array.from(row.querySelectorAll('td'));
+                                            const rowData = {};
+                                            
+                                            if (headerRow && headerRow.length > 0) {
+                                                headerRow.forEach((header, colIndex) => {
+                                                    let cleanHeader = header
+                                                        .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                        .replace(/^_+|_+$/g, '');
+                                                    if (!cleanHeader) {
+                                                        cleanHeader = 'column_' + colIndex;
+                                                    }
+                                                    let finalHeader = cleanHeader;
+                                                    let counter = 1;
+                                                    while (rowData.hasOwnProperty(finalHeader)) {
+                                                        finalHeader = cleanHeader + '_' + counter;
+                                                        counter++;
+                                                    }
+                                                    rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                                });
+                                            } else {
+                                                cells.forEach((cell, colIndex) => {
+                                                    rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
+                                                });
+                                            }
+                                            
+                                            rowData._rowIndex = rowIndex;
+                                            return rowData;
+                                        });
+                                        
+                                        if (rowsData.length > 0) {
+                                            return { 
+                                                success: true, 
+                                                data: rowsData, 
+                                                headers: headerRow,
+                                                method: 'dom-direct',
+                                                totalRows: rowsData.length
+                                            };
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.log('⚠️  DOM direct method failed: ' + e.message);
+                            }
+                            
+                            return { success: false, reason: 'No data found or method not applicable' };
+                        }, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
+                    };
                     
-                    // 使用 DataTables API 依次翻頁（優先），若失敗再回退 Next 按鈕點擊
-                    const goToNextPage = async () => {
+                    // 先嘗試一次性獲取所有數據
+                    const allDataResult = await extractAllDataAtOnce();
+                    
+                    let allPagesData = [];
+                    
+                    if (allDataResult.success && allDataResult.data && allDataResult.data.length > 0) {
+                        console.log('✅ Successfully extracted all data at once using ' + allDataResult.method + ', total rows: ' + allDataResult.data.length);
+                        
+                        // 使用一次性獲取的數據
+                        allPagesData = [{
+                            pageNumber: 1,
+                            tables: [{
+                                headers: allDataResult.headers || [],
+                                headerCount: allDataResult.headers ? allDataResult.headers.length : 0,
+                                rowCount: allDataResult.data.length,
+                                data: allDataResult.data
+                            }]
+                        }];
+                    } else {
+                        console.log('ℹ️  One-time extraction failed, falling back to pagination method...');
+                        console.log('   Reason: ' + (allDataResult.reason || 'Unknown'));
+                        
+                        // 回退到翻頁方式
+                        // extractTableData 函數已經在上面定義了，這裡不需要重複定義
+                        
+                        // 使用 DataTables API 依次翻頁（優先），若失敗再回退 Next 按鈕點擊
+                        const goToNextPage = async () => {
                         // 先獲取當前頁碼與總頁數
                         const currentInfo = await page.evaluate(() => {
                             let currentPage = 1;
@@ -2444,43 +2576,44 @@ class ScrapeBrowserRsgDOM extends Command
                         return { success: false, hasNext: false, currentPage: newPageNum };
                     };
                     
-                    // 串行爬取所有其他頁面（使用 Next 按鈕）
-                    const otherPagesData = [];
-                    let currentPage = 1;
-                    let maxPagesToScrape = paginationInfo.totalPages;
-                    
-                    // 繼續點擊 Next 按鈕直到沒有下一頁
-                    let scrapeCount = 0;
-                    
-                    while (scrapeCount < maxPagesToScrape) {
-                        const nextResult = await goToNextPage();
+                        // 串行爬取所有其他頁面（使用 Next 按鈕）
+                        const otherPagesData = [];
+                        let currentPage = 1;
+                        let maxPagesToScrape = paginationInfo.totalPages;
                         
-                        if (!nextResult.success || !nextResult.hasNext) {
-                            break;
+                        // 繼續點擊 Next 按鈕直到沒有下一頁
+                        let scrapeCount = 0;
+                        
+                        while (scrapeCount < maxPagesToScrape) {
+                            const nextResult = await goToNextPage();
+                            
+                            if (!nextResult.success || !nextResult.hasNext) {
+                                break;
+                            }
+                            
+                            currentPage = nextResult.currentPage || (currentPage + 1);
+                            scrapeCount++;
+                            
+                            // 提取當前頁面的表格資料
+                            const tableData = await extractTableData(page, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
+                            
+                            if (tableData.tables && tableData.tables.length > 0) {
+                                otherPagesData.push({
+                                    pageNumber: currentPage,
+                                    tables: tableData.tables || []
+                                });
+                            }
                         }
                         
-                        currentPage = nextResult.currentPage || (currentPage + 1);
-                        scrapeCount++;
-                        
-                        // 提取當前頁面的表格資料
-                        const tableData = await extractTableData(page, accountNumberProvided, accountNumberParsed, dateStartParsed, dateEndParsed);
-                        
-                        if (tableData.tables && tableData.tables.length > 0) {
-                            otherPagesData.push({
-                                pageNumber: currentPage,
-                                tables: tableData.tables || []
-                            });
-                        }
+                        // 合併第一頁和其他頁面的資料
+                        allPagesData = [
+                            {
+                                pageNumber: 1,
+                                tables: firstPageData.tables || []
+                            },
+                            ...otherPagesData
+                        ];
                     }
-                    
-                    // 合併第一頁和其他頁面的資料
-                    const allPagesData = [
-                        {
-                            pageNumber: 1,
-                            tables: firstPageData.tables || []
-                        },
-                        ...otherPagesData
-                    ];
                     
                     // 獲取當前頁面信息
                     const currentPageInfo = await page.evaluate(() => {
