@@ -22,9 +22,10 @@ class ScrapeBrowserSplusDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
+     * {account_number?} - 要選擇的帳號（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-splus-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-splus-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -40,17 +41,19 @@ class ScrapeBrowserSplusDOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $date_start = $this->argument('date_start');
-        $date_end = $this->argument('date_end');
+        $dateStart = $this->argument('date_start');
+        $dateEnd = $this->argument('date_end');
+        $accountNumber = $this->argument('account_number');
 
         $this->info('=== Splus API Data Scraper ===');
         $this->info("Target URL: {$url}");
-        $this->info("Date Start: {$date_start}");
-        $this->info("Date End: {$date_end}");
+        $this->info("Date Start: {$dateStart}");
+        $this->info("Date End: {$dateEnd}");
+        $this->info("Account Number: {$accountNumber}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 獲取登入 Token 和 Cookies
-        $auth = $this->getLoginToken();
+        $auth = $this->getLoginToken($accountNumber);
         if (!$auth || !isset($auth['token'])) {
             $this->error('❌ Failed to get login token');
             return 1;
@@ -60,8 +63,8 @@ class ScrapeBrowserSplusDOMDetail extends Command
         $cookies = $auth['cookies'] ?? [];
 
         // 轉換日期為時間戳
-        $startTimestamp = $this->convertDateToTimestamp($date_start);
-        $endTimestamp = $this->convertDateToTimestamp($date_end, true); // end of day
+        $startTimestamp = $this->convertDateToTimestamp($dateStart);
+        $endTimestamp = $this->convertDateToTimestamp($dateEnd, true); // end of day
 
         if (!$startTimestamp || !$endTimestamp) {
             $this->error('❌ Invalid date format. Please use YYYYMMDD format (e.g., 20251226)');
@@ -69,10 +72,10 @@ class ScrapeBrowserSplusDOMDetail extends Command
         }
 
         // 調用 API 獲取所有數據
-        $allData = $this->fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp);
+        $allData = $this->fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp, $accountNumber);
 
         if ($allData) {
-            $this->saveApiData($allData, $date_start, $date_end);
+            $this->saveApiData($allData, $dateStart, $dateEnd);
             $this->info('End of command at: ' . date('Y-m-d H:i:s'));
             $this->info("✅ Data fetching completed!");
             return 0;
@@ -85,7 +88,7 @@ class ScrapeBrowserSplusDOMDetail extends Command
      * 獲取登入 Token 和 Cookies（從瀏覽器）
      * @return array|null 返回 ['token' => string, 'cookies' => array]
      */
-    private function getLoginToken()
+    private function getLoginToken($accountNumber = null)
     {
         // 優先從環境變數獲取（如果已設置）
         $token = env('SPLUS_AGENT_TOKEN');
@@ -168,9 +171,10 @@ class ScrapeBrowserSplusDOMDetail extends Command
      * @param array $cookies Cookies 陣列
      * @param int $startTimestamp 開始時間戳（毫秒）
      * @param int $endTimestamp 結束時間戳（毫秒）
+     * @param string $accountNumber 帳號
      * @return array|null
      */
-    private function fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp)
+    private function fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp, $accountNumber)
     {
         $this->info('2. Fetching data from API...');
         
@@ -204,13 +208,28 @@ class ScrapeBrowserSplusDOMDetail extends Command
                 $client = $client->withHeaders(['X-Auth-Token' => $token]);
             }
             
-            $response = $client->get($baseUrl, [
+            // 構建查詢參數（根據實際 API 格式）
+            $queryParams = [
                 'startTimestamp' => $startTimestamp,
                 'endTimestamp' => $endTimestamp,
                 'currency' => 'ALL',
                 'page' => $currentPage,
-                'perPage' => 20,
-            ]);
+                'limit' => 20, // API 使用 limit 而不是 perPage
+            ];
+            
+            // 如果提供了 accountNumber，添加到查詢參數中（API 使用 username）
+            if ($accountNumber && $accountNumber !== null && $accountNumber !== '') {
+                $queryParams['username'] = $accountNumber;
+            }
+            
+            // 調試：顯示實際的 API URL 和參數（僅第一頁）
+            if ($currentPage === 1) {
+                $fullUrl = $baseUrl . '?' . http_build_query($queryParams);
+                $this->line("   🔍 Debug - API URL: " . $fullUrl);
+                $this->line("   🔍 Debug - Query params: " . json_encode($queryParams, JSON_UNESCAPED_UNICODE));
+            }
+            
+            $response = $client->get($baseUrl, $queryParams);
 
             if (!$response->successful()) {
                 $this->error("❌ API request failed: " . $response->status());
@@ -223,21 +242,31 @@ class ScrapeBrowserSplusDOMDetail extends Command
             // 調試：顯示實際的響應結構（僅第一頁）
             if ($currentPage === 1) {
                 $this->line("   🔍 Debug - Response keys: " . implode(', ', array_keys($data ?? [])));
+                $this->line("   🔍 Debug - Full response (first 2000 chars): " . substr(json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT), 0, 2000));
 
                 // 顯示所有頂層字段（排除 data 數組）
                 $metaFields = [];
                 foreach ($data as $key => $value) {
-                    if ($key !== 'data' && !is_array($value) || (is_array($value) && !isset($value[0]))) {
-                        $metaFields[$key] = $value;
+                    if ($key !== 'data' && (!is_array($value) || (is_array($value) && !isset($value[0])))) {
+                        $metaFields[$key] = is_array($value) ? json_encode($value) : $value;
                     }
+                }
+                if (!empty($metaFields)) {
+                    $this->line("   📋 All meta fields: " . json_encode($metaFields, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
                 }
                 
                 // 顯示具體的分頁字段
                 if (isset($data['meta']['totalPages'])) {
-                    $this->line("   🔍 totalPages: " . $data['meta']['totalPages']);
+                    $this->line("   🔍 meta.totalPages: " . $data['meta']['totalPages']);
                 }
                 if (isset($data['meta']['totalCounts'])) {
-                    $this->line("   🔍 totalCounts: " . $data['meta']['totalCounts']);
+                    $this->line("   🔍 meta.totalCounts: " . $data['meta']['totalCounts']);
+                }
+                if (isset($data['totalPages'])) {
+                    $this->line("   🔍 totalPages: " . $data['totalPages']);
+                }
+                if (isset($data['totalCounts'])) {
+                    $this->line("   🔍 totalCounts: " . $data['totalCounts']);
                 }
             }
             
@@ -245,26 +274,54 @@ class ScrapeBrowserSplusDOMDetail extends Command
             $records = null;
             if (isset($data['data']) && is_array($data['data'])) {
                 $records = $data['data'];
+                if ($currentPage === 1) {
+                    $this->line("   ✅ Found data in 'data' field, count: " . count($records));
+                }
             } elseif (isset($data['results']) && is_array($data['results'])) {
                 $records = $data['results'];
+                if ($currentPage === 1) {
+                    $this->line("   ✅ Found data in 'results' field, count: " . count($records));
+                }
             } elseif (isset($data['items']) && is_array($data['items'])) {
                 $records = $data['items'];
-            } elseif (is_array($data) && isset($data[0]) && !isset($data['totalPages'])) {
+                if ($currentPage === 1) {
+                    $this->line("   ✅ Found data in 'items' field, count: " . count($records));
+                }
+            } elseif (is_array($data) && isset($data[0]) && !isset($data['totalPages']) && !isset($data['meta'])) {
                 // 如果直接是數組且沒有分頁信息
                 $records = $data;
+                if ($currentPage === 1) {
+                    $this->line("   ✅ Found data as direct array, count: " . count($records));
+                }
             }
             
-            if ($records === null) {
-                $this->error("❌ Invalid API response format - no data found");
-                $this->error("Response structure: " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
-                return null;
+            if ($records === null || empty($records)) {
+                if ($currentPage === 1) {
+                    $this->warn("   ⚠️  No data found in response");
+                    $this->warn("   Response structure: " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                }
+                // 如果第一頁就沒有數據，返回空數組而不是 null
+                if ($currentPage === 1) {
+                    return [
+                        'totalPages' => 0,
+                        'totalCounts' => 0,
+                        'data' => [],
+                        'pagination' => [
+                            'totalPages' => 0,
+                            'totalCounts' => 0,
+                            'perPage' => 20,
+                        ]
+                    ];
+                }
+                // 如果不是第一頁且沒有數據，停止循環
+                break;
             }
 
             // 獲取分頁信息（支持多種格式）
             if ($totalPages === null) {
-                $totalCounts = $data['meta']['totalCounts'] ?? null;
-                $perPage = $data['meta']['perPage'] ?? 20;
-                $apiTotalPages = $data['meta']['totalPages'] ?? null;
+                $totalCounts = $data['totalCounts'] ?? $data['total_counts'] ?? $data['total'] ?? $data['count'] ?? $data['meta']['totalCounts'] ?? null;
+                $perPage = $data['limit'] ?? $data['perPage'] ?? $data['per_page'] ?? $data['meta']['perPage'] ?? 20;
+                $apiTotalPages = $data['totalPages'] ?? $data['total_pages'] ?? $data['meta']['totalPages'] ?? null;
                 
                 // 如果 API 返回了 totalCounts，根據它計算總頁數（更可靠）
                 if ($totalCounts !== null && $perPage > 0) {
@@ -301,9 +358,9 @@ class ScrapeBrowserSplusDOMDetail extends Command
             }
 
             // 如果當前頁的數據少於每頁數量，說明已經到最後一頁
-            $perPage = $data['perPage'] ?? $data['per_page'] ?? 20;
+            $perPage = $data['limit'] ?? $data['perPage'] ?? $data['per_page'] ?? $data['meta']['perPage'] ?? 20;
             if (count($records) < $perPage) {
-                $this->info("   Last page reached (records: " . count($records) . " < perPage: {$perPage})");
+                $this->info("   Last page reached (records: " . count($records) . " < limit: {$perPage})");
                 break;
             }
 
@@ -370,10 +427,6 @@ class ScrapeBrowserSplusDOMDetail extends Command
         $domain = env('SPLUS_AGENT_DOMAIN', '');
         $account = env('SPLUS_AGENT_ACCOUNT', '');
         $password = env('SPLUS_AGENT_PASSWORD', '');
-        
-        $domainJs = json_encode($domain);
-        $accountJs = json_encode($account);
-        $passwordJs = json_encode($password);
 
         $loginCode = $this->generateSplusPuppeteerLoginCode('page');
 
