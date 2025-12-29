@@ -492,7 +492,18 @@ class ScrapeBrowserRsgDOM extends Command
                     
                     // ========== 步驟 2：處理帳號號碼（在日期處理後）==========
                     // 解析帳號號碼（從 PHP 變量插值）
-                    let accountNumber = $accountNumberJs;
+                    let accountNumber = null;
+                    try {
+                        // 嘗試解析 JSON（如果 $accountNumberJs 是 JSON 字符串）
+                        if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                            accountNumber = JSON.parse($accountNumberJs);
+                        }
+                    } catch (e) {
+                        // 如果不是 JSON，直接使用原始值
+                        accountNumber = $accountNumberJs && $accountNumberJs !== 'null' ? $accountNumberJs : null;
+                    }
+                    
+                    console.log('🔍 Account number to fill:', accountNumber);
                     
                     if (accountNumber && accountNumber !== null && accountNumber !== '') {
                         // 等待頁面穩定（日期處理後可能需要等待數據載入）
@@ -536,6 +547,7 @@ class ScrapeBrowserRsgDOM extends Command
                             });
                             
                             if (designatedAccountButton.found) {
+                                console.log('✅ Found "Designated account" button, clicking...');
                                 // 點擊按鈕
                                 try {
                                     await page.evaluate(() => {
@@ -549,79 +561,137 @@ class ScrapeBrowserRsgDOM extends Command
                                         }
                                     });
                                     
-                                    // 等待彈窗出現
-                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                    // 等待彈窗出現（增加等待時間）
+                                    await new Promise(resolve => setTimeout(resolve, 2500));
                                 } catch (e) {
                                     console.log('⚠️  Error clicking "Designated account" button: ' + e.message);
                                 }
+                            } else {
+                                console.log('⚠️  "Designated account" button not found: ' + (designatedAccountButton.reason || 'Unknown'));
                             }
                             
                             // 步驟 2: 等待輸入框出現並填入帳號
-                            try {
-                                // 等待輸入框出現
-                                await page.waitForSelector('input#account[name="account"]', { timeout: 10000 });
-                                
-                                // 填入帳號
-                                await page.evaluate((accountNum) => {
-                                    const input = document.querySelector('input#account[name="account"]');
-                                    if (input) {
-                                        input.focus();
-                                        input.value = '';
-                                        input.value = accountNum;
-                                        // 觸發事件
-                                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                                        if (window.$) {
-                                            window.$(input).trigger('input').trigger('change');
-                                        }
-                                    }
-                                }, accountNumber);
-                                
-                                // 也可以使用 Puppeteer 的 type 方法
+                            let accountFilled = false;
+                            let retryCount = 0;
+                            const maxRetries = 3;
+                            
+                            while (!accountFilled && retryCount < maxRetries) {
                                 try {
-                                    const accountInput = await page.$('input#account[name="account"]');
-                                    if (accountInput) {
-                                        await accountInput.click({ clickCount: 3 }); // 選中所有文本
-                                        await accountInput.type(accountNumber, { delay: 30 });
-                                    }
-                                } catch (e) {
-                                    console.log('⚠️  Error typing account number with Puppeteer: ' + e.message);
-                                }
-                                
-                                // 驗證帳號是否已填入
-                                const accountValue = await page.evaluate(() => {
-                                    const input = document.querySelector('input#account[name="account"]');
-                                    return input ? input.value : null;
-                                });
-                            } catch (e) {
-                                console.log('⚠️  Error finding or filling account input field: ' + e.message);
-                                
-                                // 嘗試其他選擇器
-                                const alternativeSelectors = [
-                                    'input#account',
-                                    'input[name="account"]',
-                                    'input[placeholder*="account"]',
-                                    'input.form-control[placeholder*="account"]'
-                                ];
-                                
-                                let inputFound = false;
-                                for (const selector of alternativeSelectors) {
-                                    try {
-                                        const input = await page.$(selector);
+                                    // 等待輸入框出現
+                                    await page.waitForSelector('input#account[name="account"]', { timeout: 10000 });
+                                    
+                                    // 先清空輸入框
+                                    await page.evaluate(() => {
+                                        const input = document.querySelector('input#account[name="account"]');
                                         if (input) {
-                                            await input.click({ clickCount: 3 });
-                                            await input.type(accountNumber, { delay: 30 });
-                                            inputFound = true;
-                                            break;
+                                            input.focus();
+                                            input.value = '';
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        }
+                                    });
+                                    
+                                    // 使用 Puppeteer 的 type 方法（更可靠）
+                                    try {
+                                        const accountInput = await page.$('input#account[name="account"]');
+                                        if (accountInput) {
+                                            await accountInput.click({ clickCount: 3 }); // 選中所有文本
+                                            await accountInput.type(String(accountNumber), { delay: 50 });
+                                            console.log('📝 Typed account number using Puppeteer type method');
                                         }
                                     } catch (e) {
-                                        // 繼續嘗試下一個選擇器
+                                        console.log('⚠️  Error typing account number with Puppeteer: ' + e.message);
+                                    }
+                                    
+                                    // 也使用 evaluate 方法設置值（雙重保險）
+                                    await page.evaluate((accountNum) => {
+                                        const input = document.querySelector('input#account[name="account"]');
+                                        if (input) {
+                                            input.focus();
+                                            input.value = String(accountNum);
+                                            // 觸發事件
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('keyup', { bubbles: true }));
+                                            if (window.$) {
+                                                window.$(input).trigger('input').trigger('change').trigger('keyup');
+                                            }
+                                        }
+                                    }, accountNumber);
+                                    
+                                    // 等待一下讓值設置完成
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    
+                                    // 驗證帳號是否已填入
+                                    const accountValue = await page.evaluate(() => {
+                                        const input = document.querySelector('input#account[name="account"]');
+                                        return input ? input.value : null;
+                                    });
+                                    
+                                    console.log('🔍 Account value after filling:', accountValue);
+                                    console.log('🔍 Expected account value:', accountNumber);
+                                    
+                                    if (accountValue === String(accountNumber)) {
+                                        console.log('✅ Account number successfully filled!');
+                                        accountFilled = true;
+                                    } else {
+                                        retryCount++;
+                                        console.log('⚠️  Account value mismatch. Retry ' + retryCount + '/' + maxRetries);
+                                        if (retryCount < maxRetries) {
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Error finding or filling account input field: ' + e.message);
+                                    retryCount++;
+                                    
+                                    if (retryCount < maxRetries) {
+                                        // 嘗試其他選擇器
+                                        const alternativeSelectors = [
+                                            'input#account',
+                                            'input[name="account"]',
+                                            'input[placeholder*="account"]',
+                                            'input.form-control[placeholder*="account"]',
+                                            '#account',
+                                            '[name="account"]'
+                                        ];
+                                        
+                                        let inputFound = false;
+                                        for (const selector of alternativeSelectors) {
+                                            try {
+                                                const input = await page.$(selector);
+                                                if (input) {
+                                                    await input.click({ clickCount: 3 });
+                                                    await input.type(String(accountNumber), { delay: 50 });
+                                                    inputFound = true;
+                                                    console.log('✅ Found input using alternative selector: ' + selector);
+                                                    
+                                                    // 驗證
+                                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                                    const verifyValue = await page.evaluate((sel) => {
+                                                        const inp = document.querySelector(sel);
+                                                        return inp ? inp.value : null;
+                                                    }, selector);
+                                                    
+                                                    if (verifyValue === String(accountNumber)) {
+                                                        accountFilled = true;
+                                                        break;
+                                                    }
+                                                }
+                                            } catch (e) {
+                                                // 繼續嘗試下一個選擇器
+                                            }
+                                        }
+                                        
+                                        if (!inputFound && retryCount >= maxRetries) {
+                                            console.log('⚠️  Could not find account input field with any selector after ' + maxRetries + ' retries');
+                                        }
                                     }
                                 }
-                                
-                                if (!inputFound) {
-                                    console.log('⚠️  Could not find account input field with any selector');
-                                }
+                            }
+                            
+                            if (!accountFilled) {
+                                console.log('❌ Failed to fill account number after ' + maxRetries + ' retries');
                             }
                             
                             // 步驟 3: 點擊搜索按鈕
