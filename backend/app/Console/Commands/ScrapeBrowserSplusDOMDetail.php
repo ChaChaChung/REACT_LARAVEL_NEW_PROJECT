@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
@@ -41,34 +42,452 @@ class ScrapeBrowserSplusDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
-        $concurrency = $this->option('concurrency');
 
-        $this->info('=== Browser DOM Scraper (Concurrent) ===');
+        $this->info('=== Splus API Data Scraper ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
-        $this->info("Concurrency: {$concurrency}");
-
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
-        // 檢查 Node.js 是否安裝
-        if (!$this->checkNodeJs()) {
+        // 獲取登入 Token 和 Cookies
+        $auth = $this->getLoginToken();
+        if (!$auth || !isset($auth['token'])) {
+            $this->error('❌ Failed to get login token');
+            return 1;
+        }
+        
+        $token = $auth['token'];
+        $cookies = $auth['cookies'] ?? [];
+
+        // 轉換日期為時間戳
+        $startTimestamp = $this->convertDateToTimestamp($date_start);
+        $endTimestamp = $this->convertDateToTimestamp($date_end, true); // end of day
+
+        if (!$startTimestamp || !$endTimestamp) {
+            $this->error('❌ Invalid date format. Please use YYYYMMDD format (e.g., 20251226)');
             return 1;
         }
 
-        // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
+        // 調用 API 獲取所有數據
+        $allData = $this->fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp);
 
-        // 執行腳本
-        $result = $this->runPuppeteerScript($scriptPath);
-
-        // 如果執行成功，處理爬取的資料
-        if ($result) {
-            $this->processScrapedData($result);
+        if ($allData) {
+            $this->saveApiData($allData, $date_start, $date_end);
+            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+            $this->info("✅ Data fetching completed!");
             return 0;
         }
 
         return 1;
+    }
+
+    /**
+     * 獲取登入 Token 和 Cookies（從瀏覽器）
+     * @return array|null 返回 ['token' => string, 'cookies' => array]
+     */
+    private function getLoginToken()
+    {
+        // 優先從環境變數獲取（如果已設置）
+        $token = env('SPLUS_AGENT_TOKEN');
+        if ($token) {
+            $this->info('✅ Using token from environment variable');
+            return ['token' => $token, 'cookies' => []];
+        }
+
+        // 否則通過瀏覽器登入獲取
+        $this->info('1. Getting login token and cookies from browser...');
+        
+        if (!$this->checkNodeJs()) {
+            return null;
+        }
+
+        $scriptPath = $this->createTokenFetchScript();
+        $result = $this->runTokenFetchScript($scriptPath);
+
+        if ($result && isset($result['loginToken'])) {
+            $this->info('✅ Login token and cookies obtained');
+            return [
+                'token' => $result['loginToken'],
+                'cookies' => $result['cookies'] ?? []
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * 將日期轉換為時間戳（毫秒）
+     * @param string|null $date 日期格式：YYYYMMDD (e.g., 20251226)
+     * @param bool $endOfDay 是否為當天結束時間（23:59:59）
+     * @return int|null
+     */
+    private function convertDateToTimestamp($date, $endOfDay = false)
+    {
+        if (!$date) {
+            return null;
+        }
+
+        // 解析日期格式 YYYYMMDD
+        if (strlen($date) === 8 && is_numeric($date)) {
+            $year = substr($date, 0, 4);
+            $month = substr($date, 4, 2);
+            $day = substr($date, 6, 2);
+            
+            $dateTime = sprintf('%s-%s-%s', $year, $month, $day);
+            if ($endOfDay) {
+                $dateTime .= ' 23:59:59';
+            } else {
+                $dateTime .= ' 00:00:00';
+            }
+            
+            $timestamp = strtotime($dateTime);
+            if ($timestamp === false) {
+                return null;
+            }
+            
+            // 轉換為毫秒
+            return $timestamp * 1000;
+        }
+
+        // 嘗試其他格式
+        $timestamp = strtotime($date);
+        if ($timestamp === false) {
+            return null;
+        }
+
+        if ($endOfDay) {
+            $timestamp = strtotime(date('Y-m-d 23:59:59', $timestamp));
+        }
+
+        return $timestamp * 1000;
+    }
+
+    /**
+     * 從 API 獲取所有頁面的數據
+     * @param string $token 登入 Token
+     * @param array $cookies Cookies 陣列
+     * @param int $startTimestamp 開始時間戳（毫秒）
+     * @param int $endTimestamp 結束時間戳（毫秒）
+     * @return array|null
+     */
+    private function fetchAllDataFromApi($token, $cookies, $startTimestamp, $endTimestamp)
+    {
+        $this->info('2. Fetching data from API...');
+        
+        $baseUrl = 'https://game-hall-backend.yz168.com.tw/api/v2/channel/stats/wager_details/';
+        $allData = [];
+        $currentPage = 1;
+        $totalPages = null;
+
+        do {
+            $this->info("   Fetching page {$currentPage}...");
+            
+            // 構建 HTTP 客戶端
+            $client = Http::withHeaders([
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+            ]);
+            
+            // 如果有 cookies，添加 cookies
+            if (!empty($cookies)) {
+                $cookieString = collect($cookies)->map(function ($cookie) {
+                    return $cookie['name'] . '=' . $cookie['value'];
+                })->implode('; ');
+                $client = $client->withHeaders(['Cookie' => $cookieString]);
+            }
+            
+            // 如果 token 存在，嘗試多種認證方式
+            if ($token) {
+                // 嘗試 Bearer token
+                $client = $client->withToken($token);
+                // 也嘗試作為自定義 header
+                $client = $client->withHeaders(['X-Auth-Token' => $token]);
+            }
+            
+            $response = $client->get($baseUrl, [
+                'startTimestamp' => $startTimestamp,
+                'endTimestamp' => $endTimestamp,
+                'currency' => 'ALL',
+                'page' => $currentPage,
+                'perPage' => 20,
+            ]);
+
+            if (!$response->successful()) {
+                $this->error("❌ API request failed: " . $response->status());
+                $this->error("Response: " . $response->body());
+                return null;
+            }
+
+            $data = $response->json();
+            
+            // 調試：顯示實際的響應結構（僅第一頁）
+            if ($currentPage === 1) {
+                $this->line("   🔍 Debug - Response keys: " . implode(', ', array_keys($data ?? [])));
+                
+                // 顯示所有可能的 meta/pagination 信息
+                if (isset($data['meta'])) {
+                    $this->line("   📋 Meta: " . json_encode($data['meta'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                }
+                if (isset($data['pagination'])) {
+                    $this->line("   📋 Pagination: " . json_encode($data['pagination'], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                }
+                
+                // 顯示所有頂層字段（排除 data 數組）
+                $metaFields = [];
+                foreach ($data as $key => $value) {
+                    if ($key !== 'data' && !is_array($value) || (is_array($value) && !isset($value[0]))) {
+                        $metaFields[$key] = $value;
+                    }
+                }
+                if (!empty($metaFields)) {
+                    $this->line("   📋 All meta fields: " . json_encode($metaFields, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                }
+                
+                // 顯示具體的分頁字段
+                if (isset($data['totalPages'])) {
+                    $this->line("   🔍 totalPages: " . $data['totalPages']);
+                }
+                if (isset($data['totalCounts'])) {
+                    $this->line("   🔍 totalCounts: " . $data['totalCounts']);
+                }
+                if (isset($data['currentPage'])) {
+                    $this->line("   🔍 currentPage: " . $data['currentPage']);
+                }
+                if (isset($data['perPage'])) {
+                    $this->line("   🔍 perPage: " . $data['perPage']);
+                }
+            }
+            
+            // 檢查響應格式（可能有多種格式）
+            $records = null;
+            if (isset($data['data']) && is_array($data['data'])) {
+                $records = $data['data'];
+            } elseif (isset($data['results']) && is_array($data['results'])) {
+                $records = $data['results'];
+            } elseif (isset($data['items']) && is_array($data['items'])) {
+                $records = $data['items'];
+            } elseif (is_array($data) && isset($data[0]) && !isset($data['totalPages'])) {
+                // 如果直接是數組且沒有分頁信息
+                $records = $data;
+            }
+            
+            if ($records === null) {
+                $this->error("❌ Invalid API response format - no data found");
+                $this->error("Response structure: " . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+                return null;
+            }
+
+            // 獲取分頁信息（支持多種格式）
+            if ($totalPages === null) {
+                $totalCounts = $data['totalCounts'] ?? $data['total_counts'] ?? $data['total'] ?? $data['count'] ?? null;
+                $perPage = $data['perPage'] ?? $data['per_page'] ?? 20;
+                
+                // 優先使用 API 返回的 totalPages
+                $apiTotalPages = $data['totalPages'] ?? $data['total_pages'] ?? $data['pagination']['totalPages'] ?? null;
+                
+                // 如果 API 返回了 totalCounts，根據它計算總頁數（更可靠）
+                if ($totalCounts !== null && $perPage > 0) {
+                    $calculatedTotalPages = (int)ceil($totalCounts / $perPage);
+                    
+                    // 如果計算出的頁數大於 API 返回的頁數，使用計算出的頁數
+                    if ($apiTotalPages === null || $calculatedTotalPages > $apiTotalPages) {
+                        $totalPages = $calculatedTotalPages;
+                        $this->info("   Calculated total pages: {$totalPages} (from totalCounts: {$totalCounts}, perPage: {$perPage})");
+                    } else {
+                        $totalPages = $apiTotalPages;
+                        $this->info("   Using API total pages: {$totalPages}");
+                    }
+                } elseif ($apiTotalPages !== null) {
+                    $totalPages = $apiTotalPages;
+                    $this->info("   Using API total pages: {$totalPages}");
+                } else {
+                    // 如果都沒有，設為一個大數，讓循環繼續直到沒有數據
+                    $totalPages = 999; // 設置一個很大的數，讓循環繼續
+                    $this->warn("   ⚠️  No pagination info found, will continue fetching until no more data");
+                }
+                
+                $this->info("   Total pages: {$totalPages}, Total records: " . ($totalCounts ?? 'unknown'));
+            }
+
+            // 合併數據
+            $allData = array_merge($allData, $records);
+            $this->info("   ✅ Page {$currentPage}: " . count($records) . " records");
+
+            // 如果當前頁沒有數據，停止循環
+            if (empty($records)) {
+                $this->info("   No more data, stopping...");
+                break;
+            }
+
+            // 如果當前頁的數據少於每頁數量，說明已經到最後一頁
+            $perPage = $data['perPage'] ?? $data['per_page'] ?? 20;
+            if (count($records) < $perPage) {
+                $this->info("   Last page reached (records: " . count($records) . " < perPage: {$perPage})");
+                break;
+            }
+
+            $currentPage++;
+            
+            // 如果已經獲取所有頁面，停止（只有在有明確分頁信息時才檢查，999 表示沒有分頁信息）
+            if ($totalPages < 999 && $currentPage > $totalPages) {
+                $this->info("   Reached total pages limit: {$totalPages}");
+                break;
+            }
+        } while (true); // 改為無限循環，通過 break 控制
+
+        $this->info("✅ Fetched all {$totalPages} pages, total records: " . count($allData));
+        
+        return [
+            'totalPages' => $totalPages,
+            'totalCounts' => count($allData),
+            'data' => $allData,
+            'pagination' => [
+                'totalPages' => $totalPages,
+                'totalCounts' => count($allData),
+                'perPage' => 20,
+            ]
+        ];
+    }
+
+    /**
+     * 保存 API 數據
+     * @param array $data
+     * @param string|null $date_start
+     * @param string|null $date_end
+     */
+    private function saveApiData($data, $date_start, $date_end)
+    {
+        $this->info('3. Saving data...');
+        
+        $timestamp = date('Y-m-d_H-i-s');
+        $fileName = "scraped_data/api_data_{$timestamp}.json";
+        
+        $fileData = [
+            'metadata' => [
+                'timestamp' => $timestamp,
+                'dateStart' => $date_start,
+                'dateEnd' => $date_end,
+                'totalPages' => $data['totalPages'],
+                'totalCounts' => $data['totalCounts'],
+                'source' => 'API',
+            ],
+            'pagination' => $data['pagination'],
+            'data' => $data['data']
+        ];
+        
+        Storage::put($fileName, json_encode($fileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $this->info("✅ Data saved: {$fileName}");
+        $this->info("📊 Total records: {$data['totalCounts']}");
+    }
+
+    /**
+     * 創建獲取 Token 的腳本
+     * @return string
+     */
+    private function createTokenFetchScript()
+    {
+        $domain = env('SPLUS_AGENT_DOMAIN', '');
+        $account = env('SPLUS_AGENT_ACCOUNT', '');
+        $password = env('SPLUS_AGENT_PASSWORD', '');
+        
+        $domainJs = json_encode($domain);
+        $accountJs = json_encode($account);
+        $passwordJs = json_encode($password);
+
+        $loginCode = $this->generateSplusPuppeteerLoginCode('page');
+
+        $script = <<<JS
+            const puppeteer = require('puppeteer');
+            const fs = require('fs');
+
+            async function getLoginToken() {
+                const browser = await puppeteer.launch({
+                    headless: 'new',
+                    args: ['--no-sandbox', '--disable-setuid-sandbox']
+                });
+
+                try {
+                    const page = await browser.newPage();
+                    await page.setViewport({ width: 1920, height: 1080 });
+                    
+                    {$loginCode}
+                    
+                    // 等待頁面載入
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    
+                    // 獲取 LocalStorage 中的 loginToken 和 Cookies
+                    const authData = await page.evaluate(() => {
+                        const token = window.localStorage.getItem('loginToken');
+                        return { token: token };
+                    });
+                    
+                    // 獲取所有 cookies
+                    const cookies = await page.cookies();
+                    
+                    if (authData.token) {
+                        fs.writeFileSync('token_result.json', JSON.stringify({
+                            success: true,
+                            loginToken: authData.token,
+                            cookies: cookies
+                        }, null, 2));
+                        return { token: authData.token, cookies: cookies };
+                    } else {
+                        fs.writeFileSync('token_result.json', JSON.stringify({
+                            success: false,
+                            error: 'Token not found in LocalStorage'
+                        }, null, 2));
+                        return null;
+                    }
+                } finally {
+                    await browser.close();
+                }
+            }
+
+            getLoginToken().then(() => {
+                process.exit(0);
+            }).catch((error) => {
+                console.error('Error:', error);
+                fs.writeFileSync('token_result.json', JSON.stringify({
+                    success: false,
+                    error: error.message
+                }, null, 2));
+                process.exit(1);
+            });
+        JS;
+
+        $scriptPath = storage_path('app/temp/fetch_token.js');
+        $directory = dirname($scriptPath);
+        if (!is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+        file_put_contents($scriptPath, $script);
+        
+        return $scriptPath;
+    }
+
+    /**
+     * 執行獲取 Token 的腳本
+     * @param string $scriptPath
+     * @return array|null
+     */
+    private function runTokenFetchScript($scriptPath)
+    {
+        $workingDir = dirname($scriptPath);
+        $result = Process::path($workingDir)->timeout(60)->run("node " . basename($scriptPath));
+
+        if ($result->failed()) {
+            $this->error("❌ Token fetch failed");
+            $this->line("Error: " . $result->errorOutput());
+            return null;
+        }
+
+        $tokenFile = $workingDir . '/token_result.json';
+        if (file_exists($tokenFile)) {
+            $content = file_get_contents($tokenFile);
+            return json_decode($content, true);
+        }
+
+        return null;
     }
     
     /**
