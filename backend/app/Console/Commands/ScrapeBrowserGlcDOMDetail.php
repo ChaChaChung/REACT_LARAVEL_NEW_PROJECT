@@ -1271,13 +1271,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         }
                     }
                     
-                    console.log('📄 Pagination info:', JSON.stringify({
-                        totalPages: paginationInfo.totalPages,
-                        pageLinksCount: paginationInfo.pageLinks.length,
-                        paginationFound: paginationInfo.paginationFound,
-                        firstPageRowCount: firstPageData.rowCount
-                    }, null, 2));
-                    
                     // 截圖分頁區域以便調試
                     await page.screenshot({ 
                         path: 'scraped_page_pagination.png',
@@ -1303,15 +1296,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             }))
                         };
                     });
-                    console.log('🔍 Pagination debug info:', JSON.stringify(paginationDebug, null, 2));
                     
                     // ========== 步驟 2：並行爬取所有頁面 ==========
                     console.log('🚀 Step 2: Starting concurrent scraping for all pages...');
-                    console.log('📊 Total pages to scrape: ' + paginationInfo.totalPages);
                     
                     // 定義併發數量
                     const CONCURRENCY_LIMIT = $concurrency;
-                    console.log('⚙️  Concurrency limit: ' + CONCURRENCY_LIMIT);
                     
                     // 準備要爬取的頁面列表（從第 2 頁開始，因為第 1 頁已經爬了）
                     const pagesToScrape = [];
@@ -1319,17 +1309,11 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         pagesToScrape.push({ pageNumber: i });
                     }
                     
-                    console.log('📋 Pages to scrape: ' + pagesToScrape.length + ' pages (from page 2 to page ' + paginationInfo.totalPages + ')');
-                    
                     // 順序爬取函數（在第一頁點擊分頁按鈕切換，維持日期條件）
                     const scrapePage = async (pageInfo, index) => {
                         const startTime = Date.now();
-                        console.log('📄 [Page ' + pageInfo.pageNumber + '] Starting... (' + (index + 1) + '/' + pagesToScrape.length + ')');
                         
                         try {
-                            // 在第一頁點擊對應的分頁按鈕
-                            console.log('🔘 [Page ' + pageInfo.pageNumber + '] Clicking pagination button...');
-                            
                             // 查找並點擊對應頁碼的分頁按鈕
                             const buttonClicked = await page.evaluate((targetPageNumber) => {
                                 // 查找 Element UI 的分頁按鈕
@@ -1363,19 +1347,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 
                                 return false;
                             }, pageInfo.pageNumber);
-                            
-                            if (!buttonClicked) {
-                                console.log('⚠️  [Page ' + pageInfo.pageNumber + '] Pagination button not found');
-                            }
-                            
+
                             // 等待頁面切換和數據加載
-                            console.log('⏳ [Page ' + pageInfo.pageNumber + '] Waiting for page to load...');
                             await new Promise(resolve => setTimeout(resolve, 2000));
                             
                             // 等待表格更新
-                            await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 15000 }).catch(() => {
-                                console.log('⚠️  [Page ' + pageInfo.pageNumber + '] Table selector timeout, continuing...');
-                            });
+                            await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 15000 }).catch(() => { });
                             
                             // 等待數據完全加載（智能等待）
                             let rowCount = 0;
@@ -1411,7 +1388,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     });
                                     
                                     if (rowCount === rowCount2) {
-                                        console.log('✅ [Page ' + pageInfo.pageNumber + '] Data loaded, rows: ' + rowCount);
                                         break;
                                     }
                                 }
@@ -1423,11 +1399,9 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             
                             // 提取表格資料
-                            console.log('📊 [Page ' + pageInfo.pageNumber + '] Extracting table data...');
                             const tableData = await extractTableData(page);
                             
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                            console.log('✅ [Page ' + pageInfo.pageNumber + '] Completed in ' + elapsed + 's, rows: ' + (tableData.rowCount || 0));
                             
                             // 截圖當前頁面
                             const screenshotPath = 'scraped_page_' + pageInfo.pageNumber + '.png';
@@ -1454,7 +1428,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     };
                     
                     // 順序爬取所有頁面（在第一頁點擊分頁按鈕，維持日期條件）
-                    console.log('🔄 Starting sequential page scraping...');
                     const startTime = Date.now();
                     
                     const otherPagesData = [];
@@ -1464,8 +1437,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     }
                     
                     const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    console.log('⏱️  Total time for page scraping: ' + totalElapsed + 's');
-                    console.log('📊 Completed pages: ' + otherPagesData.length + '/' + pagesToScrape.length);
                     
                     // 合併第一頁和其他頁面的資料
                     const allPagesData = [
@@ -1480,12 +1451,10 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     allPagesData.sort((a, b) => a.pageNumber - b.pageNumber);
                     
                     // 顯示每頁的數據統計
-                    console.log('📊 Data summary by page:');
                     allPagesData.forEach(pageData => {
                         const pageRowCount = pageData.tables && pageData.tables.length > 0 
                             ? pageData.tables.reduce((sum, table) => sum + (table.rowCount || 0), 0)
                             : 0;
-                        console.log('  Page ' + pageData.pageNumber + ': ' + pageRowCount + ' rows');
                     });
                     
                     const totalRowsFromPages = allPagesData.reduce((sum, pageData) => {
@@ -1513,13 +1482,10 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         if (pageData.tables && pageData.tables.length > 0) {
                             pageData.tables.forEach(table => {
                                 if (table.data && table.data.length > 0) {
-                                    console.log('  📋 Page ' + pageData.pageNumber + ' table: ' + table.data.length + ' data rows');
                                     totalDataRows += table.data.length;
                                 }
                                 allTables.push(table);
                             });
-                        } else {
-                            console.log('⚠️  Page ' + pageData.pageNumber + ' has no tables or empty tables');
                         }
                     });
                     console.log('📊 Total data rows from all tables: ' + totalDataRows);
@@ -1684,12 +1650,11 @@ class ScrapeBrowserGlcDOMDetail extends Command
         // 優先從 pages 中提取數據（因為數據是按頁面組織的）
         if (!empty($domData['pages'])) {
             $this->info('📄 Extracting data from ' . count($domData['pages']) . ' pages...');
-            foreach ($domData['pages'] as $pageIndex => $page) {
+            foreach ($domData['pages'] as $page) {
                 if (!empty($page['tables'])) {
-                    foreach ($page['tables'] as $tableIndex => $table) {
+                    foreach ($page['tables'] as $table) {
                         if (!empty($table['data'])) {
                             $pageRowCount = count($table['data']);
-                            $this->info('  Page ' . ($page['pageNumber'] ?? ($pageIndex + 1)) . ': ' . $pageRowCount . ' rows');
                             
                             // 將當前表格的所有數據添加到總數組中
                             $allData = array_merge($allData, $table['data']);
@@ -1700,25 +1665,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 $headers = $table['headers'];
                             }
                         }
-                    }
-                } else {
-                    $this->warn('  Page ' . ($page['pageNumber'] ?? ($pageIndex + 1)) . ': No tables found');
-                }
-            }
-        }
-        
-        // 如果 pages 為空，嘗試從 tables 中提取數據（向後兼容）
-        if (empty($allData) && !empty($domData['tables'])) {
-            $this->info('📄 Extracting data from tables (fallback)...');
-            foreach ($domData['tables'] as $tableIndex => $table) {
-                if (!empty($table['data'])) {
-                    // 將當前表格的所有數據添加到總數組中
-                    $allData = array_merge($allData, $table['data']);
-                    $totalRows += count($table['data']);
-                    
-                    // 保存表頭（使用第一個表格的表頭）
-                    if (empty($headers) && !empty($table['headers'])) {
-                        $headers = $table['headers'];
                     }
                 }
             }
@@ -1731,18 +1677,9 @@ class ScrapeBrowserGlcDOMDetail extends Command
         
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
-            // 清理"代理"欄位：移除"公司主站代理線"字樣
-            foreach ($allData as &$row) {
-                if (isset($row['代理'])) {
-                    // 移除"公司主站代理線"，只保留前面的部分
-                    $row['代理'] = str_replace('公司主站代理線', '', $row['代理']);
-                    // 去除多餘的空白
-                    $row['代理'] = trim($row['代理']);
-                }
-            }
-            unset($row); // 解除引用
+            unset($row);
             
-            // 創建合併後的數據結構（不區分平台）
+            // 創建合併後的數據結構
             $mergedData = [
                 'metadata' => [
                     'timestamp' => $timestamp,
@@ -1752,8 +1689,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     'totalRows' => $totalRows
                 ],
                 'headers' => $headers,
-                'headerCount' => count($headers),
-                'rowCount' => $totalRows,
                 'data' => $allData
             ];
             
@@ -1777,57 +1712,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
         }
 
-        // 將按鈕高亮截圖從臨時目錄移動到永久儲存目錄
-        $buttonHighlightSrc = storage_path('app/temp/scraped_page_button_highlight.png');
-        $buttonHighlightDst = storage_path("app/scraped_data/dom_screenshot_button_highlight_{$timestamp}.png");
-        
-        if (file_exists($buttonHighlightSrc)) {
-            rename($buttonHighlightSrc, $buttonHighlightDst);
-            $this->info("📸 Button highlight screenshot saved to: {$buttonHighlightDst}");
-        }
-
-        // 將點擊後截圖從臨時目錄移動到永久儲存目錄
-        $afterClickSrc = storage_path('app/temp/scraped_page_after_click.png');
-        $afterClickDst = storage_path("app/scraped_data/dom_screenshot_after_click_{$timestamp}.png");
-        
-        if (file_exists($afterClickSrc)) {
-            rename($afterClickSrc, $afterClickDst);
-            $this->info("📸 After click screenshot saved to: {$afterClickDst}");
-        }
-
-        // 將分頁截圖從臨時目錄移動到永久儲存目錄
-        $paginationSrc = storage_path('app/temp/scraped_page_pagination.png');
-        $paginationDst = storage_path("app/scraped_data/dom_screenshot_pagination_{$timestamp}.png");
-        
-        if (file_exists($paginationSrc)) {
-            rename($paginationSrc, $paginationDst);
-            $this->info("📸 Pagination screenshot saved to: {$paginationDst}");
-        }
-
-        // 將所有頁面截圖從臨時目錄移動到永久儲存目錄
-        $tempDir = storage_path('app/temp');
-        if (is_dir($tempDir)) {
-            $pageScreenshots = glob($tempDir . '/scraped_page_*.png');
-            foreach ($pageScreenshots as $screenshotSrc) {
-                $filename = basename($screenshotSrc);
-                // 跳過已經處理過的截圖
-                if (in_array($filename, ['scraped_page_screenshot.png', 'scraped_page_button_highlight.png', 'scraped_page_after_click.png', 'scraped_page_pagination.png'])) {
-                    continue;
-                }
-                
-                // 提取頁碼（例如：scraped_page_2.png -> 2）
-                if (preg_match('/scraped_page_(\d+)\.png$/', $filename, $matches)) {
-                    $pageNumber = $matches[1];
-                    $screenshotDst = storage_path("app/scraped_data/dom_screenshot_page_{$pageNumber}_{$timestamp}.png");
-                    
-                    if (file_exists($screenshotSrc)) {
-                        rename($screenshotSrc, $screenshotDst);
-                        $this->info("📸 Page {$pageNumber} screenshot saved to: {$screenshotDst}");
-                    }
-                }
-            }
-        }
-        
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
