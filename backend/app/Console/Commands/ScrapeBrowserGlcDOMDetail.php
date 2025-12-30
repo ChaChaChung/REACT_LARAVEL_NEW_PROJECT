@@ -161,9 +161,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     const promise = Promise.resolve().then(() => fn(item, index))
                         .then((result) => {
                             completedCount++;
-                            if (completedCount % 5 === 0 || completedCount === totalItems) {
-                                console.log('📈 Progress: ' + completedCount + '/' + totalItems + ' pages completed');
-                            }
                             return result;
                         });
                     
@@ -506,13 +503,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     
                                     await new Promise(resolve => setTimeout(resolve, 500));
                                     
-                                    // 截圖（顯示高亮的按鈕）
-                                    await page.screenshot({ 
-                                        path: 'scraped_page_button_highlight.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 Button highlight screenshot saved: scraped_page_button_highlight.png');
-                                    
                                     // 恢復原始樣式
                                     await page.evaluate((selector) => {
                                         const btn = document.querySelector(selector);
@@ -530,16 +520,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     
                                     // 使用 Puppeteer 的 click 方法
                                     await page.click(buttonInfo.selector, { timeout: 5000 });
-                                    
-                                    console.log('✅ Search button clicked (method 1 - Puppeteer click)');
-                                    
-                                    // 等待頁面響應後截圖
-                                    await new Promise(resolve => setTimeout(resolve, 1500));
-                                    await page.screenshot({ 
-                                        path: 'scraped_page_after_click.png',
-                                        fullPage: false
-                                    });
-                                    console.log('📸 After click screenshot saved: scraped_page_after_click.png');
                                     
                                     buttonClicked = true;
                                 }
@@ -582,15 +562,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                             }
                                         });
                                         
-                                        await new Promise(resolve => setTimeout(resolve, 500));
-                                        
-                                        // 截圖
-                                        await page.screenshot({ 
-                                            path: 'scraped_page_button_highlight.png',
-                                            fullPage: false
-                                        });
-                                        console.log('📸 Button highlight screenshot saved: scraped_page_button_highlight.png');
-                                        
                                         // 恢復樣式
                                         await page.evaluate(() => {
                                             const buttons = Array.from(document.querySelectorAll('button.el-button.el-button--default'));
@@ -612,15 +583,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                         
                                         await buttonHandle.asElement().click();
                                         await buttonHandle.dispose();
-                                        console.log('✅ Search button clicked (method 2 - evaluateHandle)');
-                                        
-                                        // 等待頁面響應後截圖
-                                        await new Promise(resolve => setTimeout(resolve, 1500));
-                                        await page.screenshot({ 
-                                            path: 'scraped_page_after_click.png',
-                                            fullPage: false
-                                        });
-                                        console.log('📸 After click screenshot saved: scraped_page_after_click.png');
                                         
                                         buttonClicked = true;
                                     } else {
@@ -650,15 +612,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                         await new Promise(resolve => setTimeout(resolve, 300));
                                         await buttonHandle.asElement().click();
                                         await buttonHandle.dispose();
-                                        console.log('✅ Search button clicked (method 3 - any Search button)');
-                                        
-                                        // 等待頁面響應後截圖
-                                        await new Promise(resolve => setTimeout(resolve, 1500));
-                                        await page.screenshot({ 
-                                            path: 'scraped_page_after_click.png',
-                                            fullPage: false
-                                        });
-                                        console.log('📸 After click screenshot saved: scraped_page_after_click.png');
                                         
                                         buttonClicked = true;
                                     } else {
@@ -688,15 +641,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                         await new Promise(resolve => setTimeout(resolve, 300));
                                         await buttonHandle.asElement().click();
                                         await buttonHandle.dispose();
-                                        console.log('✅ Search button clicked (method 4 - 搜尋)');
-                                        
-                                        // 等待頁面響應後截圖
-                                        await new Promise(resolve => setTimeout(resolve, 1500));
-                                        await page.screenshot({ 
-                                            path: 'scraped_page_after_click.png',
-                                            fullPage: false
-                                        });
-                                        console.log('📸 After click screenshot saved: scraped_page_after_click.png');
                                         
                                         buttonClicked = true;
                                     } else {
@@ -707,11 +651,7 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 }
                             }
                             
-                            if (!buttonClicked) {
-                                console.log('⚠️  Search button not found or could not be clicked');
-                            } else {
-                                console.log('⏳ Waiting for table to update after search...');
-                                
+                            if (buttonClicked) {
                                 // 智能等待：等待表格數據真正更新
                                 // 監聽表格內容變化，或者等待足夠時間
                                 let rowCountAfter = 0;
@@ -739,7 +679,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     // 檢查行數是否變化
                                     if (rowCountAfter !== rowCountBefore) {
                                         dataChanged = true;
-                                        console.log('✅ Data changed detected! Row count: ' + rowCountBefore + ' -> ' + rowCountAfter);
                                         // 再等待1秒確保數據完全加載
                                         await new Promise(resolve => setTimeout(resolve, 1000));
                                         break;
@@ -748,16 +687,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     // 如果已經等待足夠時間（至少5秒），繼續執行
                                     // 可能是日期範圍內沒有新數據，或者數據已經正確加載
                                     if (waitAttempts >= 4) {
-                                        console.log('⏳ Waited ' + (waitAttempts + 1) + ' seconds, continuing...');
                                         // 再等待1秒後繼續
                                         await new Promise(resolve => setTimeout(resolve, 1000));
                                         break;
                                     }
                                     
                                     waitAttempts++;
-                                    if (waitAttempts % 2 === 0) {
-                                        console.log('⏳ Waiting for data to load... (' + waitAttempts + '/' + maxWaitAttempts + ')');
-                                    }
                                 }
                                 
                                 // 確保表格出現
@@ -777,21 +712,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     }
                                     return 0;
                                 });
-                                
-                                console.log('📊 Rows after search: ' + rowCountAfter);
-                                
-                                if (rowCountAfter > rowCountBefore) {
-                                    console.log('✅ Table data updated successfully! (+' + (rowCountAfter - rowCountBefore) + ' rows)');
-                                } else if (rowCountAfter === rowCountBefore && rowCountAfter > 0) {
-                                    console.log('⚠️  Row count unchanged (' + rowCountAfter + ' rows), data may have been filtered or no new data found');
-                                } else if (rowCountAfter === 0) {
-                                    console.log('⚠️  No data found after search');
-                                } else {
-                                    console.log('⚠️  Row count decreased from ' + rowCountBefore + ' to ' + rowCountAfter);
-                                }
-                                
-                                // 無論如何，繼續執行（可能日期範圍內沒有數據，或者數據已經正確加載）
-                                console.log('✅ Continuing with data extraction...');
                             }
                         } catch (e) {
                             console.log('⚠️  Error clicking search button: ' + e.message);
@@ -1123,7 +1043,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 bodyText: document.body ? document.body.innerText.substring(0, 500) : 'No body'
                             };
                         });
-                        console.log('📋 Page info:', JSON.stringify(pageInfo, null, 2));
                     }
                     
                     // 提取第一頁的表格資料
@@ -1139,7 +1058,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     }
                     
                     // 等待分頁組件載入（Element UI 的分頁組件）
-                    console.log('🔍 Waiting for pagination to load...');
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
                     // 滾動到頁面底部，確保分頁組件可見
@@ -1163,13 +1081,11 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
                             if (slashMatch && slashMatch[2]) {
                                 totalPages = parseInt(slashMatch[2]);
-                                console.log('Found total pages from slash format: ' + totalPages);
                             } else {
                                 // 查找 "共 2 頁" 或 "total 2 pages" 格式
                                 const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
                                 if (totalMatch && totalMatch[1]) {
                                     totalPages = parseInt(totalMatch[1]);
-                                    console.log('Found total pages from text format: ' + totalPages);
                                 }
                             }
                             
@@ -1188,7 +1104,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 });
                                 if (maxPageNum > 1) {
                                     totalPages = maxPageNum;
-                                    console.log('Found total pages from number buttons: ' + totalPages);
                                 }
                             }
                         }
@@ -1228,7 +1143,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             const nextLink = document.querySelector('a[rel="next"], .btn-next:not(.disabled), button.el-pagination__next:not(.disabled)');
                             if (nextLink && nextLink.offsetParent !== null) { // 檢查是否可見
                                 totalPages = 2;
-                                console.log('Found next button, assuming at least 2 pages');
                             }
                         }
                         
@@ -1253,12 +1167,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         };
                     });
                     
-                    // 驗證總頁數是否合理（如果超過100，可能是誤識別）
-                    if (paginationInfo.totalPages > 100) {
-                        console.log('⚠️  Warning: Total pages (' + paginationInfo.totalPages + ') seems too high, limiting to 100');
-                        paginationInfo.totalPages = 100;
-                    }
-                    
                     // 如果總頁數為1，但第一頁有數據，檢查是否有下一頁按鈕
                     if (paginationInfo.totalPages === 1 && firstPageData.rowCount > 0) {
                         const hasNextPage = await page.evaluate(() => {
@@ -1267,16 +1175,8 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         });
                         if (hasNextPage) {
                             paginationInfo.totalPages = 2;
-                            console.log('📄 Found next page button, updating total pages to 2');
                         }
                     }
-                    
-                    // 截圖分頁區域以便調試
-                    await page.screenshot({ 
-                        path: 'scraped_page_pagination.png',
-                        fullPage: false
-                    });
-                    console.log('📸 Pagination screenshot saved: scraped_page_pagination.png');
                     
                     // 獲取分頁組件的詳細信息以便調試
                     const paginationDebug = await page.evaluate(() => {
@@ -1403,14 +1303,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
                             
-                            // 截圖當前頁面
-                            const screenshotPath = 'scraped_page_' + pageInfo.pageNumber + '.png';
-                            await page.screenshot({ 
-                                path: screenshotPath,
-                                fullPage: false
-                            });
-                            console.log('📸 [Page ' + pageInfo.pageNumber + '] Screenshot saved: ' + screenshotPath);
-                            
                             return {
                                 pageNumber: pageInfo.pageNumber,
                                 tables: [tableData]
@@ -1488,7 +1380,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             });
                         }
                     });
-                    console.log('📊 Total data rows from all tables: ' + totalDataRows);
 
                     // 構建結果數據結構
                     const domData = {
@@ -1513,7 +1404,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         path: 'scraped_page_screenshot.png',
                         fullPage: false  // 改為 false，只截可見區域，速度更快
                     });
-
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
                     // 合併所有提取的資料
@@ -1531,7 +1421,6 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     // 將結果保存為 JSON 文件
                     fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
                     console.log('💾 Results saved to: scraped_result.json');
-                    console.log('📊 DOM elements extracted:');
 
                     return result;
                 } catch (error) {
