@@ -1330,27 +1330,76 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         const elPagination = document.querySelector('.el-pagination');
                         if (elPagination) {
                             const paginationText = elPagination.textContent || elPagination.innerText || '';
+                            console.log('📄 Pagination text:', paginationText);
                             
-                            // 查找 "1 / 2" 格式
-                            const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
-                            if (slashMatch && slashMatch[2]) {
-                                totalPages = parseInt(slashMatch[2]);
-                            } else {
-                                // 查找 "共 2 頁" 或 "total 2 pages" 格式
-                                const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
-                                if (totalMatch && totalMatch[1]) {
-                                    totalPages = parseInt(totalMatch[1]);
+                            // 方式1（最優先）：查找 input[type="number"] 的 max 屬性（最可靠）
+                            // 例如：<input type="number" max="123"> 表示總頁數是 123
+                            const pageInput = elPagination.querySelector('input[type="number"]');
+                            if (pageInput && pageInput.hasAttribute('max')) {
+                                const maxValue = parseInt(pageInput.getAttribute('max'));
+                                if (!isNaN(maxValue) && maxValue > 0 && maxValue <= 10000) {
+                                    totalPages = maxValue;
+                                    console.log('✅ Found total pages from input max attribute:', totalPages);
                                 }
                             }
                             
-                            // 如果還是沒找到，嘗試查找分頁按鈕中的最大數字
+                            // 方式2：從 "Total 1227" 文本中提取總記錄數，然後計算總頁數
                             if (totalPages === 1) {
-                                const numberButtons = elPagination.querySelectorAll('.number');
+                                const totalMatch = paginationText.match(/total\s+(\d+)/i);
+                                if (totalMatch && totalMatch[1]) {
+                                    const totalRecords = parseInt(totalMatch[1]);
+                                    // 查找每頁數量（從 select 或當前設置）
+                                    let perPage = 10; // 默認值
+                                    const perPageSelect = elPagination.querySelector('.el-select-dropdown__item.selected');
+                                    if (perPageSelect) {
+                                        const perPageText = perPageSelect.textContent || '';
+                                        const perPageMatch = perPageText.match(/(\d+)\/page/i);
+                                        if (perPageMatch && perPageMatch[1]) {
+                                            perPage = parseInt(perPageMatch[1]);
+                                        }
+                                    }
+                                    // 如果找不到，嘗試從 URL 參數中獲取
+                                    if (perPage === 10) {
+                                        const urlParams = new URLSearchParams(window.location.search);
+                                        const limitParam = urlParams.get('limit');
+                                        if (limitParam) {
+                                            perPage = parseInt(limitParam);
+                                        }
+                                    }
+                                    if (totalRecords > 0 && perPage > 0) {
+                                        totalPages = Math.ceil(totalRecords / perPage);
+                                        console.log('✅ Calculated total pages from Total records:', totalPages, '(records:', totalRecords, ', perPage:', perPage + ')');
+                                    }
+                                }
+                            }
+                            
+                            // 方式3：查找 "1 / 1892" 或 "1/1892" 格式
+                            if (totalPages === 1) {
+                                const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
+                                if (slashMatch && slashMatch[2]) {
+                                    totalPages = parseInt(slashMatch[2]);
+                                    console.log('✅ Found total pages from slash format:', totalPages);
+                                }
+                            }
+                            
+                            // 方式4：查找 "共 1892 頁" 或 "total 1892 pages" 格式
+                            if (totalPages === 1) {
+                                const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
+                                if (totalMatch && totalMatch[1]) {
+                                    totalPages = parseInt(totalMatch[1]);
+                                    console.log('✅ Found total pages from text format:', totalPages);
+                                }
+                            }
+                            
+                            // 方式5：查找分頁按鈕中的最大數字（特別是最後一個按鈕，如 "123"）
+                            if (totalPages === 1) {
+                                const numberButtons = elPagination.querySelectorAll('.number, .el-pager li.number, button.number');
                                 let maxPageNum = 1;
                                 numberButtons.forEach(btn => {
                                     const text = btn.textContent.trim();
                                     const pageNum = parseInt(text);
-                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum < 100) { // 限制在合理範圍內
+                                    // 移除上限限制，允許更大的頁碼（1-10000）
+                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
                                         if (pageNum > maxPageNum) {
                                             maxPageNum = pageNum;
                                         }
@@ -1358,6 +1407,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 });
                                 if (maxPageNum > 1) {
                                     totalPages = maxPageNum;
+                                    console.log('✅ Found total pages from buttons:', totalPages);
                                 }
                             }
                         }
