@@ -269,4 +269,34 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 PGONE Puppeteer cookies 設定程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generatePgonePuppeteerCookiesCode(string $pageVar = 'page'): string
+    {
+        $token = env('PGONE_AGENT_TOKEN', '');
+        $lang = env('PGONE_AGENT_LANG', 'zh-TW');
+        $domain = env('PGONE_AGENT_DOMAIN');
+
+        return <<<JS
+            console.log('🔐 Setting authentication cookies...');
+
+            // 根據環境變數設定認證 cookies
+            // 這些 cookies 用於通過需要登入的頁面驗證
+            const cookies = [];
+            if ('$token') cookies.push({ name: 'vue_admin_template_token', value: '$token', domain: '$domain' });
+            if ('$lang') cookies.push({ name: 'lang', value: '$lang', domain: '$domain' });
+
+            // 如果有設定 cookies，則應用到頁面
+            if (cookies.length > 0) {
+                await {$pageVar}.setCookie(...cookies);
+                console.log('✅ Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No cookies found in environment variables');
+            }
+        JS;
+    }
 }
