@@ -422,12 +422,12 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             console.log('📅 Setting up date range...');
                             
                             // 等待 Start time input 出現
-                            await page.waitForSelector('input.el-range-input[placeholder="Start time"]', { timeout: 10000 }).catch(() => {
+                            await page.waitForSelector('input.el-range-input[placeholder="Start Time"]', { timeout: 10000 }).catch(() => {
                                 console.log('⚠️  Start time input not found');
                             });
                             
                             // 點擊 Start time input 來打開日期選擇器
-                            await page.click('input.el-range-input[placeholder="Start time"]', { timeout: 5000 }).catch(() => {
+                            await page.click('input.el-range-input[placeholder="Start Time"]', { timeout: 5000 }).catch(() => {
                                 console.log('⚠️  Could not click Start time input');
                             });
                             
@@ -576,14 +576,14 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             // 方式1：使用 Puppeteer 的原生方法點擊
                             try {
                                 // 等待按鈕出現並可點擊
-                                await page.waitForSelector('button.el-button.el-button--default', { timeout: 5000, visible: true }).catch(() => {});
+                                await page.waitForSelector('button.el-button.el-button--primary', { timeout: 5000, visible: true }).catch(() => {});
                                 
                                 // 查找按鈕並獲取其選擇器
                                 const buttonInfo = await page.evaluate(() => {
-                                    const buttons = Array.from(document.querySelectorAll('button.el-button.el-button--default'));
+                                    const buttons = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
                                     for (let btn of buttons) {
                                         const text = btn.textContent.trim();
-                                        if (text === 'Search') {
+                                        if (text === 'Query') {
                                             // 添加唯一標識
                                             const uniqueId = 'search-btn-' + Date.now();
                                             btn.setAttribute('data-puppeteer-search-id', uniqueId);
