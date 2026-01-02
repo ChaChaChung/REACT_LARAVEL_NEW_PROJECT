@@ -21,9 +21,10 @@ class ScrapeBrowserPgoneDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
+     * {player_account?} - 玩家帳號（可選參數）
      * {--concurrency=8} - 併發數量（可選，預設為 8，建議 8-16 以加快速度）
      */
-    protected $signature = 'agent:scrape-pgone-dom-detail {url} {date_start?} {date_end?} {--concurrency=8}';
+    protected $signature = 'agent:scrape-pgone-dom-detail {url} {date_start?} {date_end?} {player_account?} {--concurrency=8}';
 
     /**
      * 命令描述
@@ -41,12 +42,14 @@ class ScrapeBrowserPgoneDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
+        $player_account = $this->argument('player_account');
         $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
+        $this->info("Player Account: {$player_account}");
         $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
@@ -57,7 +60,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $player_account, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -119,10 +122,11 @@ class ScrapeBrowserPgoneDOMDetail extends Command
      * @param string $url 要爬取的目標網址
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
+     * @param string|null $player_account 玩家帳號（可選）
      * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $player_account = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -134,6 +138,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        $playerAccountJs = $player_account ? json_encode($player_account) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -386,6 +391,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     // 解析 date
                     let dateStartParsed = null;
                     let dateEndParsed = null;
+                    let playerAccountParsed = null;
                     
                     try {
                         if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
@@ -394,9 +400,13 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
                             dateEndParsed = JSON.parse($dateEndJs);
                         }
+                        if ($playerAccountJs && $playerAccountJs !== 'null' && $playerAccountJs !== '') {
+                            playerAccountParsed = JSON.parse($playerAccountJs);
+                        }
                     } catch (e) {
                         dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                        playerAccountParsed = $playerAccountJs !== 'null' ? $playerAccountJs : null;
                     }
 
                     // 如果提供了 date_start 或 date_end，點擊 Start time input 打開日期選擇器
@@ -507,8 +517,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 console.log('⚠️  OK button not found');
                             }
                             
-                            // 等待日期選擇器關閉（減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                            // 等待日期選擇器關閉（優化：減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 200)); // 從300ms減少到200ms
                             
                             console.log('✅ Date range set successfully');
                         } catch (e) {
@@ -517,12 +527,48 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         }
                     }
 
-                    // 如果至少填入了其中一個日期，嘗試點擊搜尋按鈕
-                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
-                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                    // 如果提供了 player_account，填入玩家帳號
+                    if (playerAccountParsed && playerAccountParsed !== null && playerAccountParsed !== '') {
                         try {
-                            // 等待一下讓日期輸入完成
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            console.log('👤 Filling Player Account: ' + playerAccountParsed);
+                            
+                            // 等待日期選擇器關閉（如果之前有填入日期）（優化：減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
+                            
+                            // 等待 Player Account input 出現（優化：減少超時時間）
+                            await page.waitForSelector('input.el-input__inner[placeholder="InputPlayer Account"]', { timeout: 5000 }).catch(() => { // 從10000ms減少到5000ms
+                                console.log('⚠️  Player Account input not found');
+                            });
+                            
+                            // 填入玩家帳號
+                            await page.evaluate((accountValue) => {
+                                const accountInput = document.querySelector('input.el-input__inner[placeholder="InputPlayer Account"]');
+                                
+                                if (accountInput) {
+                                    accountInput.value = '';
+                                    accountInput.value = accountValue;
+                                    accountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+                            }, playerAccountParsed);
+                            
+                            await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
+                            
+                            console.log('✅ Player Account filled successfully');
+                        } catch (e) {
+                            console.log('⚠️  Error filling player account: ' + e.message);
+                            console.error(e);
+                        }
+                    }
+
+                    // 如果至少填入了其中一個日期或玩家帳號，嘗試點擊搜尋按鈕
+                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
+                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') ||
+                        (playerAccountParsed && playerAccountParsed !== null && playerAccountParsed !== '')) {
+                        try {
+                            // 等待一下讓日期和帳號輸入完成（優化：減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
 
                             // 查找並點擊搜尋按鈕
                             console.log('🔍 Looking for Search button...');
@@ -1156,19 +1202,19 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     // Element UI 表格 (el-table)
                     console.log('🔍 Step 1: Waiting for table to load...');
                     
-                    // 額外等待並滾動頁面
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // 額外等待並滾動頁面（優化：減少等待時間）
+                    await new Promise(resolve => setTimeout(resolve, 500)); // 從1000ms減少到500ms
                     await page.evaluate(() => {
                         window.scrollTo(0, document.body.scrollHeight);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                     await page.evaluate(() => {
                         window.scrollTo(0, 0);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                     
                     tableFound = false;
-                    for (let retry = 0; retry < 10; retry++) {
+                    for (let retry = 0; retry < 5; retry++) { // 從10減少到5
                         try {
                             // 檢查表格是否存在且有內容
                             const tableCheck = await page.evaluate(() => {
@@ -1268,17 +1314,17 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             console.error('📋 Debug info:', JSON.stringify(firstPageData.debug, null, 2));
                         }
                         
-                        // 再等待一下並重試一次（減少等待時間）
-                        console.log('⏳ Waiting 2 more seconds and retrying...');
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        // 再等待一下並重試一次（優化：減少等待時間）
+                        console.log('⏳ Waiting and retrying...');
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // 從2000ms減少到1000ms
                         await page.evaluate(() => {
                             window.scrollTo(0, document.body.scrollHeight);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                         await page.evaluate(() => {
                             window.scrollTo(0, 0);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                         
                         const retryData = await extractTableData(page);
                         if (!retryData.found) {
@@ -1290,23 +1336,17 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         }
                     }
                     
-                    // 滾動到分頁組件位置，確保頁數和筆數可見
+                    // 滾動到分頁組件位置，確保頁數和筆數可見（優化：減少等待時間）
                     await page.evaluate(() => {
                         const pagination = document.querySelector('.el-pagination');
                         if (pagination) {
                             pagination.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
                     });
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 300)); // 從500ms減少到300ms
                     
-                    // 等待分頁組件載入（Element UI 的分頁組件）
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    
-                    // 滾動到頁面底部，確保分頁組件可見
-                    await page.evaluate(() => {
-                        window.scrollTo(0, document.body.scrollHeight);
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // 等待分頁組件載入（Element UI 的分頁組件）（優化：減少等待時間）
+                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                     
                     // 獲取所有分頁連結（支持多種分頁組件）
                     const paginationInfo = await page.evaluate(() => {
@@ -1320,15 +1360,76 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             const paginationText = elPagination.textContent || elPagination.innerText || '';
                             console.log('📄 Pagination text:', paginationText);
                             
-                            // 方式1（最優先）：查找 input[type="number"] 的 max 屬性（最可靠）
-                            // 例如：<input type="number" max="123"> 表示總頁數是 123
-                            const pageInput = elPagination.querySelector('input[type="number"]');
-                            if (pageInput && pageInput.hasAttribute('max')) {
-                                const maxValue = parseInt(pageInput.getAttribute('max'));
-                                if (!isNaN(maxValue) && maxValue > 0 && maxValue <= 10000) {
-                                    totalPages = maxValue;
-                                    console.log('✅ Found total pages from input max attribute:', totalPages);
+                            // 方式1（最優先）：查找分頁按鈕中的最大數字（最可靠，因為按鈕直接顯示實際頁數）
+                            // 優先檢查 .el-pager 中的按鈕，因為這是最直接的分頁按鈕容器
+                            // 例如：如果只顯示按鈕 1，那麼總頁數就是 1；如果顯示 1,2,3，那麼總頁數就是 3
+                            let buttonDetectedPages = null;
+                            {
+                                // 首先檢查 .el-pager 中的按鈕（Element UI 的標準結構）
+                                const elPager = elPagination.querySelector('.el-pager');
+                                let numberButtons = [];
+                                if (elPager) {
+                                    numberButtons = Array.from(elPager.querySelectorAll('li.number'));
+                                    console.log('🔍 Found el-pager, buttons:', numberButtons.length);
                                 }
+                                // 如果找不到，再查找其他位置
+                                if (numberButtons.length === 0) {
+                                    numberButtons = Array.from(elPagination.querySelectorAll('.number, button.number'));
+                                    console.log('🔍 No el-pager, trying other selectors, found:', numberButtons.length, 'buttons');
+                                }
+                                
+                                let maxPageNum = 1;
+                                let buttonCount = 0;
+                                numberButtons.forEach(btn => {
+                                    const text = btn.textContent.trim();
+                                    const pageNum = parseInt(text);
+                                    console.log('🔍 Button text:', text, ', parsed:', pageNum);
+                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
+                                        if (pageNum > maxPageNum) {
+                                            maxPageNum = pageNum;
+                                        }
+                                        buttonCount++;
+                                    }
+                                });
+                                
+                                console.log('🔍 Button detection result: buttonCount=', buttonCount, ', maxPageNum=', maxPageNum);
+                                
+                                // 如果找到按鈕，使用最大頁碼作為總頁數
+                                // 特別是當按鈕數量較少（<=5）時，這些按鈕很可能就是所有的頁面
+                                // 例如：如果只顯示 1, 2, 3，那麼總頁數就是 3
+                                // 如果只顯示 1，那麼總頁數就是 1
+                                if (buttonCount > 0) {
+                                    // 如果按鈕數量 <= 5，很可能這些就是所有頁面，直接使用最大頁碼
+                                    // 這包括只有1個按鈕的情況（總頁數=1）
+                                    if (buttonCount <= 5) {
+                                        buttonDetectedPages = maxPageNum;
+                                        totalPages = maxPageNum;
+                                        console.log('✅ Found total pages from buttons (most reliable, few buttons):', totalPages, '(button count:', buttonCount + ')');
+                                    } else {
+                                        // 如果按鈕數量 > 5，可能是分頁器顯示的當前頁附近的按鈕，需要謹慎
+                                        // 只有在沒有其他方法檢測到時才使用
+                                        buttonDetectedPages = maxPageNum;
+                                        totalPages = maxPageNum;
+                                        console.log('⚠️  Found total pages from buttons (many buttons, may be inaccurate):', totalPages, '(button count:', buttonCount + ')');
+                                    }
+                                } else {
+                                    console.log('⚠️  No pagination buttons found');
+                                }
+                            }
+                            
+                            // 方式1.5：查找 "1 / 1892" 或 "1/1892" 格式（備用方法，如果按鈕檢測失敗）
+                            // 注意：如果按鈕檢測已經找到結果，不要使用這個方法（因為按鈕更可靠）
+                            if (buttonDetectedPages === null && totalPages === 1) {
+                                const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
+                                if (slashMatch && slashMatch[1] && slashMatch[2]) {
+                                    const totalPagesFromText = parseInt(slashMatch[2]);
+                                    if (!isNaN(totalPagesFromText) && totalPagesFromText > 0 && totalPagesFromText <= 10000) {
+                                        totalPages = totalPagesFromText;
+                                        console.log('✅ Found total pages from slash format:', totalPages);
+                                    }
+                                }
+                            } else if (buttonDetectedPages !== null) {
+                                console.log('ℹ️  Skipping slash format detection, using button detection result:', buttonDetectedPages);
                             }
                             
                             // 方式2：從 "Total 1227" 文本中提取總記錄數，然後計算總頁數
@@ -1361,16 +1462,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 }
                             }
                             
-                            // 方式3：查找 "1 / 1892" 或 "1/1892" 格式
-                            if (totalPages === 1) {
-                                const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
-                                if (slashMatch && slashMatch[2]) {
-                                    totalPages = parseInt(slashMatch[2]);
-                                    console.log('✅ Found total pages from slash format:', totalPages);
-                                }
-                            }
-                            
-                            // 方式4：查找 "共 1892 頁" 或 "total 1892 pages" 格式
+                            // 方式3：查找 "共 1892 頁" 或 "total 1892 pages" 格式
                             if (totalPages === 1) {
                                 const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
                                 if (totalMatch && totalMatch[1]) {
@@ -1379,23 +1471,17 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 }
                             }
                             
-                            // 方式5：查找分頁按鈕中的最大數字（特別是最後一個按鈕，如 "123"）
+                            // 方式4：查找 input[type="number"] 的 max 屬性（最後備用方法，可能不準確）
+                            // 注意：這個屬性可能會顯示最大可能的頁數，而不是實際的總頁數
+                            // 只在沒有其他方法檢測到時才使用
                             if (totalPages === 1) {
-                                const numberButtons = elPagination.querySelectorAll('.number, .el-pager li.number, button.number');
-                                let maxPageNum = 1;
-                                numberButtons.forEach(btn => {
-                                    const text = btn.textContent.trim();
-                                    const pageNum = parseInt(text);
-                                    // 移除上限限制，允許更大的頁碼（1-10000）
-                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
-                                        if (pageNum > maxPageNum) {
-                                            maxPageNum = pageNum;
-                                        }
+                                const pageInput = elPagination.querySelector('input[type="number"]');
+                                if (pageInput && pageInput.hasAttribute('max')) {
+                                    const maxValue = parseInt(pageInput.getAttribute('max'));
+                                    if (!isNaN(maxValue) && maxValue > 0 && maxValue <= 10000) {
+                                        totalPages = maxValue;
+                                        console.log('⚠️  Found total pages from input max attribute (may be inaccurate, using as last resort):', totalPages);
                                     }
-                                });
-                                if (maxPageNum > 1) {
-                                    totalPages = maxPageNum;
-                                    console.log('✅ Found total pages from buttons:', totalPages);
                                 }
                             }
                         }
@@ -1431,10 +1517,21 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         }
                         
                         // 方式3：檢查是否有「下一頁」按鈕（表示至少有2頁）
+                        // 必須確保按鈕存在、可見、且未被禁用
                         if (totalPages === 1) {
                             const nextLink = document.querySelector('a[rel="next"], .btn-next:not(.disabled), button.el-pagination__next:not(.disabled)');
-                            if (nextLink && nextLink.offsetParent !== null) { // 檢查是否可見
-                                totalPages = 2;
+                            if (nextLink) {
+                                // 檢查是否可見
+                                const isVisible = nextLink.offsetParent !== null;
+                                // 檢查是否被禁用（檢查 disabled 屬性、class 中包含 disabled、或 aria-disabled="true"）
+                                const isDisabled = nextLink.hasAttribute('disabled') || 
+                                                  nextLink.classList.contains('disabled') ||
+                                                  nextLink.getAttribute('aria-disabled') === 'true' ||
+                                                  nextLink.classList.contains('is-disabled');
+                                
+                                if (isVisible && !isDisabled) {
+                                    totalPages = 2;
+                                }
                             }
                         }
                         
@@ -1459,38 +1556,53 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         };
                     });
                     
-                    // 如果總頁數為1，但第一頁有數據，檢查是否有下一頁按鈕
-                    if (paginationInfo.totalPages === 1 && firstPageData.rowCount > 0) {
-                        const hasNextPage = await page.evaluate(() => {
-                            const nextLink = document.querySelector('a[rel="next"], .btn-next:not(.disabled), button.el-pagination__next:not(.disabled)');
-                            return nextLink && nextLink.offsetParent !== null;
+                    // 驗證總頁數：如果第一頁的數據行數很少（<10），且檢測到的總頁數很大（>5），
+                    // 很可能是檢測錯誤，應該檢查實際的按鈕數量
+                    console.log('📄 Detected total pages: ' + paginationInfo.totalPages + ', first page rows: ' + firstPageData.rowCount);
+                    
+                    // 如果檢測到的總頁數 > 5，但第一頁只有少量數據（<=10），可能是檢測錯誤
+                    // 強制使用按鈕檢測的結果，如果按鈕只顯示1個，應該只有1頁
+                    if (paginationInfo.totalPages > 5 && firstPageData.rowCount <= 10) {
+                        console.log('⚠️  Suspicious pagination detection: ' + paginationInfo.totalPages + ' pages but only ' + firstPageData.rowCount + ' rows on first page');
+                        
+                        const buttonRecheck = await page.evaluate(() => {
+                            const elPagination = document.querySelector('.el-pagination');
+                            if (elPagination) {
+                                const elPager = elPagination.querySelector('.el-pager');
+                                let numberButtons = [];
+                                if (elPager) {
+                                    numberButtons = Array.from(elPager.querySelectorAll('li.number'));
+                                }
+                                if (numberButtons.length === 0) {
+                                    numberButtons = Array.from(elPagination.querySelectorAll('.number, button.number'));
+                                }
+                                
+                                let maxPageNum = 1;
+                                let buttonCount = 0;
+                                numberButtons.forEach(btn => {
+                                    const text = btn.textContent.trim();
+                                    const pageNum = parseInt(text);
+                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
+                                        if (pageNum > maxPageNum) {
+                                            maxPageNum = pageNum;
+                                        }
+                                        buttonCount++;
+                                    }
+                                });
+                                
+                                return { buttonCount: buttonCount, maxPageNum: maxPageNum };
+                            }
+                            return null;
                         });
-                        if (hasNextPage) {
-                            paginationInfo.totalPages = 2;
+                        
+                        if (buttonRecheck && buttonRecheck.buttonCount > 0 && buttonRecheck.buttonCount <= 5) {
+                            console.log('✅ Recheck: Found ' + buttonRecheck.buttonCount + ' buttons, max page: ' + buttonRecheck.maxPageNum);
+                            console.log('⚠️  Correcting total pages from ' + paginationInfo.totalPages + ' to ' + buttonRecheck.maxPageNum);
+                            paginationInfo.totalPages = buttonRecheck.maxPageNum;
                         }
                     }
                     
-                    // 獲取分頁組件的詳細信息以便調試
-                    const paginationDebug = await page.evaluate(() => {
-                        const elPagination = document.querySelector('.el-pagination');
-                        const paginationContainer = document.querySelector('.pagination') || 
-                                                   document.querySelector('ul.pagination') ||
-                                                   document.querySelector('[class*="pag"]');
-                        
-                        return {
-                            hasElPagination: !!elPagination,
-                            hasPaginationContainer: !!paginationContainer,
-                            elPaginationHTML: elPagination ? elPagination.innerHTML.substring(0, 500) : null,
-                            paginationContainerHTML: paginationContainer ? paginationContainer.innerHTML.substring(0, 500) : null,
-                            allPaginationElements: Array.from(document.querySelectorAll('[class*="pagination"], [class*="pager"], [class*="page"]')).map(el => ({
-                                className: el.className,
-                                text: el.textContent.trim().substring(0, 50)
-                            }))
-                        };
-                    });
-                    
-                    // ========== 步驟 2：並行爬取所有頁面 ==========
-                    console.log('🚀 Step 2: Starting concurrent scraping for all pages...');
+                    console.log('📄 Final total pages: ' + paginationInfo.totalPages);
                     
                     // 定義併發數量
                     const CONCURRENCY_LIMIT = $concurrency;
@@ -1500,6 +1612,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     for (let i = 2; i <= paginationInfo.totalPages; i++) {
                         pagesToScrape.push({ pageNumber: i });
                     }
+                    
+                    console.log('📋 Pages to scrape: ' + pagesToScrape.length + ' pages (from page 2 to ' + paginationInfo.totalPages + ')');
                     
                     // 順序爬取函數（在第一頁點擊分頁按鈕切換，維持日期條件）
                     const scrapePage = async (pageInfo, index) => {
@@ -1540,19 +1654,19 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 return false;
                             }, pageInfo.pageNumber);
 
-                            // 等待頁面切換和數據加載
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 等待頁面切換和數據加載（優化：減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 300));
                             
-                            // 等待表格更新
-                            await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 15000 }).catch(() => { });
+                            // 等待表格更新（優化：減少超時時間）
+                            await page.waitForSelector('table.el-table__body, .el-table__body', { timeout: 5000 }).catch(() => { });
                             
-                            // 等待數據完全加載（智能等待）
+                            // 等待數據完全加載（智能等待，優化：減少等待間隔和重試次數）
                             let rowCount = 0;
                             let waitAttempts = 0;
-                            const maxWaitAttempts = 10;
+                            const maxWaitAttempts = 5; // 從10減少到5
                             
                             while (waitAttempts < maxWaitAttempts) {
-                                await new Promise(resolve => setTimeout(resolve, 500));
+                                await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
                                 
                                 rowCount = await page.evaluate(() => {
                                     // Element UI 表格結構：外層 div.el-table，內層 table.el-table__body
@@ -1574,7 +1688,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 
                                 // 如果行數穩定（連續兩次檢查相同），認為數據已加載完成
                                 if (waitAttempts > 0 && rowCount > 0) {
-                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
                                     const rowCount2 = await page.evaluate(() => {
                                         // Element UI 表格結構：外層 div.el-table，內層 table.el-table__body
                                         let bodyTable = null;
@@ -1601,8 +1715,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 waitAttempts++;
                             }
                             
-                            // 再等待一下確保數據完全渲染
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 再等待一下確保數據完全渲染（優化：減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
                             
                             // 提取表格資料
                             const tableData = await extractTableData(page);
@@ -1629,9 +1743,32 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     const startTime = Date.now();
                     
                     const otherPagesData = [];
-                    for (let i = 0; i < pagesToScrape.length; i++) {
+                    let shouldStop = false;
+                    
+                    for (let i = 0; i < pagesToScrape.length && !shouldStop; i++) {
+                        // 爬取前的檢查：已經有了要爬取的頁面列表，直接進行爬取
+                        // 不需要過度檢查，因為頁面列表已經確定
+                        
                         const pageData = await scrapePage(pagesToScrape[i], i);
                         otherPagesData.push(pageData);
+                        
+                        // 檢查該頁是否有數據
+                        const pageRowCount = pageData.tables && pageData.tables.length > 0 
+                            ? pageData.tables.reduce((sum, table) => sum + (table.rowCount || 0), 0)
+                            : 0;
+                        
+                        console.log('📊 Page ' + pageData.pageNumber + ' has ' + pageRowCount + ' rows');
+                        
+                        // 如果該頁沒有數據，停止爬取
+                        if (pageRowCount === 0) {
+                            console.log('⚠️  Page ' + pageData.pageNumber + ' has no data, stopping pagination');
+                            shouldStop = true;
+                            break;
+                        }
+                        
+                        // 檢查是否還有下一頁（在點擊後檢查，主要用於檢測是否意外到達最後一頁）
+                        // 只有在當前頁沒有數據時才停止，不應該因為找不到下一頁按鈕就停止
+                        // 因為可能還有更多頁面在 pagesToScrape 列表中
                     }
                     
                     const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
@@ -1692,7 +1829,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         pageInfo: pageInfo,
                         queryParams: {
                             date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_end: dateEndParsed,
+                            player_account: playerAccountParsed
                         },
                         totalPages: allPagesData.length,
                         pages: allPagesData,
@@ -1711,7 +1849,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         url: '$url',
                         queryParams: {
                             date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_end: dateEndParsed,
+                            player_account: playerAccountParsed
                         },
                         domData: domData,
                         success: true
