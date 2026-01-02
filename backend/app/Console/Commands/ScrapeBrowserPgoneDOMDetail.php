@@ -378,13 +378,6 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         });
                         console.error('⚠️  Table not found after retries. Debug info:', JSON.stringify(debugInfo, null, 2));
                         console.log('⚠️  Continuing anyway, will try again later...');
-                        
-                        // 表格查找失敗時截圖
-                        await page.screenshot({ 
-                            path: 'screenshot_02_table_not_found.png',
-                            fullPage: true
-                        });
-                        console.log('📸 Screenshot saved: screenshot_02_table_not_found.png');
                     }
                     
                     // 額外等待確保表格完全渲染
@@ -518,13 +511,6 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 300));
                             
                             console.log('✅ Date range set successfully');
-                            
-                            // 日期選擇後截圖
-                            await page.screenshot({ 
-                                path: 'screenshot_03_after_date_selection.png',
-                                fullPage: true
-                            });
-                            console.log('📸 Screenshot saved: screenshot_03_after_date_selection.png');
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
                             console.error(e);
@@ -839,12 +825,21 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                     return 0;
                                 });
                                 
-                                // 搜尋按鈕點擊後，數據加載完成截圖
-                                await page.screenshot({ 
-                                    path: 'screenshot_04_after_search_clicked.png',
-                                    fullPage: true
+                                // 滾動到分頁組件位置，確保頁數和筆數可見
+                                await page.evaluate(() => {
+                                    const pagination = document.querySelector('.el-pagination');
+                                    if (pagination) {
+                                        pagination.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }
                                 });
-                                console.log('📸 Screenshot saved: screenshot_04_after_search_clicked.png (rows: ' + rowCountAfter + ')');
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                
+                                // 點擊查詢按鈕後的畫面截圖（包含頁數和筆數）
+                                await page.screenshot({ 
+                                    path: 'screenshot_02_after_date_selection.png',
+                                    fullPage: false
+                                });
+                                console.log('📸 Screenshot saved: screenshot_02_after_date_selection.png');
                             }
                         } catch (e) {
                             console.log('⚠️  Error clicking search button: ' + e.message);
@@ -1266,13 +1261,6 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     // 提取第一頁的表格資料
                     const firstPageData = await extractTableData(page);
                     
-                    // 第一頁數據提取後截圖
-                    await page.screenshot({ 
-                        path: 'screenshot_05_first_page_data_extracted.png',
-                        fullPage: true
-                    });
-                    console.log('📸 Screenshot saved: screenshot_05_first_page_data_extracted.png');
-                    
                     if (!firstPageData.found) {
                         const errorMsg = firstPageData.error || 'No table found on first page';
                         console.error('❌ ' + errorMsg);
@@ -1301,6 +1289,15 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             Object.assign(firstPageData, retryData);
                         }
                     }
+                    
+                    // 滾動到分頁組件位置，確保頁數和筆數可見
+                    await page.evaluate(() => {
+                        const pagination = document.querySelector('.el-pagination');
+                        if (pagination) {
+                            pagination.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
                     // 等待分頁組件載入（Element UI 的分頁組件）
                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1610,13 +1607,6 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             // 提取表格資料
                             const tableData = await extractTableData(page);
                             
-                            // 分頁切換後截圖
-                            await page.screenshot({ 
-                                path: 'screenshot_06_page_' + pageInfo.pageNumber + '.png',
-                                fullPage: true
-                            });
-                            console.log('📸 Screenshot saved: screenshot_06_page_' + pageInfo.pageNumber + '.png');
-                            
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
                             
                             return {
@@ -1714,13 +1704,6 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     allTables.forEach(table => {
                         totalRows += table.rowCount || 0;
                     });
-
-                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
-                    await page.screenshot({ 
-                        path: 'scraped_page_screenshot.png',
-                        fullPage: false  // 改為 false，只截可見區域，速度更快
-                    });
-                    console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
                     // 合併所有提取的資料
                     const result = {
@@ -1908,24 +1891,11 @@ class ScrapeBrowserPgoneDOMDetail extends Command
             $this->warn("⚠️ No data to save.");
         }
 
-        // 將所有截圖從臨時目錄移動到永久儲存目錄
+        // 將截圖從臨時目錄移動到永久儲存目錄
+        $timestamp = date('Y-m-d_H-i-s');
         $screenshotFiles = [
-            'screenshot_01_after_page_load.png',
-            'screenshot_02_table_not_found.png',
-            'screenshot_03_after_date_selection.png',
-            'screenshot_04_after_search_clicked.png',
-            'screenshot_05_first_page_data_extracted.png',
-            'scraped_page_screenshot.png'
+            'screenshot_02_after_date_selection.png'
         ];
-        
-        // 查找所有分頁截圖
-        $tempDir = storage_path('app/temp');
-        if (is_dir($tempDir)) {
-            $files = glob($tempDir . '/screenshot_06_page_*.png');
-            foreach ($files as $file) {
-                $screenshotFiles[] = basename($file);
-            }
-        }
         
         foreach ($screenshotFiles as $screenshotFile) {
             $screenshotSrc = storage_path('app/temp/' . $screenshotFile);
