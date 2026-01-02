@@ -21,9 +21,9 @@ class ScrapeBrowserPgoneDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
-     * {--concurrency=4} - 併發數量（可選，預設為 4）
+     * {--concurrency=8} - 併發數量（可選，預設為 8，建議 8-16 以加快速度）
      */
-    protected $signature = 'agent:scrape-pgone-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-pgone-dom-detail {url} {date_start?} {date_end?} {--concurrency=8}';
 
     /**
      * 命令描述
@@ -258,9 +258,15 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     await page.setRequestInterception(true);
                     page.on('request', (req) => {
                         const resourceType = req.resourceType();
-                        // 只阻止圖片、字體、媒體檔案，保留 CSS 和 JS 以確保分頁功能正常
-                        if (['image', 'font', 'media'].includes(resourceType)) {
+                        const url = req.url();
+                        // 更激進的資源攔截：阻止圖片、字體、媒體、CSS（如果不需要樣式）、websocket、manifest 等
+                        // 只保留必要的 JS 和 XHR/fetch 請求
+                        if (['image', 'font', 'media', 'stylesheet', 'websocket', 'manifest', 'texttrack'].includes(resourceType)) {
                             req.abort();
+                        } else if (resourceType === 'script' && !url.includes('api') && !url.includes('ajax') && !url.includes('data')) {
+                            // 阻止非 API 相關的 JS（可選，如果頁面需要這些 JS 可以註釋掉）
+                            // req.abort();
+                            req.continue();
                         } else {
                             req.continue();
                         }
@@ -280,39 +286,24 @@ class ScrapeBrowserPgoneDOMDetail extends Command
 
                     // 導航到目標頁面
                     // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
-                    // timeout: 30000 設定 30 秒超時
+                    // timeout: 20000 減少超時時間以加快速度
                     await page.goto('$url', {
                         waitUntil: 'domcontentloaded',
-                        timeout: 30000
+                        timeout: 20000
                     });
                     
-                    // 頁面載入後截圖
-                    await page.screenshot({ 
-                        path: 'screenshot_01_after_page_load.png',
-                        fullPage: true
-                    });
-                    console.log('📸 Screenshot saved: screenshot_01_after_page_load.png');
-
-                    // 等待表格元素出現（Element UI 表格，支持多種選擇器）
-                    // Element UI 表格結構：外層是 div.el-table，內層是 table.el-table__header 和 table.el-table__body
-                    console.log('🔍 Waiting for Element UI table to load...');
-                    
-                    // 等待頁面完全載入（包括動態內容）
-                    await new Promise(resolve => setTimeout(resolve, 3000));
-                    
-                    // 滾動頁面，確保所有內容都已載入
-                    await page.evaluate(() => {
-                        window.scrollTo(0, 0);
-                    });
+                    // 等待頁面基本載入（減少等待時間）
                     await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // 簡化滾動操作（只滾動一次，減少等待時間）
                     await page.evaluate(() => {
                         window.scrollTo(0, document.body.scrollHeight);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     await page.evaluate(() => {
                         window.scrollTo(0, 0);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
                     let tableFound = false;
                     for (let retry = 0; retry < 15; retry++) {
@@ -355,7 +346,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             // 如果找到表格但沒有數據行，再等待一下
                             if (!tableCheck.hasDataRows) {
                                 console.log('⚠️  Table found but no data rows yet, waiting...');
-                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             } else {
                                 break;
                             }
@@ -363,7 +354,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                         
                         if (retry < 14) {
                             console.log('⏳ Retry ' + (retry + 1) + '/15: Waiting for table...');
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                     
@@ -397,7 +388,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     }
                     
                     // 額外等待確保表格完全渲染
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
 
                     // 解析 date
                     let dateStartParsed = null;
@@ -431,8 +422,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 console.log('⚠️  Could not click Start time input');
                             });
                             
-                            // 等待日期選擇器出現
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 等待日期選擇器出現（減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 300));
                             
                             // 如果提供了 date_start，填入 Start Date
                             if (dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') {
@@ -456,15 +447,15 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                     }
                                 }, dateStartParsed);
                                 
-                                await new Promise(resolve => setTimeout(resolve, 500));
+                                await new Promise(resolve => setTimeout(resolve, 200));
                             }
                             
                             // 如果提供了 date_end，填入 End Date
                             if (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') {
                                 console.log('📅 Filling End Date: ' + dateEndParsed);
                                 
-                                // 等待 End Date input 出現
-                                await page.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 5000 }).catch(() => {
+                                // 等待 End Date input 出現（減少超時時間）
+                                await page.waitForSelector('input.el-input__inner[placeholder="End Date"]', { timeout: 3000 }).catch(() => {
                                     console.log('⚠️  End Date input not found');
                                 });
                                 
@@ -481,14 +472,14 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                     }
                                 }, dateEndParsed);
                                 
-                                await new Promise(resolve => setTimeout(resolve, 500));
+                                await new Promise(resolve => setTimeout(resolve, 200));
                             }
                             
                             // 點擊 OK 按鈕確認日期選擇
                             console.log('🔘 Looking for OK button...');
                             
-                            // 等待 OK 按鈕出現
-                            await page.waitForSelector('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain', { timeout: 5000 }).catch(() => {
+                            // 等待 OK 按鈕出現（減少超時時間）
+                            await page.waitForSelector('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain', { timeout: 3000 }).catch(() => {
                                 console.log('⚠️  OK button not found by selector');
                             });
                             
@@ -523,8 +514,8 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 console.log('⚠️  OK button not found');
                             }
                             
-                            // 等待日期選擇器關閉
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 等待日期選擇器關閉（減少等待時間）
+                            await new Promise(resolve => setTimeout(resolve, 300));
                             
                             console.log('✅ Date range set successfully');
                             
@@ -781,7 +772,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                                 let dataChanged = false;
                                 
                                 // 先等待初始加載
-                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                                 
                                 while (waitAttempts < maxWaitAttempts) {
                                     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1171,7 +1162,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     console.log('🔍 Step 1: Waiting for table to load...');
                     
                     // 額外等待並滾動頁面
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     await page.evaluate(() => {
                         window.scrollTo(0, document.body.scrollHeight);
                     });
@@ -1245,11 +1236,11 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             
                             if (retry < 9) {
                                 console.log('⏳ Retry ' + (retry + 1) + '/10: Waiting for table...');
-                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             }
                         } catch (e) {
                             console.log('⚠️  Retry ' + (retry + 1) + '/10: Error checking table - ' + e.message);
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
                     
@@ -1289,17 +1280,17 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             console.error('📋 Debug info:', JSON.stringify(firstPageData.debug, null, 2));
                         }
                         
-                        // 再等待一下並重試一次
-                        console.log('⏳ Waiting 5 more seconds and retrying...');
-                        await new Promise(resolve => setTimeout(resolve, 5000));
+                        // 再等待一下並重試一次（減少等待時間）
+                        console.log('⏳ Waiting 2 more seconds and retrying...');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
                         await page.evaluate(() => {
                             window.scrollTo(0, document.body.scrollHeight);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                         await page.evaluate(() => {
                             window.scrollTo(0, 0);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                         
                         const retryData = await extractTableData(page);
                         if (!retryData.found) {
@@ -1312,7 +1303,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                     }
                     
                     // 等待分頁組件載入（Element UI 的分頁組件）
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     // 滾動到頁面底部，確保分頁組件可見
                     await page.evaluate(() => {
@@ -1553,7 +1544,7 @@ class ScrapeBrowserPgoneDOMDetail extends Command
                             }, pageInfo.pageNumber);
 
                             // 等待頁面切換和數據加載
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                             
                             // 等待表格更新
                             await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 15000 }).catch(() => { });
