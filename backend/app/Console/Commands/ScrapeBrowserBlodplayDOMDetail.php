@@ -46,11 +46,12 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         $this->info('=== Blodplay DOM Data Scraper ===');
         $this->info("Target URL: {$url}");
         $this->info("Date: {$date}");
+        $this->info("Account Number: {$accountNumber}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
         
         // 使用 API 方式爬取
         $this->info('📡 Using API mode for faster scraping...');
-        $result = $this->scrapeViaApi($url, $date);
+        $result = $this->scrapeViaApi($url, $date, $accountNumber);
         
         if ($result) {
             $this->processScrapedData($result);
@@ -2543,9 +2544,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                     'url' => $result['url'] ?? '',
                     'queryParams' => $queryParams,
                     'totalPages' => $domData['totalPages'] ?? 1,
-                    'totalRows' => $totalRows,
-                    'platformCount' => count($platformData),
-                    'platforms' => array_keys($platformData)
+                    'totalRows' => $totalRows
                 ],
                 'headers' => $headers,
                 'headerCount' => count($headers),
@@ -2616,12 +2615,16 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
      * 使用 API 方式爬取數據
      * @param string $url 目標 URL（用於提取域名）
      * @param string|null $date 日期（YYYYMMDD 格式）
+     * @param string|null $accountNumber 帳號（可選，將作為 player 參數傳遞）
      * @return array|null 返回爬取的數據，格式與瀏覽器方式一致
      */
-    private function scrapeViaApi($url, $date = null)
+    private function scrapeViaApi($url, $date = null, $accountNumber = null)
     {
         $this->info('📡 Starting API scraping...');
-
+        
+        $this->info("👤 Date: {$date}");
+        $this->info("👤 Account Number (player): {$accountNumber}");
+        
         // 解析 URL 獲取域名
         $parsedUrl = parse_url($url);
         $baseUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'];
@@ -2715,6 +2718,11 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             $queryParams['commit_to'] = $commitTo;
         }
         
+        // 如果有帳號，添加 player 參數
+        if ($accountNumber) {
+            $queryParams['player'] = $accountNumber;
+        }
+        
         $this->info('📋 Query params: ' . json_encode($queryParams));
         
         $firstPageResponse = Http::withHeaders($headers)->get($apiUrl, $queryParams);
@@ -2770,7 +2778,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                 $this->info("📦 Processing chunk " . ($chunkIndex + 1) . "/" . count($chunks) . " (" . count($chunk) . " pages)...");
                 
                 // 使用 Http::pool() 的正確方式：傳入回調函數，增加超時時間
-                $responses = Http::timeout(60)->pool(function ($pool) use ($chunk, $apiUrl, $headers, $commitFrom, $commitTo) {
+                $responses = Http::timeout(60)->pool(function ($pool) use ($chunk, $apiUrl, $headers, $commitFrom, $commitTo, $accountNumber) {
                     $requests = [];
                     foreach ($chunk as $page) {
                         $pageQueryParams = [
@@ -2782,6 +2790,11 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                         if ($commitFrom !== null && $commitTo !== null) {
                             $pageQueryParams['commit_from'] = $commitFrom;
                             $pageQueryParams['commit_to'] = $commitTo;
+                        }
+                        
+                        // 如果有帳號，添加 player 參數
+                        if ($accountNumber) {
+                            $pageQueryParams['player'] = $accountNumber;
                         }
                         
                         $requests[$page] = $pool->as($page)->withHeaders($headers)->timeout(60)->get($apiUrl, $pageQueryParams);
@@ -2833,6 +2846,11 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                         if ($commitFrom !== null && $commitTo !== null) {
                             $pageQueryParams['commit_from'] = $commitFrom;
                             $pageQueryParams['commit_to'] = $commitTo;
+                        }
+                        
+                        // 如果有帳號，添加 player 參數
+                        if ($accountNumber) {
+                            $pageQueryParams['player'] = $accountNumber;
                         }
                         
                         $response = Http::withHeaders($headers)->timeout(60)->get($apiUrl, $pageQueryParams);
