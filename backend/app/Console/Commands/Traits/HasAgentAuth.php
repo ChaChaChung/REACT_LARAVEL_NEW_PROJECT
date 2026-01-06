@@ -299,4 +299,67 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 Blodplay Puppeteer cookies 設定程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateBlodplayPuppeteerLoginCode(string $pageVar = 'page'): string
+    {
+        $token = env('BLODPLAY_AGENT_TOKEN', '');
+        $lang = env('BLODPLAY_AGENT_LANG', 'zh-TW');
+        $domain = env('BLODPLAY_AGENT_DOMAIN', '');
+
+        return <<<JS
+            console.log('🔐 Setting authentication cookies...');
+
+            // 根據環境變數設定認證 cookies
+            // 這些 cookies 用於通過需要登入的頁面驗證
+            const cookies = [];
+            const domain = '$domain';
+            
+            // 確保 domain 不為空
+            if (domain && domain !== '') {
+                // 清理 domain（移除協議）
+                let cleanDomain = domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+                
+                // 構建完整的 cookie 對象（包含所有必需字段）
+                if ('$token' && '$token' !== '') {
+                    cookies.push({ 
+                        name: '__Secure-next-auth.session-token', 
+                        value: '$token', 
+                        domain: cleanDomain,
+                        path: '/',
+                        httpOnly: true,
+                        secure: true,
+                        sameSite: 'Lax'
+                    });
+                }
+                if ('$lang' && '$lang' !== '') {
+                    cookies.push({ 
+                        name: 'NEXT_LOCALE', 
+                        value: '$lang', 
+                        domain: cleanDomain,
+                        path: '/',
+                        httpOnly: false,
+                        secure: true,
+                        sameSite: 'Lax'
+                    });
+                }
+
+                // 如果有設定 cookies，則應用到頁面
+                if (cookies.length > 0) {
+                    try {
+                        await {$pageVar}.setCookie(...cookies);
+                        console.log('✅ Cookies set:', cookies.length);
+                    } catch (cookieError) {
+                        console.error('❌ Error setting cookies:', cookieError.message);
+                    }
+                }
+            } else {
+                console.log('⚠️  Domain not configured, skipping cookie setup');
+            }
+        JS;
+    }
 }
