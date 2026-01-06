@@ -24,7 +24,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
      * {account_number?} - 要選擇的帳號（可選參數）
      * {--concurrency=10} - 併發數量（可選，預設為 10）
      */
-    protected $signature = 'agent:scrape-blodplay-dom-detail {url} {date?} {account_number?} {--concurrency=10} {--api : Use API instead of browser automation}';
+    protected $signature = 'agent:scrape-blodplay-dom-detail {url} {date?} {account_number?} {--concurrency=10}';
 
     /**
      * 命令描述
@@ -47,25 +47,20 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         $this->info("Target URL: {$url}");
         $this->info("Date: {$date}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
-
-        // 檢查是否使用 API 模式
-        $useApi = $this->option('api');
         
-        if ($useApi) {
-            // 使用 API 方式爬取
-            $this->info('📡 Using API mode for faster scraping...');
-            $result = $this->scrapeViaApi($url, $date);
-            
-            if ($result) {
-                $this->processScrapedData($result);
-                $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-                $this->info("✅ Data scraping completed!");
-                return 0;
-            }
-            
-            $this->error('❌ Failed to scrape data via API');
-            return 1;
+        // 使用 API 方式爬取
+        $this->info('📡 Using API mode for faster scraping...');
+        $result = $this->scrapeViaApi($url, $date);
+        
+        if ($result) {
+            $this->processScrapedData($result);
+            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+            $this->info("✅ Data scraping completed!");
+            return 0;
         }
+        
+        $this->error('❌ Failed to scrape data via API');
+        return 1;
 
         // 使用瀏覽器自動化方式（原有邏輯）
         // 檢查 Node.js 環境
