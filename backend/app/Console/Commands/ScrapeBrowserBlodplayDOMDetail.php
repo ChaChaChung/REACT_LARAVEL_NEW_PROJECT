@@ -22,9 +22,9 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date?} - 要選擇的日期（可選參數）
      * {account_number?} - 要選擇的帳號（可選參數）
-     * {--concurrency=4} - 併發數量（可選，預設為 4）
+     * {--concurrency=10} - 併發數量（可選，預設為 10）
      */
-    protected $signature = 'agent:scrape-blodplay-dom-detail {url} {date?} {account_number?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-blodplay-dom-detail {url} {date?} {account_number?} {--concurrency=10} {--api : Use API instead of browser automation}';
 
     /**
      * 命令描述
@@ -48,6 +48,26 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         $this->info("Date: {$date}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
+        // 檢查是否使用 API 模式
+        $useApi = $this->option('api');
+        
+        if ($useApi) {
+            // 使用 API 方式爬取
+            $this->info('📡 Using API mode for faster scraping...');
+            $result = $this->scrapeViaApi($url, $date);
+            
+            if ($result) {
+                $this->processScrapedData($result);
+                $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+                $this->info("✅ Data scraping completed!");
+                return 0;
+            }
+            
+            $this->error('❌ Failed to scrape data via API');
+            return 1;
+        }
+
+        // 使用瀏覽器自動化方式（原有邏輯）
         // 檢查 Node.js 環境
         if (!$this->checkNodeJs()) {
             return 1;
@@ -127,8 +147,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
 
         // 獲取 Blodplay 登入流程程式碼片段（主頁面用）
         $cookiesCodeForPage = $this->generateBlodplayPuppeteerLoginCode('page');
-        // 獲取認證 cookies 程式碼片段（併發頁面用，登入後可以重用 cookies）
-        $cookiesCodeForNewPage = $this->generateBlodplayPuppeteerLoginCode('newPage');
 
         // 將 date 轉換為 JavaScript 可用的格式（單個日期）
         // 如果 date 是 YYYYMMDD 格式，轉換為 YYYY-MM-DD
@@ -313,6 +331,23 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                     
                     // 等待頁面載入
                     await new Promise(resolve => setTimeout(resolve, 3000));
+                    
+                    // 保存主頁面的 LocalStorage（用於併發爬取時恢復登入狀態）
+                    const savedLocalStorage = await page.evaluate(() => {
+                        try {
+                            const storage = {};
+                            for (let i = 0; i < window.localStorage.length; i++) {
+                                const key = window.localStorage.key(i);
+                                storage[key] = window.localStorage.getItem(key);
+                            }
+                            return storage;
+                        } catch (e) {
+                            console.log('⚠️  Failed to save localStorage: ' + e.message);
+                            return {};
+                        }
+                    });
+                    
+                    console.log('💾 Saved localStorage: ' + Object.keys(savedLocalStorage).length + ' items');
                     
                     /**
                      * 恢復 LocalStorage 到指定頁面
@@ -1002,7 +1037,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                 
                                 // 檢查是否有表格出現（表示搜索已執行）
                                 const tableExists = await page.evaluate(() => {
-                                    return !!document.querySelector('table');
+                                    return !!document.querySelector('table.table_table__cB3AL');
                                 });
                                 
                                 console.log('📊 Table exists after click: ' + tableExists);
@@ -1015,7 +1050,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                 await new Promise(resolve => setTimeout(resolve, 10000));
                                 
                                 // 等待表格出現（如果有的話，超時時間增加到 15 秒）
-                                await page.waitForSelector('table', { timeout: 15000 }).catch(() => {
+                                await page.waitForSelector('table.table_table__cB3AL', { timeout: 15000 }).catch(() => {
                                     console.log('⚠️  Table not found after 15 seconds, continuing...');
                                 });
                                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1035,45 +1070,151 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                     
                             // 提取分頁信息（無論是否點擊了 Search 按鈕都嘗試提取）
                                 const paginationInfo = await page.evaluate(() => {
-                                    const pagination = document.querySelector('div.el-pagination');
+                                    // 嘗試查找 Material-UI 分頁器
+                                    let pagination = document.querySelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root');
+                                    
+                                    // 如果找不到 Material-UI 分頁器，嘗試查找 Element UI 分頁器
+                                    if (!pagination) {
+                                        pagination = document.querySelector('div.el-pagination');
+                                    }
+                                    
                                     if (!pagination) {
                                         return { found: false, error: 'Pagination not found' };
                                     }
                                     
-                                    // 獲取總數
-                                    const totalSpan = pagination.querySelector('span.el-pagination__total');
-                                    const totalText = totalSpan ? totalSpan.textContent.trim() : '';
-                                    const totalMatch = totalText.match(/Total\s+(\d+)/);
-                                    const total = totalMatch ? parseInt(totalMatch[1]) : 0;
+                                    let total = 0;
+                                    let currentPage = 1;
+                                    let lastPage = 1;
+                                    let pageNumbers = [];
                                     
-                                    // 獲取當前頁
-                                    const activePage = pagination.querySelector('li.number.active');
-                                    const currentPage = activePage ? parseInt(activePage.textContent.trim()) : 1;
-                                    
-                                    // 獲取所有頁碼
-                                    const pageNumbers = [];
-                                    const pageItems = pagination.querySelectorAll('li.number');
-                                    pageItems.forEach(item => {
-                                        if (!item.classList.contains('more')) {
-                                            const pageNum = parseInt(item.textContent.trim());
-                                            if (!isNaN(pageNum)) {
-                                                pageNumbers.push(pageNum);
+                                    // Material-UI 分頁器處理
+                                    if (pagination.classList.contains('MuiPagination-root') || pagination.getAttribute('aria-label') === 'pagination navigation') {
+                                        // 從 "Showing 1 to 10 of 812 entries" 中提取總記錄數
+                                        const showingText = document.querySelector('p.pagination-showing, p[class*="pagination-showing"]');
+                                        if (showingText) {
+                                            const text = showingText.textContent.trim();
+                                            // 匹配 "Showing 1 to 10 of 812 entries"
+                                            const match = text.match(/of\s+(\d+)\s+entries?/i);
+                                            if (match) {
+                                                total = parseInt(match[1]);
                                             }
                                         }
-                                    });
-                                    
-                                    // 獲取最後一頁的頁碼（從分頁器中）
-                                    let lastPage = currentPage;
-                                    if (pageNumbers.length > 0) {
-                                        lastPage = Math.max(...pageNumbers);
-                                    }
-                                    
-                                    // 如果有 "more" 按鈕，嘗試獲取最後一頁
-                                    const lastPageItem = pagination.querySelector('li.number:last-child');
-                                    if (lastPageItem && !lastPageItem.classList.contains('more')) {
-                                        const lastPageNum = parseInt(lastPageItem.textContent.trim());
-                                        if (!isNaN(lastPageNum)) {
-                                            lastPage = lastPageNum;
+                                        
+                                        // 獲取當前頁（查找帶有 Mui-selected 類的按鈕）
+                                        const activeButton = pagination.querySelector('button.Mui-selected, button[aria-current="page"]');
+                                        if (activeButton) {
+                                            const pageText = activeButton.textContent.trim();
+                                            const pageNum = parseInt(pageText);
+                                            if (!isNaN(pageNum)) {
+                                                currentPage = pageNum;
+                                            } else {
+                                                // 從 aria-label 中提取
+                                                const ariaLabel = activeButton.getAttribute('aria-label') || '';
+                                                const labelMatch = ariaLabel.match(/page\s+(\d+)/i);
+                                                if (labelMatch) {
+                                                    currentPage = parseInt(labelMatch[1]);
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 獲取最後一頁（優先從按鈕的 aria-label 中提取）
+                                        // 查找所有包含頁碼的按鈕
+                                        const allPageButtons = pagination.querySelectorAll('button.MuiPaginationItem-page');
+                                        let maxVisiblePage = currentPage;
+                                        
+                                        allPageButtons.forEach(btn => {
+                                            const btnText = btn.textContent.trim();
+                                            const btnPage = parseInt(btnText);
+                                            if (!isNaN(btnPage) && btnPage > maxVisiblePage) {
+                                                maxVisiblePage = btnPage;
+                                            }
+                                            
+                                            // 也檢查 aria-label
+                                            const ariaLabel = btn.getAttribute('aria-label') || '';
+                                            const labelMatch = ariaLabel.match(/page\s+(\d+)/i);
+                                            if (labelMatch) {
+                                                const labelPage = parseInt(labelMatch[1]);
+                                                if (labelPage > maxVisiblePage) {
+                                                    maxVisiblePage = labelPage;
+                                                }
+                                            }
+                                        });
+                                        
+                                        // 查找 "Go to last page" 或包含最大頁碼的按鈕
+                                        const lastPageButton = pagination.querySelector('button[aria-label*="last page"], button[aria-label*="Go to page"]');
+                                        if (lastPageButton) {
+                                            const ariaLabel = lastPageButton.getAttribute('aria-label') || '';
+                                            // 匹配 "Go to page 82"
+                                            const pageMatch = ariaLabel.match(/page\s+(\d+)/i);
+                                            if (pageMatch) {
+                                                lastPage = parseInt(pageMatch[1]);
+                                            } else if (ariaLabel.includes('last page')) {
+                                                // 如果只有 "last page"，使用可見的最大頁碼或根據總記錄數計算
+                                                lastPage = maxVisiblePage;
+                                            }
+                                        } else {
+                                            // 如果找不到最後一頁按鈕，使用可見的最大頁碼
+                                            lastPage = maxVisiblePage;
+                                        }
+                                        
+                                        // 如果無法從按鈕獲取最後一頁，根據總記錄數計算（優先使用這個方法）
+                                        if (total > 0) {
+                                            // 從顯示文本中提取每頁記錄數
+                                            const showingText = document.querySelector('p.pagination-showing, p[class*="pagination-showing"]');
+                                            if (showingText) {
+                                                const text = showingText.textContent.trim();
+                                                // 匹配 "Showing 1 to 10 of 812 entries"
+                                                const toMatch = text.match(/to\s+(\d+)/i);
+                                                const perPage = toMatch ? parseInt(toMatch[1]) : 10;
+                                                const calculatedLastPage = Math.ceil(total / perPage);
+                                                
+                                                // 如果計算出的頁數大於從按鈕獲取的頁數，使用計算出的頁數
+                                                if (calculatedLastPage > lastPage) {
+                                                    lastPage = calculatedLastPage;
+                                                }
+                                            }
+                                        }
+                                        
+                                        // 獲取所有可見的頁碼（重用已聲明的 allPageButtons）
+                                        // allPageButtons 已在上面聲明，直接使用
+                                        allPageButtons.forEach(btn => {
+                                            const btnText = btn.textContent.trim();
+                                            const btnPage = parseInt(btnText);
+                                            if (!isNaN(btnPage)) {
+                                                pageNumbers.push(btnPage);
+                                            }
+                                        });
+                                    } else {
+                                        // Element UI 分頁器處理（原有邏輯）
+                                        const totalSpan = pagination.querySelector('span.el-pagination__total');
+                                        const totalText = totalSpan ? totalSpan.textContent.trim() : '';
+                                        const totalMatch = totalText.match(/Total\s+(\d+)/);
+                                        total = totalMatch ? parseInt(totalMatch[1]) : 0;
+                                        
+                                        const activePage = pagination.querySelector('li.number.active');
+                                        currentPage = activePage ? parseInt(activePage.textContent.trim()) : 1;
+                                        
+                                        const pageItems = pagination.querySelectorAll('li.number');
+                                        pageItems.forEach(item => {
+                                            if (!item.classList.contains('more')) {
+                                                const pageNum = parseInt(item.textContent.trim());
+                                                if (!isNaN(pageNum)) {
+                                                    pageNumbers.push(pageNum);
+                                                }
+                                            }
+                                        });
+                                        
+                                        lastPage = currentPage;
+                                        if (pageNumbers.length > 0) {
+                                            lastPage = Math.max(...pageNumbers);
+                                        }
+                                        
+                                        const lastPageItem = pagination.querySelector('li.number:last-child');
+                                        if (lastPageItem && !lastPageItem.classList.contains('more')) {
+                                            const lastPageNum = parseInt(lastPageItem.textContent.trim());
+                                            if (!isNaN(lastPageNum)) {
+                                                lastPage = lastPageNum;
+                                            }
                                         }
                                     }
                                     
@@ -1088,13 +1229,31 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                 
                                 // 步驟 11: 提取分頁信息後截圖
                                 await takeScreenshot('11_after_extract_pagination');
+                                
+                                // 顯示分頁信息
+                                if (paginationInfo.found) {
+                                    console.log('📊 Pagination Info:');
+                                    console.log('   Total Records: ' + paginationInfo.total);
+                                    console.log('   Total Pages: ' + paginationInfo.lastPage);
+                                    console.log('   Current Page: ' + paginationInfo.currentPage);
+                                    console.log('   Will scrape all ' + paginationInfo.lastPage + ' pages (' + paginationInfo.total + ' records)');
+                                } else {
+                                    console.log('⚠️  Pagination info not found, will only scrape current page');
+                                }
                                     
                                     // 提取表格資料的函數（可重用）
                                     const extractTableData = async () => {
                                         return await page.evaluate(() => {
-                                            const table = document.querySelector('table');
+                                            // 查找指定類名的表格
+                                            let table = document.querySelector('table.table_table__cB3AL');
                                             if (!table) {
-                                                return { found: false, error: 'Table not found' };
+                                                // 如果找不到指定類名的表格，嘗試查找任何表格
+                                                const fallbackTable = document.querySelector('table');
+                                                if (!fallbackTable) {
+                                                    return { found: false, error: 'Table with class table_table__cB3AL not found' };
+                                                }
+                                                console.log('⚠️  Using fallback table (no class match)');
+                                                table = fallbackTable;
                                             }
                                             
                                             // 提取表頭
@@ -1114,8 +1273,11 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                 }
                                             }
                                             
-                                            // 提取資料行
-                                            const tbody = table.querySelector('tbody#ele-table-body');
+                                            // 提取資料行（查找 tbody，如果沒有 id 則查找所有 tbody）
+                                            let tbody = table.querySelector('tbody#ele-table-body');
+                                            if (!tbody) {
+                                                tbody = table.querySelector('tbody');
+                                            }
                                             if (!tbody) {
                                                 return { found: false, error: 'Table body not found' };
                                             }
@@ -1226,7 +1388,37 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                     i++;
                                                 }
                                                 
-                                                if (Object.keys(rowData).length > 0) {
+                                                // 過濾無效數據：檢查是否包含 "Set filters to search" 或其他無效標記
+                                                let isValidRow = Object.keys(rowData).length > 0;
+                                                
+                                                if (isValidRow) {
+                                                    // 檢查所有字段值，如果包含 "Set filters to search" 則跳過
+                                                    for (let key in rowData) {
+                                                        const value = String(rowData[key] || '').toLowerCase();
+                                                        if (value.includes('set filters to search') || 
+                                                            value.includes('no data') ||
+                                                            (value.trim() === '' && key.toLowerCase().includes('round')) ||
+                                                            (key.toLowerCase().includes('round') && value.includes('set filters'))) {
+                                                            isValidRow = false;
+                                                            break;
+                                                        }
+                                                    }
+                                                    
+                                                    // 檢查 details 對象
+                                                    if (isValidRow && rowData.details) {
+                                                        for (let key in rowData.details) {
+                                                            const value = String(rowData.details[key] || '').toLowerCase();
+                                                            if (value.includes('set filters to search') || 
+                                                                value.includes('no data') ||
+                                                                (key.toLowerCase().includes('round') && value.includes('set filters'))) {
+                                                                isValidRow = false;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                if (isValidRow) {
                                                     rows.push(rowData);
                                                 }
                                             }
@@ -1263,7 +1455,10 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                     
                                 // 如果有分頁，使用併發爬取其他頁面
                                 if (paginationInfo.found && paginationInfo.lastPage > 1) {
-                                    console.log('📄 Step 2: Starting concurrent scraping for pages 2 to ' + paginationInfo.lastPage + '...');
+                                    const totalPagesToScrape = paginationInfo.lastPage - 1; // 第1頁已經爬取，所以是 lastPage - 1
+                                    console.log('📄 Step 2: Starting concurrent scraping...');
+                                    console.log('   Total pages to scrape: ' + totalPagesToScrape + ' (pages 2 to ' + paginationInfo.lastPage + ')');
+                                    console.log('   Total records expected: ' + paginationInfo.total);
                                     
                                     // 步驟 13: 開始併發爬取前截圖
                                     await takeScreenshot('13_before_concurrent_scraping');
@@ -1273,6 +1468,8 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                         for (let i = 2; i <= paginationInfo.lastPage; i++) {
                                             pagesToScrape.push(i);
                                         }
+                                        
+                                        console.log('   Created page list: ' + pagesToScrape.length + ' pages');
                                         
                                         /**
                                          * 併發爬取單個頁面的函數
@@ -1306,24 +1503,30 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                     timeout: 30000
                                                 });
                                                 
-                                                // 等待頁面載入
-                                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                                // 等待頁面載入（減少等待時間）
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
                                                 
                                                 // 恢復 LocalStorage（恢復登入狀態）
                                                 await restoreLocalStorage(newPage, savedLocalStorage);
                                                 
                                                 // 等待一下確保 LocalStorage 已恢復
-                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                                await new Promise(resolve => setTimeout(resolve, 300));
                                                 
                                                 // 重新載入頁面以應用 LocalStorage
-                                                await newPage.reload({ waitUntil: 'domcontentloaded' });
+                                                await newPage.reload({ waitUntil: 'networkidle0', timeout: 30000 });
                                                 await new Promise(resolve => setTimeout(resolve, 2000));
                                                 
-                                            // 設置日期（直接填入 input）
+                                                // 等待頁面完全載入
+                                                await newPage.waitForSelector('body', { timeout: 10000 });
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                
+                                            // 設置日期（使用點擊日期選擇器的方式，和主流程一致）
                                             if (dateParsed && dateParsed !== null && dateParsed !== '') {
                                                     try {
-                                                    // 等待日期輸入框出現
-                                                    await newPage.waitForSelector('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly]', { timeout: 10000 });
+                                                    console.log('📅 [Page ' + pageNum + '] Processing date picker for date: ' + dateParsed);
+                                                    
+                                                    // 等待日期輸入框出現（增加超時時間）
+                                                    await newPage.waitForSelector('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly], input[readonly][class*="MuiInputBase"]', { timeout: 20000 });
                                                     
                                                     // 計算日期範圍並填入 input
                                                     const dateFormatted = dateParsed;
@@ -1407,6 +1610,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                     await new Promise(resolve => setTimeout(resolve, 1000));
                                                             
                                                     // 查找並點擊 Search 按鈕（等待按鈕變為可用）
+                                                    console.log('🔍 [Page ' + pageNum + '] Looking for Search button...');
                                                     let searchButtonReady = false;
                                                     let searchButton = null;
                                                     
@@ -1457,6 +1661,8 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                     }
                                                             
                                                     if (searchButton && searchButton.found && searchButtonReady) {
+                                                        console.log('✅ [Page ' + pageNum + '] Search button found and ready, clicking...');
+                                                        
                                                         // 高亮顯示要點擊的按鈕（添加紅色邊框）
                                                         await newPage.evaluate((selector) => {
                                                             const button = document.querySelector(selector);
@@ -1479,6 +1685,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                         
                                                         // 點擊 Search 按鈕
                                                         await newPage.click(searchButton.selector, { timeout: 5000 });
+                                                        console.log('✅ [Page ' + pageNum + '] Search button clicked');
                                                         
                                                         // 移除高亮樣式（恢復原始樣式）
                                                         await newPage.evaluate((selector) => {
@@ -1494,69 +1701,174 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                             }
                                                         }, searchButton.selector);
                                                         
-                                                        // 等待搜索結果載入（增加到 10 秒）
-                                                        await new Promise(resolve => setTimeout(resolve, 10000));
-                                                        // 等待表格出現（超時時間增加到 15 秒）
-                                                        await newPage.waitForSelector('table', { timeout: 15000 }).catch(() => {});
-                                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                                        // 等待搜索結果載入（增加等待時間確保結果加載完成）
+                                                        console.log('⏳ [Page ' + pageNum + '] Waiting for search results to load...');
+                                                        await new Promise(resolve => setTimeout(resolve, 5000));
+                                                        // 等待表格出現
+                                                        await newPage.waitForSelector('table.table_table__cB3AL', { timeout: 15000 }).catch(() => {
+                                                            console.log('⚠️  [Page ' + pageNum + '] Table not found after search');
+                                                        });
+                                                        await new Promise(resolve => setTimeout(resolve, 1000));
+                                                        console.log('✅ [Page ' + pageNum + '] Search results loaded');
+                                                    } else {
+                                                        if (searchButton && searchButton.found) {
+                                                            console.log('⚠️  [Page ' + pageNum + '] Search button found but not ready');
+                                                        } else {
+                                                            console.log('⚠️  [Page ' + pageNum + '] Search button not found');
                                                         }
+                                                    }
                                                     } catch (e) {
                                                     console.log('⚠️  [Page ' + pageNum + '] Error setting date: ' + e.message);
                                                     }
                                                 }
                                                 
-                                                // 跳轉到指定頁碼
-                                                const pageJumped = await newPage.evaluate((targetPage) => {
-                                                    const pagination = document.querySelector('div.el-pagination');
-                                                    if (!pagination) return { success: false, error: 'Pagination not found' };
-                                                    
-                                                    // 查找指定頁碼的按鈕
-                                                    const pageButtons = pagination.querySelectorAll('li.number');
-                                                    let targetButton = null;
-                                                    
-                                                    for (let btn of pageButtons) {
-                                                        if (!btn.classList.contains('more')) {
-                                                            const pageNum = parseInt(btn.textContent.trim());
-                                                            if (pageNum === targetPage) {
-                                                                targetButton = btn;
-                                                                break;
+                                                // 跳轉到指定頁碼（直接使用導航方式，更可靠）
+                                                console.log('🔄 [Page ' + pageNum + '] Navigating to target page...');
+                                                
+                                                // 等待分頁器出現
+                                                await newPage.waitForSelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root, div.el-pagination', { timeout: 10000 }).catch(() => {});
+                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                                
+                                                // 使用導航方式跳轉到目標頁面
+                                                let currentPage = 1;
+                                                let navigationAttempts = 0;
+                                                const maxNavigationAttempts = 100;
+                                                
+                                                while (navigationAttempts < maxNavigationAttempts) {
+                                                    const pageInfo = await newPage.evaluate(() => {
+                                                        const pagination = document.querySelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root, div.el-pagination');
+                                                        if (!pagination) return { found: false };
+                                                        
+                                                        // Material-UI 分頁器
+                                                        if (pagination.classList.contains('MuiPagination-root') || pagination.getAttribute('aria-label') === 'pagination navigation') {
+                                                            const activeButton = pagination.querySelector('button.Mui-selected, button[aria-current="page"]');
+                                                            if (activeButton) {
+                                                                const pageText = activeButton.textContent.trim();
+                                                                const pageNum = parseInt(pageText);
+                                                                if (!isNaN(pageNum)) {
+                                                                    return { found: true, currentPage: pageNum, type: 'mui' };
+                                                                }
+                                                            }
+                                                        } else {
+                                                            // Element UI 分頁器
+                                                            const activePage = pagination.querySelector('li.number.active');
+                                                            if (activePage) {
+                                                                const pageNum = parseInt(activePage.textContent.trim());
+                                                                if (!isNaN(pageNum)) {
+                                                                    return { found: true, currentPage: pageNum, type: 'element' };
+                                                                }
                                                             }
                                                         }
+                                                        
+                                                        return { found: false };
+                                                    });
+                                                    
+                                                    if (!pageInfo.found) {
+                                                        break;
                                                     }
                                                     
-                                                    if (targetButton) {
-                                                        targetButton.click();
-                                                        return { success: true };
+                                                    currentPage = pageInfo.currentPage;
+                                                    
+                                                    // 如果已經到達目標頁，退出循環
+                                                    if (currentPage === pageNum) {
+                                                        console.log('✅ [Page ' + pageNum + '] Reached target page');
+                                                        break;
                                                     }
                                                     
-                                                    // 如果找不到按鈕，嘗試使用輸入框跳轉
-                                                    const jumpInput = pagination.querySelector('input.el-pagination__editor');
-                                                    if (jumpInput) {
-                                                        jumpInput.value = targetPage;
-                                                        jumpInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                                        jumpInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                                        jumpInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                                                        jumpInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
-                                                        return { success: true, method: 'input' };
+                                                    // 決定點擊方向
+                                                    if (currentPage < pageNum) {
+                                                        // 點擊下一頁
+                                                        await newPage.evaluate(() => {
+                                                            const pagination = document.querySelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root, div.el-pagination');
+                                                            if (!pagination) return false;
+                                                            
+                                                            if (pagination.classList.contains('MuiPagination-root') || pagination.getAttribute('aria-label') === 'pagination navigation') {
+                                                                const nextButton = pagination.querySelector('button[aria-label*="next page"], button[aria-label*="Go to next"]');
+                                                                if (nextButton && !nextButton.disabled && !nextButton.classList.contains('Mui-disabled')) {
+                                                                    nextButton.click();
+                                                                    return true;
+                                                                }
+                                                            } else {
+                                                                const nextButton = pagination.querySelector('button.btn-next, .el-pagination .btn-next');
+                                                                if (nextButton && !nextButton.disabled) {
+                                                                    nextButton.click();
+                                                                    return true;
+                                                                }
+                                                            }
+                                                            return false;
+                                                        });
+                                                    } else {
+                                                        // 點擊上一頁
+                                                        await newPage.evaluate(() => {
+                                                            const pagination = document.querySelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root, div.el-pagination');
+                                                            if (!pagination) return false;
+                                                            
+                                                            if (pagination.classList.contains('MuiPagination-root') || pagination.getAttribute('aria-label') === 'pagination navigation') {
+                                                                const prevButton = pagination.querySelector('button[aria-label*="previous page"], button[aria-label*="Go to previous"]');
+                                                                if (prevButton && !prevButton.disabled && !prevButton.classList.contains('Mui-disabled')) {
+                                                                    prevButton.click();
+                                                                    return true;
+                                                                }
+                                                            } else {
+                                                                const prevButton = pagination.querySelector('button.btn-prev, .el-pagination .btn-prev');
+                                                                if (prevButton && !prevButton.disabled) {
+                                                                    prevButton.click();
+                                                                    return true;
+                                                                }
+                                                            }
+                                                            return false;
+                                                        });
                                                     }
                                                     
-                                                    return { success: false, error: 'Cannot find page ' + targetPage };
+                                                    // 等待頁面更新
+                                                    await new Promise(resolve => setTimeout(resolve, 600));
+                                                    navigationAttempts++;
+                                                }
+                                                
+                                                // 最終驗證是否到達目標頁
+                                                const pageJumped = await newPage.evaluate((targetPage) => {
+                                                    const pagination = document.querySelector('nav[aria-label="pagination navigation"], nav.MuiPagination-root, div.el-pagination');
+                                                    if (!pagination) return { success: false };
+                                                    
+                                                    if (pagination.classList.contains('MuiPagination-root') || pagination.getAttribute('aria-label') === 'pagination navigation') {
+                                                        const activeButton = pagination.querySelector('button.Mui-selected, button[aria-current="page"]');
+                                                        if (activeButton) {
+                                                            const pageText = activeButton.textContent.trim();
+                                                            const pageNum = parseInt(pageText);
+                                                            return { success: !isNaN(pageNum) && pageNum === targetPage };
+                                                        }
+                                                    } else {
+                                                        const activePage = pagination.querySelector('li.number.active');
+                                                        if (activePage) {
+                                                            const pageNum = parseInt(activePage.textContent.trim());
+                                                            return { success: !isNaN(pageNum) && pageNum === targetPage };
+                                                        }
+                                                    }
+                                                    return { success: false };
                                                 }, pageNum);
                                                 
                                                 if (pageJumped.success) {
                                                     // 等待頁面載入
-                                                    await new Promise(resolve => setTimeout(resolve, 2500));
-                                                    await newPage.waitForSelector('table tbody#ele-table-body', { timeout: 10000 }).catch(() => {});
-                                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                                    await new Promise(resolve => setTimeout(resolve, 800));
+                                                    await newPage.waitForSelector('table.table_table__cB3AL tbody, table.table_table__cB3AL tbody#ele-table-body', { timeout: 8000 }).catch(() => {});
+                                                    await new Promise(resolve => setTimeout(resolve, 500));
                                                 } else {
-                                                    console.log('⚠️  [Page ' + pageNum + '] Cannot jump to page: ' + (pageJumped.error || 'Unknown error'));
+                                                    console.log('⚠️  [Page ' + pageNum + '] Failed to navigate to target page');
                                                 }
                                                 
+                                                
                                                 // 提取當前頁的數據
+                                                console.log('📊 [Page ' + pageNum + '] Extracting data...');
                                                 const pageData = await newPage.evaluate(() => {
-                                                    const table = document.querySelector('table');
+                                                    // 查找指定類名的表格
+                                                    let table = document.querySelector('table.table_table__cB3AL');
                                                     if (!table) {
-                                                        return { found: false, error: 'Table not found' };
+                                                        // 如果找不到指定類名的表格，嘗試查找任何表格
+                                                        const fallbackTable = document.querySelector('table');
+                                                        if (!fallbackTable) {
+                                                            return { found: false, error: 'Table with class table_table__cB3AL not found' };
+                                                        }
+                                                        table = fallbackTable;
                                                     }
                                                     
                                                     const headers = [];
@@ -1575,7 +1887,11 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                         }
                                                     }
                                                     
-                                                    const tbody = table.querySelector('tbody#ele-table-body');
+                                                    // 提取資料行（查找 tbody，如果沒有 id 則查找所有 tbody）
+                                                    let tbody = table.querySelector('tbody#ele-table-body');
+                                                    if (!tbody) {
+                                                        tbody = table.querySelector('tbody');
+                                                    }
                                                     if (!tbody) {
                                                         return { found: false, error: 'Table body not found' };
                                                     }
@@ -1672,7 +1988,37 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                             i++;
                                                         }
                                                         
-                                                        if (Object.keys(rowData).length > 0) {
+                                                        // 過濾無效數據：檢查是否包含 "Set filters to search" 或其他無效標記
+                                                        let isValidRow = Object.keys(rowData).length > 0;
+                                                        
+                                                        if (isValidRow) {
+                                                            // 檢查所有字段值，如果包含 "Set filters to search" 則跳過
+                                                            for (let key in rowData) {
+                                                                const value = String(rowData[key] || '').toLowerCase();
+                                                                if (value.includes('set filters to search') || 
+                                                                    value.includes('no data') ||
+                                                                    value.trim() === '' ||
+                                                                    (key.toLowerCase().includes('round') && value.includes('set filters'))) {
+                                                                    isValidRow = false;
+                                                                    break;
+                                                                }
+                                                            }
+                                                            
+                                                            // 檢查 details 對象
+                                                            if (isValidRow && rowData.details) {
+                                                                for (let key in rowData.details) {
+                                                                    const value = String(rowData.details[key] || '').toLowerCase();
+                                                                    if (value.includes('set filters to search') || 
+                                                                        value.includes('no data') ||
+                                                                        (key.toLowerCase().includes('round') && value.includes('set filters'))) {
+                                                                        isValidRow = false;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        if (isValidRow) {
                                                             rows.push(rowData);
                                                         }
                                                     }
@@ -1684,6 +2030,12 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                         data: rows
                                                     };
                                                 });
+                                                
+                                                if (pageData.found) {
+                                                    console.log('✅ [Page ' + pageNum + '] Extracted ' + pageData.rowCount + ' rows');
+                                                } else {
+                                                    console.log('⚠️  [Page ' + pageNum + '] Data extraction failed: ' + (pageData.error || 'Unknown error'));
+                                                }
                                                 
                                                 return {
                                                     success: true,
@@ -1727,7 +2079,16 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                             }
                                         });
                                         
-                                console.log('✅ Concurrent scraping completed! Total pages scraped: ' + allPagesData.length);
+                                console.log('✅ Concurrent scraping completed!');
+                                console.log('   Total pages scraped: ' + allPagesData.length + ' / ' + (paginationInfo.lastPage - 1));
+                                console.log('   Total rows collected: ' + allRows.length);
+                                
+                                // 驗證是否爬取了所有頁面
+                                if (allPagesData.length < (paginationInfo.lastPage - 1)) {
+                                    console.log('⚠️  Warning: Not all pages were scraped. Expected ' + (paginationInfo.lastPage - 1) + ' pages, but got ' + allPagesData.length);
+                                } else {
+                                    console.log('✅ All pages scraped successfully!');
+                                }
                                 
                                 // 步驟 14: 併發爬取完成後截圖
                                 await takeScreenshot('14_after_concurrent_scraping');
@@ -1737,11 +2098,19 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                             const mergedTableData = {
                                 found: true,
                                 headers: headers,
-                                totalPages: allPagesData.length,
-                                totalRows: allRows.length,
+                                totalPages: paginationInfo.found ? paginationInfo.lastPage : 1,
+                                totalRecords: paginationInfo.found ? paginationInfo.total : allRows.length,
+                                pagesScraped: allPagesData.length + 1, // +1 因為第1頁已經爬取
+                                rowsCollected: allRows.length,
                                 pages: allPagesData,
                                 data: allRows
                             };
+                            
+                            console.log('📊 Data Summary:');
+                            console.log('   Total Pages: ' + mergedTableData.totalPages);
+                            console.log('   Total Records: ' + mergedTableData.totalRecords);
+                            console.log('   Pages Scraped: ' + mergedTableData.pagesScraped);
+                            console.log('   Rows Collected: ' + mergedTableData.rowsCollected);
                             
                             // 步驟 15: 合併數據後截圖
                             await takeScreenshot('15_after_merge_data');
@@ -2048,8 +2417,38 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             return;
         }
 
-        // 檢查爬取是否成功
-        if (!$result['success']) {
+        // 初始化變量（用於 API 和瀏覽器兩種方式）
+        $allData = [];
+        $totalRows = 0;
+        $headers = [];
+        $totalPages = 1;
+        $mergedFileName = null;
+        $queryParams = [];
+        $timestamp = date('Y-m-d_H-i-s'); // 生成時間戳，用於文件名
+        
+        // 檢查是否為 API 返回的數據格式
+        if (isset($result['domData']) && isset($result['domData']['data'])) {
+            // API 返回的格式：直接處理 domData.data
+            $this->info('✅ Processing API data...');
+            $domData = $result['domData'];
+            $queryParams = [];
+            
+            // 直接使用 domData.data 作為 allData
+            $allData = $domData['data'] ?? [];
+            $totalRows = count($allData);
+            $headers = $domData['headers'] ?? [];
+            $totalPages = $domData['totalPages'] ?? 1;
+            
+            $this->info("📊 Total pages: {$totalPages}");
+            $this->info("📊 Total rows: {$totalRows}");
+            $this->info("📊 Headers: " . count($headers) . " columns");
+            
+            // 跳過後續的表格提取邏輯，直接處理數據
+            goto processData;
+        }
+        
+        // 檢查爬取是否成功（瀏覽器方式）
+        if (isset($result['success']) && !$result['success']) {
             $this->error("❌ Scraping failed: " . ($result['error'] ?? 'Unknown error'));
             return;
         }
@@ -2063,12 +2462,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         // 生成時間戳，用於文件名
         $timestamp = date('Y-m-d_H-i-s');
 
-        // 保存合併後的表格資料到單一 JSON 文件（主要輸出文件）
-        $allData = [];
-        $totalRows = 0;
-        $headers = [];
-        
-        // 首先嘗試從 tables 中提取數據
+        // 首先嘗試從 tables 中提取數據（瀏覽器方式）
         if (!empty($domData['tables'])) {
             foreach ($domData['tables'] as $tableIndex => $table) {
                 if (!empty($table['data'])) {
@@ -2102,9 +2496,9 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                 }
             }
         }
-
-        // 初始化合併後的檔案名稱
-        $mergedFileName = null;
+        
+        // 標籤：處理數據（用於 API 數據直接跳轉到這裡）
+        processData:
         
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
@@ -2221,6 +2615,278 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
+    }
+
+    /**
+     * 使用 API 方式爬取數據
+     * @param string $url 目標 URL（用於提取域名）
+     * @param string|null $date 日期（YYYYMMDD 格式）
+     * @return array|null 返回爬取的數據，格式與瀏覽器方式一致
+     */
+    private function scrapeViaApi($url, $date = null)
+    {
+        $this->info('📡 Starting API scraping...');
+
+        // 解析 URL 獲取域名
+        $parsedUrl = parse_url($url);
+        $baseUrl = $parsedUrl['scheme'] . '://' . $parsedUrl['host'];
+        $apiUrl = $baseUrl . '/api/round/list';
+
+        // 轉換日期為時間戳
+        $commitFrom = null;
+        $commitTo = null;
+        
+        if ($date) {
+            // 如果 date 是 YYYYMMDD 格式，轉換為 YYYY-MM-DD
+            if (strlen($date) === 8 && is_numeric($date)) {
+                $year = substr($date, 0, 4);
+                $month = substr($date, 4, 2);
+                $day = substr($date, 6, 2);
+                $dateFormatted = "{$year}-{$month}-{$day}";
+            } else {
+                $dateFormatted = $date;
+            }
+            
+            // 轉換為時間戳（開始時間：當天 00:00:00 台北時間，結束時間：次日 00:00:00 台北時間）
+            // 使用台北時區（GMT+8）確保時間正確
+            $taipeiTimezone = new \DateTimeZone('Asia/Taipei');
+            $startDateTime = new \DateTime($dateFormatted . ' 00:00:00', $taipeiTimezone);
+            $commitFrom = $startDateTime->getTimestamp();
+            
+            $endDateTime = new \DateTime($dateFormatted . ' 00:00:00', $taipeiTimezone);
+            $endDateTime->modify('+1 day');
+            $commitTo = $endDateTime->getTimestamp();
+            
+            // 創建 UTC 時區對象用於顯示
+            $utcTimezone = new \DateTimeZone('UTC');
+            $startDateTimeUTC = clone $startDateTime;
+            $startDateTimeUTC->setTimezone($utcTimezone);
+            $endDateTimeUTC = clone $endDateTime;
+            $endDateTimeUTC->setTimezone($utcTimezone);
+            
+            $this->info("📅 Date range: {$dateFormatted} (from {$commitFrom} to {$commitTo})");
+            $this->info("📅 Taipei time: {$startDateTime->format('Y-m-d H:i:s')} GMT+8 to {$endDateTime->format('Y-m-d H:i:s')} GMT+8");
+            $this->info("📅 UTC time: {$startDateTimeUTC->format('Y-m-d H:i:s')} UTC to {$endDateTimeUTC->format('Y-m-d H:i:s')} UTC");
+        }
+
+        // 獲取認證 cookies（使用 Blodplay 專用的環境變數）
+        $token = env('BLODPLAY_AGENT_TOKEN', '');
+        $lang = env('BLODPLAY_AGENT_LANG', 'zh-TW');
+        $domain = env('BLODPLAY_AGENT_DOMAIN', $parsedUrl['host']);
+
+        // 構建 cookies 字符串（使用 Blodplay 的 cookie 名稱）
+        $cookies = [];
+        if ($token) {
+            // Blodplay 使用 __Secure-next-auth.session-token
+            $cookies[] = "__Secure-next-auth.session-token={$token}";
+        }
+        if ($lang) {
+            // Blodplay 使用 NEXT_LOCALE
+            $cookies[] = "NEXT_LOCALE={$lang}";
+        }
+        $cookieString = implode('; ', $cookies);
+        
+        if (empty($cookieString)) {
+            $this->warn('⚠️  No authentication cookies found. Trying without cookies...');
+            $this->warn('   Please set BLODPLAY_AGENT_TOKEN and BLODPLAY_AGENT_LANG in .env');
+        } else {
+            $this->info('🔐 Using authentication cookies: ' . (count($cookies)) . ' cookie(s)');
+        }
+
+        // 先獲取第一頁以獲取總頁數
+        $this->info('📄 Fetching first page to get total pages...');
+        $this->info("🔗 API URL: {$apiUrl}");
+        
+        $headers = [
+            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept' => 'application/json',
+            'Accept-Language' => 'zh-TW,zh;q=0.9,en;q=0.8',
+            'Referer' => $url,
+            'Origin' => $baseUrl,
+        ];
+        
+        if (!empty($cookieString)) {
+            $headers['Cookie'] = $cookieString;
+        }
+        
+        $queryParams = [
+            'page' => 1,
+            'page_size' => 10,
+            'abnormal' => false,
+        ];
+        
+        if ($commitFrom !== null && $commitTo !== null) {
+            $queryParams['commit_from'] = $commitFrom;
+            $queryParams['commit_to'] = $commitTo;
+        }
+        
+        $this->info('📋 Query params: ' . json_encode($queryParams));
+        
+        $firstPageResponse = Http::withHeaders($headers)->get($apiUrl, $queryParams);
+
+        if (!$firstPageResponse->successful()) {
+            $this->error('❌ Failed to fetch first page: ' . $firstPageResponse->status());
+            $this->error('Response body: ' . $firstPageResponse->body());
+            $this->error('Request URL: ' . $apiUrl . '?' . http_build_query($queryParams));
+            return null;
+        }
+
+        $firstPageData = $firstPageResponse->json();
+        
+        // 顯示完整的 API 響應（用於調試）
+        $this->info('📋 API Response: ' . json_encode($firstPageData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        
+        // API 返回的數據結構是 { "data": { "count": ..., "total_pages": ..., "results": [...] }, "status": 200 }
+        $apiData = $firstPageData['data'] ?? $firstPageData; // 兼容兩種格式
+        $totalPages = $apiData['total_pages'] ?? 1;
+        $totalCount = $apiData['count'] ?? 0;
+        $results = $apiData['results'] ?? [];
+        
+        $this->info("📊 Total pages: {$totalPages}, Total records: {$totalCount}");
+        $this->info("📊 First page results: " . count($results) . " records");
+        
+        // 如果沒有數據，顯示可能的問題
+        if ($totalCount == 0 && empty($results)) {
+            $this->warn('⚠️  No data returned. Possible issues:');
+            $this->warn('   1. Authentication may have failed (check cookies)');
+            $this->warn('   2. Date range may be incorrect');
+            $this->warn('   3. No data exists for this date range');
+            $this->warn('   4. API endpoint or parameters may be incorrect');
+        }
+
+        // 獲取併發數量
+        $concurrency = (int) $this->option('concurrency');
+        
+        // 收集所有數據
+        $allResults = [];
+        $allResults[] = $results; // 使用已經提取的 results
+
+        // 併發獲取其他頁面
+        if ($totalPages > 1) {
+            // 降低併發數以避免超時（最多 5 個）
+            $actualConcurrency = min($concurrency, 5);
+            $this->info("🚀 Fetching pages 2 to {$totalPages} with concurrency: {$actualConcurrency}...");
+            
+            $pagesToFetch = range(2, $totalPages);
+            $chunks = array_chunk($pagesToFetch, $actualConcurrency);
+            $failedPages = []; // 記錄失敗的頁面，稍後重試
+            
+            foreach ($chunks as $chunkIndex => $chunk) {
+                $this->info("📦 Processing chunk " . ($chunkIndex + 1) . "/" . count($chunks) . " (" . count($chunk) . " pages)...");
+                
+                // 使用 Http::pool() 的正確方式：傳入回調函數，增加超時時間
+                $responses = Http::timeout(60)->pool(function ($pool) use ($chunk, $apiUrl, $headers, $commitFrom, $commitTo) {
+                    $requests = [];
+                    foreach ($chunk as $page) {
+                        $pageQueryParams = [
+                            'page' => $page,
+                            'page_size' => 10,
+                            'abnormal' => false,
+                        ];
+                        
+                        if ($commitFrom !== null && $commitTo !== null) {
+                            $pageQueryParams['commit_from'] = $commitFrom;
+                            $pageQueryParams['commit_to'] = $commitTo;
+                        }
+                        
+                        $requests[$page] = $pool->as($page)->withHeaders($headers)->timeout(60)->get($apiUrl, $pageQueryParams);
+                    }
+                    return $requests;
+                });
+                
+                foreach ($responses as $page => $response) {
+                    // 檢查是否為異常
+                    if ($response instanceof \Exception) {
+                        $this->warn("⚠️  Page {$page} failed: " . $response->getMessage());
+                        $failedPages[] = $page; // 記錄失敗的頁面
+                        continue;
+                    }
+                    
+                    // 檢查是否為 Response 對象且成功
+                    if (method_exists($response, 'successful') && $response->successful()) {
+                        $pageData = $response->json();
+                        // API 返回的數據結構是 { "data": { "results": [...] }, "status": 200 }
+                        $pageApiData = $pageData['data'] ?? $pageData; // 兼容兩種格式
+                        $pageResults = $pageApiData['results'] ?? [];
+                        $allResults[] = $pageResults;
+                        $this->info("✅ Page {$page} fetched: " . count($pageResults) . " records");
+                    } else {
+                        $status = method_exists($response, 'status') ? $response->status() : 'Unknown';
+                        $this->warn("⚠️  Page {$page} failed: " . $status);
+                        $failedPages[] = $page; // 記錄失敗的頁面
+                    }
+                }
+                
+                // 每批之間稍作延遲，避免過於頻繁的請求
+                if ($chunkIndex < count($chunks) - 1) {
+                    usleep(500000); // 0.5 秒延遲
+                }
+            }
+            
+            // 重試失敗的頁面（單個請求，避免超時）
+            if (!empty($failedPages)) {
+                $this->info("🔄 Retrying " . count($failedPages) . " failed pages...");
+                foreach ($failedPages as $page) {
+                    $this->info("🔄 Retrying page {$page}...");
+                    try {
+                        $pageQueryParams = [
+                            'page' => $page,
+                            'page_size' => 10,
+                            'abnormal' => false,
+                        ];
+                        
+                        if ($commitFrom !== null && $commitTo !== null) {
+                            $pageQueryParams['commit_from'] = $commitFrom;
+                            $pageQueryParams['commit_to'] = $commitTo;
+                        }
+                        
+                        $response = Http::withHeaders($headers)->timeout(60)->get($apiUrl, $pageQueryParams);
+                        
+                        if ($response->successful()) {
+                            $pageData = $response->json();
+                            $pageApiData = $pageData['data'] ?? $pageData;
+                            $pageResults = $pageApiData['results'] ?? [];
+                            $allResults[] = $pageResults;
+                            $this->info("✅ Page {$page} retried successfully: " . count($pageResults) . " records");
+                        } else {
+                            $this->warn("⚠️  Page {$page} retry failed: " . $response->status());
+                        }
+                    } catch (\Exception $e) {
+                        $this->warn("⚠️  Page {$page} retry exception: " . $e->getMessage());
+                    }
+                    
+                    // 每次重試之間稍作延遲
+                    usleep(300000); // 0.3 秒延遲
+                }
+            }
+        }
+
+        // 合併所有結果
+        $allData = array_merge(...$allResults);
+        $this->info("📊 Total records fetched: " . count($allData));
+
+        // 轉換為與瀏覽器方式一致的格式
+        $convertedData = [];
+        foreach ($allData as $item) {
+            $row = [];
+            foreach ($item as $key => $value) {
+                // 轉換鍵名為與 DOM 提取一致的格式
+                $cleanKey = str_replace('_', '_', $key);
+                $row[$cleanKey] = $value;
+            }
+            $convertedData[] = $row;
+        }
+
+        // 構建返回數據結構（與瀏覽器方式一致）
+        return [
+            'url' => $url,
+            'domData' => [
+                'totalPages' => $totalPages,
+                'totalRows' => count($allData),
+                'headers' => array_keys($allData[0] ?? []),
+                'data' => $convertedData,
+            ],
+        ];
     }
 }
 
