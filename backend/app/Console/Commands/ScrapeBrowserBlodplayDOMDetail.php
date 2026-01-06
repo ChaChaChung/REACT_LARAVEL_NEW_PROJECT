@@ -151,6 +151,14 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             }
         }
         $dateStartJs = $dateFormatted ? json_encode($dateFormatted) : 'null';
+        
+        // 獲取 scraped_data 目錄的絕對路徑
+        $scrapedDataDir = storage_path('app/scraped_data');
+        // 確保目錄存在
+        if (!is_dir($scrapedDataDir)) {
+            mkdir($scrapedDataDir, 0755, true);
+        }
+        $scrapedDataDirJs = json_encode($scrapedDataDir);
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -278,16 +286,19 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
 
                     $cookiesCodeForPage
 
-                    // 輔助函數：截圖
+                    // 輔助函數：截圖（直接保存到 scraped_data 資料夾）
+                    const scrapedDataDir = $scrapedDataDirJs;
+                    const path = require('path');
                     async function takeScreenshot(stepName, pageObj = page) {
                         try {
                             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                             const filename = 'step_' + stepName + '_' + timestamp + '.png';
+                            const filePath = path.join(scrapedDataDir, filename);
                             await pageObj.screenshot({ 
-                                path: filename,
+                                path: filePath,
                                 fullPage: false
                             });
-                            console.log('📸 Screenshot saved: ' + filename);
+                            console.log('📸 Screenshot saved: ' + filePath);
                         } catch (e) {
                             console.log('⚠️  Failed to take screenshot for step ' + stepName + ': ' + e.message);
                         }
@@ -351,285 +362,678 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                         dateParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
                     }
                     
-                    // 如果提供了 date，處理 Material-UI 日期選擇器
+                    // 如果提供了 date，點擊日期選擇器並選擇日期
                     if (dateParsed && dateParsed !== null && dateParsed !== '') {
                         try {
-                            console.log('📅 Processing Material-UI date picker for date: ' + dateParsed);
+                            console.log('📅 Processing date picker for date: ' + dateParsed);
                             
-                            // 等待 Material-UI 日期選擇器輸入框出現
-                            // 查找包含 MuiInputBase-input 和 Mui-readOnly 類的 input
-                            // 或者查找包含日期範圍格式的 input（例如：2026-01-01 00:00:00 ⇢ 2026-01-01 23:59:59）
+                            // 等待日期輸入框出現
                             await page.waitForSelector('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly], input[readonly][class*="MuiInputBase"]', { timeout: 10000 });
+                            
+                            // 解析日期：YYYY-MM-DD 格式
+                            const [targetYear, targetMonth, targetDay] = dateParsed.split('-').map(Number);
+                            
+                            // 月份數字轉換為英文月份名稱
+                            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                            const targetMonthName = monthNames[targetMonth - 1];
+                            
+                            // 計算結束日期（開始日期 + 1 天）
+                            const startDateObj = new Date(targetYear, targetMonth - 1, targetDay);
+                            const endDateObj = new Date(startDateObj);
+                            endDateObj.setDate(endDateObj.getDate() + 1);
+                            const endYear = endDateObj.getFullYear();
+                            const endMonth = endDateObj.getMonth() + 1;
+                            const endDay = endDateObj.getDate();
+                            const endMonthName = monthNames[endMonth - 1];
+                            
+                            console.log('📅 Target start date: ' + targetYear + '-' + targetMonth + '-' + targetDay + ' (' + targetMonthName + ')');
+                            console.log('📅 Target end date: ' + endYear + '-' + endMonth + '-' + endDay + ' (' + endMonthName + ')');
                             
                             // 點擊打開日期選擇器
                             const dateInputFound = await page.evaluate(() => {
-                                // 查找所有可能的日期選擇器輸入框
-                                const inputs = Array.from(document.querySelectorAll('input[readonly], input.Mui-readOnly'));
+                                const inputs = Array.from(document.querySelectorAll('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly], input[readonly][class*="MuiInputBase"]'));
                                 for (let input of inputs) {
-                                    // 檢查是否包含日期範圍格式（包含 ⇢ 符號）
                                     const value = input.value || '';
                                     if (value.includes('⇢') || value.includes('→') || input.className.includes('MuiInputBase')) {
                                         input.click();
                                         return true;
                                     }
                                 }
+                                if (inputs.length > 0) {
+                                    inputs[0].click();
+                                    return true;
+                                }
                                 return false;
                             });
                             
                             if (!dateInputFound) {
-                                // 如果找不到，嘗試使用選擇器點擊
-                                const dateInput = await page.$('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly]');
-                                if (dateInput) {
-                                    await dateInput.click();
-                                } else {
-                                    await page.click('input[readonly][class*="MuiInputBase"]', { timeout: 5000 });
-                                }
+                                throw new Error('Date input not found or could not be clicked');
                             }
+                            
                             console.log('✅ Clicked date picker input');
+                            
+                            // 等待日期選擇器面板出現
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                             
                             // 步驟 4: 點擊日期選擇器後截圖
                             await takeScreenshot('04_after_click_date_picker');
                             
-                            // 等待日期選擇面板出現
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 設置日期：將單個日期設置為開始和結束日期（同一天）
-                            // 日期格式應該是 YYYY-MM-DD
-                            const dateFormatted = dateParsed; // 假設 dateParsed 已經是 YYYY-MM-DD 格式
-                            
-                            // 等待日期選擇器面板完全載入
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            
-                            // 使用 page.evaluate 來設置日期選擇器中的日期
-                            const dateSetResult = await page.evaluate((targetDate) => {
-                                // 解析目標日期
-                                const [year, month, day] = targetDate.split('-').map(Number);
-                                
-                                // 方法1: 查找 Material-UI 日曆中的日期按鈕
-                                // Material-UI 日期選擇器通常使用 button[role="gridcell"] 或類似的結構
-                                const calendarButtons = document.querySelectorAll('button[role="gridcell"], button[class*="MuiPickersDay"], button[class*="day"]');
-                                let dateSet = false;
-                                
-                                for (let btn of calendarButtons) {
-                                    const btnText = btn.textContent.trim();
-                                    const btnDate = parseInt(btnText);
-                                    // 檢查是否匹配目標日期
-                                    if (!isNaN(btnDate) && btnDate === day) {
-                                        // 檢查按鈕是否可用（不是禁用狀態）
-                                        if (!btn.disabled && !btn.classList.contains('Mui-disabled')) {
-                                            btn.click();
-                                            dateSet = true;
+                            // 導航到正確的月份並選擇開始日期
+                            // 首先導航到目標月份
+                            let navigationComplete = false;
+                            for (let attempt = 0; attempt < 24; attempt++) {
+                                const monthInfo = await page.evaluate((targetYear, targetMonth, targetMonthName) => {
+                                    // 查找日期選擇器容器（支持 react-datepicker 和 Material-UI）
+                                    const datePicker = document.querySelector('.react-datepicker, [role="dialog"], .MuiDialog-root, .MuiPopover-root, [class*="MuiCalendarPicker"]');
+                                    if (!datePicker) {
+                                        return { found: false };
+                                    }
+                                    
+                                    // 獲取當前顯示的月份和年份
+                                    // 支持 react-datepicker 和 Material-UI
+                                    const monthHeaders = datePicker.querySelectorAll('.react-datepicker__current-month, [class*="MuiCalendarPicker"], [class*="MuiPickersCalendarHeader"], h6, [role="heading"], [class*="MuiTypography"]');
+                                    let currentMonth = null;
+                                    let currentYear = null;
+                                    
+                                    // 月份名稱映射
+                                    const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+                                    
+                                    for (let header of monthHeaders) {
+                                        const text = header.textContent || '';
+                                        // 匹配英文月份名稱（例如 "January 2026"）
+                                        const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                        const yearMatch = text.match(/\\d{4}/);
+                                        
+                                        if (monthMatch && yearMatch) {
+                                            currentMonth = monthNames.indexOf(monthMatch[1].toLowerCase()) + 1;
+                                            currentYear = parseInt(yearMatch[0]);
                                             break;
                                         }
                                     }
-                                }
-                                
-                                // 方法2: 如果找不到按鈕，嘗試查找日期輸入框
-                                if (!dateSet) {
-                                    const dateInputs = document.querySelectorAll('input[type="text"], input[type="date"]');
-                                    for (let input of dateInputs) {
-                                        const placeholder = input.placeholder || '';
-                                        const label = input.getAttribute('aria-label') || '';
-                                        const name = input.name || '';
-                                        if (placeholder.toLowerCase().includes('date') || 
-                                            label.toLowerCase().includes('date') ||
-                                            name.toLowerCase().includes('date') ||
-                                            input.className.includes('date')) {
-                                            input.value = targetDate;
-                                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                                        input.dispatchEvent(new Event('blur', { bubbles: true }));
-                                            dateSet = true;
-                                            break;
+                                    
+                                    // 如果找不到，嘗試查找所有文本
+                                    if (!currentMonth) {
+                                        const allTexts = Array.from(datePicker.querySelectorAll('*')).map(el => el.textContent).filter(t => t && t.trim());
+                                        for (let text of allTexts) {
+                                            const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                            const yearMatch = text.match(/\\d{4}/);
+                                            if (monthMatch && yearMatch) {
+                                                currentMonth = monthNames.indexOf(monthMatch[1].toLowerCase()) + 1;
+                                                currentYear = parseInt(yearMatch[0]);
+                                                break;
+                                            }
                                         }
                                     }
+                                    
+                                    // 檢查是否已經在目標月份（使用月份名稱匹配）
+                                    const currentMonthName = currentMonth ? monthNames[currentMonth - 1] : null;
+                                    if (currentMonth === targetMonth && currentYear === targetYear) {
+                                        return { 
+                                            found: true, 
+                                            currentMonth: currentMonth, 
+                                            currentYear: currentYear, 
+                                            currentMonthName: currentMonthName,
+                                            targetMonthName: targetMonthName.toLowerCase(),
+                                            needNavigation: false 
+                                        };
+                                    }
+                                    
+                                    // 計算需要前進或後退
+                                    if (currentMonth && currentYear) {
+                                        const targetDate = new Date(targetYear, targetMonth - 1, 1);
+                                        const currentDate = new Date(currentYear, currentMonth - 1, 1);
+                                        const monthsDiff = (targetDate.getFullYear() - currentDate.getFullYear()) * 12 + (targetDate.getMonth() - currentDate.getMonth());
+                                        
+                                        // 查找導航按鈕（支持 react-datepicker 和 Material-UI）
+                                        const prevButton = datePicker.querySelector('.react-datepicker__navigation--previous, button[aria-label*="previous"], button[aria-label*="Previous"], svg[data-testid*="ArrowLeft"], [class*="MuiIconButton"]');
+                                        const nextButton = datePicker.querySelector('.react-datepicker__navigation--next, button[aria-label*="next"], button[aria-label*="Next"], svg[data-testid*="ArrowRight"], [class*="MuiIconButton"]');
+                                        
+                                        return {
+                                            found: true,
+                                            currentMonth: currentMonth,
+                                            currentYear: currentYear,
+                                            currentMonthName: currentMonthName,
+                                            targetMonthName: targetMonthName.toLowerCase(),
+                                            needNavigation: true,
+                                            monthsDiff: monthsDiff,
+                                            hasPrevButton: !!prevButton,
+                                            hasNextButton: !!nextButton
+                                        };
+                                    }
+                                    
+                                    return { found: false };
+                                }, targetYear, targetMonth, targetMonthName);
+                                
+                                if (!monthInfo.found) {
+                                    console.log('⚠️  Could not find date picker panel');
+                                    break;
                                 }
                                 
-                                return { success: dateSet, date: targetDate, day: day };
-                            }, dateFormatted);
-                            
-                            console.log('📅 Date set result: ' + JSON.stringify(dateSetResult));
-                            
-                            // 如果日期設置失敗，等待一下再重試
-                            if (!dateSetResult.success) {
-                                console.log('⚠️  Date setting failed, waiting and retrying...');
-                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                if (!monthInfo.needNavigation) {
+                                    navigationComplete = true;
+                                    break;
+                                }
+                                
+                                // 執行導航（支持 react-datepicker 和 Material-UI）
+                                if (monthInfo.monthsDiff < 0 && monthInfo.hasPrevButton) {
+                                    // 往前（點擊左箭頭）
+                                    await page.click('.react-datepicker__navigation--previous, button[aria-label*="previous"], button[aria-label*="Previous"], svg[data-testid*="ArrowLeft"]', { timeout: 2000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else if (monthInfo.monthsDiff > 0 && monthInfo.hasNextButton) {
+                                    // 往後（點擊右箭頭）
+                                    await page.click('.react-datepicker__navigation--next, button[aria-label*="next"], button[aria-label*="Next"], svg[data-testid*="ArrowRight"]', { timeout: 2000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else {
+                                    break;
+                                }
                             }
                             
-                            // 等待一下確保日期設置完成
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            
-                            // 步驟 5: 設置日期後截圖
-                            await takeScreenshot('05_after_set_date');
-                            
-                            // 設置 End Time 為 23:59:59
-                            console.log('⏰ Setting End Time to 23:59:59...');
-                            
-                            // 步驟 6: 設置結束時間前截圖
-                            await takeScreenshot('06_before_set_end_time');
-                            
-                            const endTimeSet = await page.evaluate(() => {
-                                // 查找 End Time 的 input
-                                // 根據提供的 HTML 結構：
-                                // <div class="flex flex-col MuiBox-root mui-0">
-                                //   <span class="MuiTypography-root MuiTypography-caption mb-1 mui-ygjr3i">End Time</span>
-                                //   <div class="flex gap-2 MuiBox-root mui-0">
-                                //     <input colon=":" class="font-mono" type="text" value="00:00:00">
+                            // 選擇開始日期
+                            const startDateSelected = await page.evaluate((year, month, day, monthName) => {
+                                // 查找日期選擇器容器（支持 react-datepicker 和 Material-UI）
+                                const datePicker = document.querySelector('.react-datepicker, [role="dialog"], .MuiDialog-root, .MuiPopover-root, [class*="MuiCalendarPicker"]');
+                                if (!datePicker) {
+                                    return { success: false, error: 'Date picker panel not found' };
+                                }
                                 
-                                // 方法1: 通過 span 標籤查找
-                                const endTimeLabels = Array.from(document.querySelectorAll('span.MuiTypography-caption, span[class*="MuiTypography"]'));
-                                let endTimeInput = null;
+                                let startDateClicked = false;
                                 
-                                for (let label of endTimeLabels) {
-                                    const labelText = label.textContent.trim();
-                                    if (labelText === 'End Time' || labelText.includes('End Time')) {
-                                        // 在同一個父容器中查找 input
-                                        const parent = label.closest('div.flex.flex-col, div[class*="flex"]');
-                                        if (parent) {
-                                            // 查找 class 包含 font-mono 的 input
-                                            endTimeInput = parent.querySelector('input.font-mono, input[class*="font-mono"]');
-                                            if (endTimeInput) break;
-                                            
-                                            // 如果找不到，查找所有 input
-                                            const inputs = parent.querySelectorAll('input[type="text"]');
-                                            if (inputs.length > 0) {
-                                                // 通常 End Time 的 input 在第二個或最後一個
-                                                endTimeInput = inputs[inputs.length - 1];
+                                // 方法1: 使用 aria-label 精確匹配（react-datepicker）
+                                // aria-label 格式： "Choose Thursday, January 1st, 2026"
+                                const daySuffix = day === 1 ? 'st' : day === 2 ? 'nd' : day === 3 ? 'rd' : 'th';
+                                const expectedDayText = day + daySuffix; // 例如 "1st", "2nd", "3rd", "4th"
+                                
+                                // 查找所有包含月份名稱的元素
+                                const dateElementsByAria = datePicker.querySelectorAll('[aria-label*="' + monthName + '"], [aria-label*="' + monthName.toLowerCase() + '"]');
+                                for (let el of dateElementsByAria) {
+                                    const ariaLabel = el.getAttribute('aria-label') || '';
+                                    // 檢查 aria-label 是否包含完整的日期信息
+                                    // 必須包含：月份名稱、日期（帶後綴如 1st/2nd/3rd/4th）、年份
+                                    if (ariaLabel.includes(monthName) && ariaLabel.includes(expectedDayText) && ariaLabel.includes(year.toString())) {
+                                        // 檢查是否禁用
+                                        if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                            el.click();
+                                            startDateClicked = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // 如果方法1失敗（可能日期後綴不匹配），嘗試只匹配日期數字
+                                if (!startDateClicked) {
+                                    const dateElementsByAria2 = datePicker.querySelectorAll('[aria-label*="' + monthName + '"], [aria-label*="' + monthName.toLowerCase() + '"]');
+                                    for (let el of dateElementsByAria2) {
+                                        const ariaLabel = el.getAttribute('aria-label') || '';
+                                        // 檢查是否包含月份、日期數字、年份
+                                        if (ariaLabel.includes(monthName) && ariaLabel.includes(' ' + day + ' ') && ariaLabel.includes(year.toString())) {
+                                            if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                                el.click();
+                                                startDateClicked = true;
                                                 break;
                                             }
                                         }
                                     }
                                 }
                                 
-                                // 方法2: 如果方法1失敗，直接查找所有 font-mono 的 input，選擇最後一個（通常是 End Time）
-                                if (!endTimeInput) {
-                                    const allTimeInputs = Array.from(document.querySelectorAll('input.font-mono, input[class*="font-mono"]'));
-                                    if (allTimeInputs.length > 0) {
-                                        // 選擇最後一個（通常是 End Time）
-                                        endTimeInput = allTimeInputs[allTimeInputs.length - 1];
-                                    }
-                                }
-                                
-                                if (endTimeInput) {
-                                    // 聚焦並選中所有文字
-                                    endTimeInput.focus();
-                                    endTimeInput.select();
-                                    
-                                    // 設置時間為 23:59:59
-                                    endTimeInput.value = '23:59:59';
-                                    
-                                    // 觸發多種事件確保值被正確設置
-                                    endTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                    endTimeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                    endTimeInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                                    
-                                    // 檢查是否需要點擊 PM 按鈕
-                                    // 查找同一個父容器中的 PM 按鈕
-                                    const timeContainer = endTimeInput.closest('div.flex.gap-2, div[class*="flex"]');
-                                    if (timeContainer) {
-                                        const pmButton = timeContainer.querySelector('div[class*="cursor-pointer"]:last-child, div:last-child');
-                                        if (pmButton && pmButton.classList.contains('cursor-pointer')) {
-                                            // 檢查 PM 按鈕是否已選中（bg-primary 表示已選中）
-                                            if (!pmButton.classList.contains('bg-primary')) {
-                                                // 如果 PM 按鈕沒有被選中，點擊它
-                                                pmButton.click();
+                                // 方法2: 如果方法1失敗，使用類名和文本匹配（react-datepicker）
+                                if (!startDateClicked) {
+                                    const dateElements = datePicker.querySelectorAll('.react-datepicker__day, div[class*="react-datepicker__day"]');
+                                    for (let el of dateElements) {
+                                        const btnText = el.textContent.trim();
+                                        const btnDate = parseInt(btnText);
+                                        
+                                        // 檢查日期數字是否匹配
+                                        if (!isNaN(btnDate) && btnDate === day) {
+                                            // 檢查 aria-label 是否包含目標月份和年份
+                                            const ariaLabel = el.getAttribute('aria-label') || '';
+                                            if (ariaLabel.includes(monthName) && ariaLabel.includes(year.toString())) {
+                                                // 檢查是否禁用
+                                                if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                                    el.click();
+                                                    startDateClicked = true;
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
-                                    
-                                    return { success: true, value: endTimeInput.value };
                                 }
                                 
-                                return { success: false, error: 'End Time input not found' };
-                            });
+                                // 方法3: 如果還是失敗，嘗試 Material-UI 的方式（向後兼容）
+                                if (!startDateClicked) {
+                                    const dateButtons = datePicker.querySelectorAll('button[role="gridcell"], button[class*="MuiPickersDay"], button[class*="day"], button[aria-label*="day"]');
+                                    for (let btn of dateButtons) {
+                                        const btnText = btn.textContent.trim();
+                                        const btnDate = parseInt(btnText);
+                                        
+                                        if (!isNaN(btnDate) && btnDate === day) {
+                                            if (!btn.disabled && !btn.classList.contains('Mui-disabled') && !btn.hasAttribute('disabled')) {
+                                                btn.click();
+                                                startDateClicked = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                return { success: startDateClicked, year: year, month: month, day: day, monthName: monthName };
+                            }, targetYear, targetMonth, targetDay, targetMonthName);
                             
-                            console.log('⏰ End Time set result: ' + JSON.stringify(endTimeSet));
+                            console.log('📅 Start date selection result: ' + JSON.stringify(startDateSelected));
                             
-                            // 步驟 7: 設置結束時間後截圖
-                            await takeScreenshot('07_after_set_end_time');
+                            if (!startDateSelected.success) {
+                                console.log('⚠️  Failed to select start date');
+                            }
                             
-                            // 等待一下確保時間設置完成
+                            // 等待一下確保開始日期已選擇
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             
-                            // 查找並點擊確認/應用按鈕（Material-UI 日期選擇器通常有 OK 或 Apply 按鈕）
-                            const confirmButton = await page.evaluate(() => {
-                                // 查找可能的確認按鈕
+                            // 如果結束日期和開始日期不在同一個月，需要導航到結束日期的月份
+                            if (endMonth !== targetMonth || endYear !== targetYear) {
+                                console.log('📅 Navigating to end date month: ' + endYear + '-' + endMonth + ' (' + endMonthName + ')');
+                                
+                                // 導航到結束日期的月份
+                                let endNavigationComplete = false;
+                                for (let attempt = 0; attempt < 24; attempt++) {
+                                    const monthInfo = await page.evaluate((targetYear, targetMonth, targetMonthName) => {
+                                        // 查找日期選擇器容器（支持 react-datepicker 和 Material-UI）
+                                        const datePicker = document.querySelector('.react-datepicker, [role="dialog"], .MuiDialog-root, .MuiPopover-root, [class*="MuiCalendarPicker"]');
+                                        if (!datePicker) {
+                                            return { found: false };
+                                        }
+                                        
+                                        // 獲取當前顯示的月份和年份（支持 react-datepicker 和 Material-UI）
+                                        const monthHeaders = datePicker.querySelectorAll('.react-datepicker__current-month, [class*="MuiCalendarPicker"], [class*="MuiPickersCalendarHeader"], h6, [role="heading"], [class*="MuiTypography"]');
+                                        let currentMonth = null;
+                                        let currentYear = null;
+                                        
+                                        // 月份名稱映射
+                                        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+                                        
+                                        for (let header of monthHeaders) {
+                                            const text = header.textContent || '';
+                                            const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                            const yearMatch = text.match(/\\d{4}/);
+                                            
+                                            if (monthMatch && yearMatch) {
+                                                currentMonth = monthNames.indexOf(monthMatch[1].toLowerCase()) + 1;
+                                                currentYear = parseInt(yearMatch[0]);
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (!currentMonth) {
+                                            const allTexts = Array.from(datePicker.querySelectorAll('*')).map(el => el.textContent).filter(t => t && t.trim());
+                                            for (let text of allTexts) {
+                                                const monthMatch = text.match(/(January|February|March|April|May|June|July|August|September|October|November|December)/i);
+                                                const yearMatch = text.match(/\\d{4}/);
+                                                if (monthMatch && yearMatch) {
+                                                    currentMonth = monthNames.indexOf(monthMatch[1].toLowerCase()) + 1;
+                                                    currentYear = parseInt(yearMatch[0]);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        
+                                        if (currentMonth === targetMonth && currentYear === targetYear) {
+                                            return { found: true, currentMonth: currentMonth, currentYear: currentYear, needNavigation: false };
+                                        }
+                                        
+                                        if (currentMonth && currentYear) {
+                                            const targetDate = new Date(targetYear, targetMonth - 1, 1);
+                                            const currentDate = new Date(currentYear, currentMonth - 1, 1);
+                                            const monthsDiff = (targetDate.getFullYear() - currentDate.getFullYear()) * 12 + (targetDate.getMonth() - currentDate.getMonth());
+                                            
+                                            // 查找導航按鈕（支持 react-datepicker 和 Material-UI）
+                                            const prevButton = datePicker.querySelector('.react-datepicker__navigation--previous, button[aria-label*="previous"], button[aria-label*="Previous"], svg[data-testid*="ArrowLeft"], [class*="MuiIconButton"]');
+                                            const nextButton = datePicker.querySelector('.react-datepicker__navigation--next, button[aria-label*="next"], button[aria-label*="Next"], svg[data-testid*="ArrowRight"], [class*="MuiIconButton"]');
+                                            
+                                            return {
+                                                found: true,
+                                                currentMonth: currentMonth,
+                                                currentYear: currentYear,
+                                                needNavigation: true,
+                                                monthsDiff: monthsDiff,
+                                                hasPrevButton: !!prevButton,
+                                                hasNextButton: !!nextButton
+                                            };
+                                        }
+                                        
+                                        return { found: false };
+                                    }, endYear, endMonth, endMonthName);
+                                    
+                                    if (!monthInfo.found) {
+                                        break;
+                                    }
+                                    
+                                    if (!monthInfo.needNavigation) {
+                                        endNavigationComplete = true;
+                                        break;
+                                    }
+                                    
+                                    // 執行導航（支持 react-datepicker 和 Material-UI）
+                                    if (monthInfo.monthsDiff < 0 && monthInfo.hasPrevButton) {
+                                        await page.click('.react-datepicker__navigation--previous, button[aria-label*="previous"], button[aria-label*="Previous"], svg[data-testid*="ArrowLeft"]', { timeout: 2000 }).catch(() => {});
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                    } else if (monthInfo.monthsDiff > 0 && monthInfo.hasNextButton) {
+                                        await page.click('.react-datepicker__navigation--next, button[aria-label*="next"], button[aria-label*="Next"], svg[data-testid*="ArrowRight"]', { timeout: 2000 }).catch(() => {});
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // 選擇結束日期（date + 1 天）
+                            const endDateSelected = await page.evaluate((year, month, day, monthName) => {
+                                // 查找日期選擇器容器（支持 react-datepicker 和 Material-UI）
+                                const datePicker = document.querySelector('.react-datepicker, [role="dialog"], .MuiDialog-root, .MuiPopover-root, [class*="MuiCalendarPicker"]');
+                                if (!datePicker) {
+                                    return { success: false, error: 'Date picker panel not found' };
+                                }
+                                
+                                let endDateClicked = false;
+                                
+                                // 方法1: 使用 aria-label 精確匹配（react-datepicker）
+                                const daySuffix = day === 1 ? 'st' : day === 2 ? 'nd' : day === 3 ? 'rd' : 'th';
+                                const expectedDayText = day + daySuffix; // 例如 "1st", "2nd", "3rd", "4th"
+                                
+                                const dateElementsByAria = datePicker.querySelectorAll('[aria-label*="' + monthName + '"], [aria-label*="' + monthName.toLowerCase() + '"]');
+                                for (let el of dateElementsByAria) {
+                                    const ariaLabel = el.getAttribute('aria-label') || '';
+                                    if (ariaLabel.includes(monthName) && ariaLabel.includes(expectedDayText) && ariaLabel.includes(year.toString())) {
+                                        if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                            el.click();
+                                            endDateClicked = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                // 如果方法1失敗，嘗試只匹配日期數字
+                                if (!endDateClicked) {
+                                    const dateElementsByAria2 = datePicker.querySelectorAll('[aria-label*="' + monthName + '"], [aria-label*="' + monthName.toLowerCase() + '"]');
+                                    for (let el of dateElementsByAria2) {
+                                        const ariaLabel = el.getAttribute('aria-label') || '';
+                                        if (ariaLabel.includes(monthName) && ariaLabel.includes(' ' + day + ' ') && ariaLabel.includes(year.toString())) {
+                                            if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                                el.click();
+                                                endDateClicked = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 方法2: 如果方法1失敗，使用類名和文本匹配（react-datepicker）
+                                if (!endDateClicked) {
+                                    const dateElements = datePicker.querySelectorAll('.react-datepicker__day, div[class*="react-datepicker__day"]');
+                                    for (let el of dateElements) {
+                                        const btnText = el.textContent.trim();
+                                        const btnDate = parseInt(btnText);
+                                        
+                                        if (!isNaN(btnDate) && btnDate === day) {
+                                            const ariaLabel = el.getAttribute('aria-label') || '';
+                                            if (ariaLabel.includes(monthName) && ariaLabel.includes(year.toString())) {
+                                                if (!el.hasAttribute('aria-disabled') || el.getAttribute('aria-disabled') === 'false') {
+                                                    el.click();
+                                                    endDateClicked = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // 方法3: 如果還是失敗，嘗試 Material-UI 的方式（向後兼容）
+                                if (!endDateClicked) {
+                                    const dateButtons = datePicker.querySelectorAll('button[role="gridcell"], button[class*="MuiPickersDay"], button[class*="day"], button[aria-label*="day"]');
+                                    for (let btn of dateButtons) {
+                                        const btnText = btn.textContent.trim();
+                                        const btnDate = parseInt(btnText);
+                                        
+                                        if (!isNaN(btnDate) && btnDate === day) {
+                                            if (!btn.disabled && !btn.classList.contains('Mui-disabled') && !btn.hasAttribute('disabled')) {
+                                                btn.click();
+                                                endDateClicked = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                return { success: endDateClicked, year: year, month: month, day: day, monthName: monthName };
+                            }, endYear, endMonth, endDay, endMonthName);
+                            
+                            console.log('📅 End date selection result: ' + JSON.stringify(endDateSelected));
+                            
+                            // 等待一下確保日期選擇完成
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            
+                            // 步驟 5: 設置日期後截圖
+                            await takeScreenshot('05_after_set_date');
+                            
+                            // 點擊外部區域或確認按鈕來關閉日期選擇器
+                            const closed = await page.evaluate(() => {
+                                // 嘗試點擊遮罩層
+                                const backdrop = document.querySelector('.MuiBackdrop-root, .MuiModal-backdrop, [role="presentation"]');
+                                if (backdrop) {
+                                    backdrop.click();
+                                    return true;
+                                }
+                                
+                                // 嘗試點擊確認按鈕
                                 const buttons = Array.from(document.querySelectorAll('button'));
-                                let confirmBtn = buttons.find(btn => {
+                                const confirmBtn = buttons.find(btn => {
                                     const text = (btn.textContent || '').trim().toLowerCase();
                                     return text === 'ok' || text === 'apply' || text === '確認' || text === '確定';
                                 });
-                                
                                 if (confirmBtn) {
-                                    const uniqueId = 'confirm-btn-' + Date.now();
-                                    confirmBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                    return {
-                                        found: true,
-                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: confirmBtn.textContent.trim()
-                                    };
+                                    confirmBtn.click();
+                                    return true;
                                 }
                                 
-                                // 如果找不到，嘗試查找關閉按鈕或點擊外部區域來關閉選擇器
-                                return { found: false };
+                                return false;
                             });
-
-                            if (confirmButton.found) {
-                                await page.click(confirmButton.selector, { timeout: 5000 });
-                                console.log('✅ Clicked confirm button: ' + confirmButton.text);
-                            } else {
-                                // 如果找不到確認按鈕，嘗試點擊外部區域或按 ESC 鍵來關閉選擇器
-                                await page.keyboard.press('Escape');
-                                console.log('✅ Pressed ESC to close date picker');
-                            }
                             
-                            // 步驟 8: 點擊確認按鈕後截圖
-                            await takeScreenshot('08_after_click_confirm');
+                            if (!closed) {
+                                // 如果找不到，按 ESC 鍵
+                                await page.keyboard.press('Escape');
+                            }
                             
                             // 等待日期選擇器關閉
                             await new Promise(resolve => setTimeout(resolve, 1500));
+                            
+                            // 步驟 6: 關閉日期選擇器後截圖
+                            await takeScreenshot('06_after_close_date_picker');
+                            
+                            // 等待一下確保日期已應用
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                                 
                             // 查找並點擊 Search 按鈕（如果有的話）
-                                const searchButton = await page.evaluate(() => {
-                                const buttons = Array.from(document.querySelectorAll('button'));
-                                let searchBtn = buttons.find(btn => {
-                                    const text = (btn.textContent || '').trim().toLowerCase();
-                                    return text.includes('search') || text.includes('搜尋') || text.includes('查詢');
-                                });
-                                
+                            console.log('🔍 Looking for Search button...');
+                            
+                            // 等待 Search 按鈕變為可用（disabled 屬性被移除）
+                            let searchButtonReady = false;
+                            let searchButton = null;
+                            
+                            // 增加等待時間：最多嘗試 40 次，每次等待 500ms，總共最多 20 秒
+                            for (let attempt = 0; attempt < 40; attempt++) {
+                                searchButton = await page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button[type="submit"], button'));
+                                    let searchBtn = buttons.find(btn => {
+                                        const text = (btn.textContent || '').trim().toLowerCase();
+                                        return text === 'search' || text.includes('search') || text.includes('搜尋') || text.includes('查詢');
+                                    });
+                                    
                                     if (searchBtn) {
-                                        const uniqueId = 'search-btn-' + Date.now();
-                                        searchBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                        return {
-                                            found: true,
-                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: searchBtn.textContent.trim()
-                                        };
+                                        // 檢查按鈕是否可用（沒有 disabled 屬性或 disabled 為 false）
+                                        const isDisabled = searchBtn.hasAttribute('disabled') && searchBtn.getAttribute('disabled') !== 'false';
+                                        const hasDisabledClass = searchBtn.classList.contains('Mui-disabled');
+                                        
+                                        if (!isDisabled && !hasDisabledClass) {
+                                            const uniqueId = 'search-btn-' + Date.now();
+                                            searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                            return {
+                                                found: true,
+                                                ready: true,
+                                                selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                                text: searchBtn.textContent.trim()
+                                            };
+                                        } else {
+                                            return {
+                                                found: true,
+                                                ready: false,
+                                                text: searchBtn.textContent.trim()
+                                            };
+                                        }
                                     }
                                     
                                     return { found: false };
                                 });
-
-                            if (searchButton.found) {
+                                
+                                if (searchButton.found && searchButton.ready) {
+                                    searchButtonReady = true;
+                                    break;
+                                }
+                                
+                                // 如果按鈕存在但還不可用，等待一下再重試
+                                if (searchButton.found && !searchButton.ready) {
+                                    console.log('⏳ Search button found but not ready yet, waiting... (attempt ' + (attempt + 1) + '/40)');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else if (!searchButton.found) {
+                                    // 如果找不到按鈕，等待一下再重試
+                                    console.log('⏳ Search button not found yet, waiting... (attempt ' + (attempt + 1) + '/40)');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                }
+                            }
+                            
+                            if (searchButton && searchButton.found && searchButtonReady) {
+                                // 步驟 7: 點擊 Search 按鈕前截圖
+                                await takeScreenshot('07_before_click_search');
+                                
+                                // 記錄點擊前的按鈕狀態
+                                const beforeClickState = await page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button[type="submit"], button'));
+                                    const searchBtn = buttons.find(btn => {
+                                        const text = (btn.textContent || '').trim().toLowerCase();
+                                        return text === 'search' || text.includes('search') || text.includes('搜尋') || text.includes('查詢');
+                                    });
+                                    
+                                    if (searchBtn) {
+                                        return {
+                                            found: true,
+                                            text: searchBtn.textContent.trim(),
+                                            disabled: searchBtn.hasAttribute('disabled'),
+                                            hasDisabledClass: searchBtn.classList.contains('Mui-disabled'),
+                                            className: searchBtn.className
+                                        };
+                                    }
+                                    return { found: false };
+                                });
+                                
+                                console.log('🔍 Before click - Button state: ' + JSON.stringify(beforeClickState));
+                                
+                                // 高亮顯示要點擊的按鈕（添加紅色邊框）
+                                await page.evaluate((selector) => {
+                                    const button = document.querySelector(selector);
+                                    if (button) {
+                                        // 保存原始樣式
+                                        button.setAttribute('data-original-style', button.getAttribute('style') || '');
+                                        // 添加明顯的紅色邊框和背景色
+                                        button.style.border = '5px solid #ff0000';
+                                        button.style.boxShadow = '0 0 20px rgba(255, 0, 0, 0.8)';
+                                        button.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+                                        button.style.outline = '3px solid #ff0000';
+                                        button.style.outlineOffset = '3px';
+                                        button.style.zIndex = '9999';
+                                        button.style.position = 'relative';
+                                        console.log('✅ Button highlighted with red border');
+                                    }
+                                }, searchButton.selector);
+                                
+                                // 等待一下讓高亮效果顯示
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                
+                                // 截圖顯示高亮的按鈕
+                                await takeScreenshot('07_5_search_button_highlighted');
+                                
+                                // 點擊 Search 按鈕
                                 await page.click(searchButton.selector, { timeout: 5000 });
                                 console.log('✅ Clicked search button: ' + searchButton.text);
                                 
-                                // 步驟 9: 點擊搜索按鈕後截圖
-                                await takeScreenshot('09_after_click_search');
+                                // 移除高亮樣式（恢復原始樣式）
+                                await page.evaluate((selector) => {
+                                    const button = document.querySelector(selector);
+                                    if (button) {
+                                        const originalStyle = button.getAttribute('data-original-style');
+                                        if (originalStyle) {
+                                            button.setAttribute('style', originalStyle);
+                                        } else {
+                                            button.removeAttribute('style');
+                                        }
+                                        button.removeAttribute('data-original-style');
+                                    }
+                                }, searchButton.selector);
                                 
-                                // 等待搜索結果載入
-                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                // 等待一下讓點擊生效
+                                await new Promise(resolve => setTimeout(resolve, 500));
                                 
-                                // 等待表格出現（如果有的話）
-                                await page.waitForSelector('table', { timeout: 10000 }).catch(() => {
-                                    console.log('⚠️  Table not found, continuing...');
-                                });
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                
-                                // 步驟 10: 等待表格載入後截圖
-                                await takeScreenshot('10_after_table_loaded');
+                                // 驗證按鈕是否被點擊（檢查按鈕狀態變化或頁面變化）
+                                const afterClickState = await page.evaluate(() => {
+                                    const buttons = Array.from(document.querySelectorAll('button[type="submit"], button'));
+                                    const searchBtn = buttons.find(btn => {
+                                        const text = (btn.textContent || '').trim().toLowerCase();
+                                        return text === 'search' || text.includes('search') || text.includes('搜尋') || text.includes('查詢');
+                                    });
                                     
-                                // 提取分頁信息
+                                    if (searchBtn) {
+                                        return {
+                                            found: true,
+                                            text: searchBtn.textContent.trim(),
+                                            disabled: searchBtn.hasAttribute('disabled'),
+                                            hasDisabledClass: searchBtn.classList.contains('Mui-disabled'),
+                                            className: searchBtn.className
+                                        };
+                                    }
+                                    return { found: false };
+                                });
+                                
+                                console.log('🔍 After click - Button state: ' + JSON.stringify(afterClickState));
+                                
+                                // 檢查是否有表格出現（表示搜索已執行）
+                                const tableExists = await page.evaluate(() => {
+                                    return !!document.querySelector('table');
+                                });
+                                
+                                console.log('📊 Table exists after click: ' + tableExists);
+                                
+                                // 步驟 8: 點擊搜索按鈕後立即截圖
+                                await takeScreenshot('08_after_click_search');
+                                
+                                // 等待搜索結果載入（增加到 10 秒）
+                                console.log('⏳ Waiting for search results to load (10 seconds)...');
+                                await new Promise(resolve => setTimeout(resolve, 10000));
+                                
+                                // 等待表格出現（如果有的話，超時時間增加到 15 秒）
+                                await page.waitForSelector('table', { timeout: 15000 }).catch(() => {
+                                    console.log('⚠️  Table not found after 15 seconds, continuing...');
+                                });
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                // 步驟 9: 等待表格載入後截圖
+                                await takeScreenshot('09_after_table_loaded');
+                            } else {
+                                // 如果找不到按鈕或按鈕不可用
+                                if (searchButton && searchButton.found && !searchButtonReady) {
+                                    console.log('⚠️  Search button found but not ready after waiting');
+                                    await takeScreenshot('07_search_button_not_ready');
+                                } else {
+                                    console.log('⚠️  Search button not found');
+                                    await takeScreenshot('07_search_button_not_found');
+                                }
+                            }
+                                    
+                            // 提取分頁信息（無論是否點擊了 Search 按鈕都嘗試提取）
                                 const paginationInfo = await page.evaluate(() => {
                                     const pagination = document.querySelector('div.el-pagination');
                                     if (!pagination) {
@@ -915,125 +1319,186 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                                 await newPage.reload({ waitUntil: 'domcontentloaded' });
                                                 await new Promise(resolve => setTimeout(resolve, 2000));
                                                 
-                                            // 設置日期（Material-UI 日期選擇器）
+                                            // 設置日期（直接填入 input）
                                             if (dateParsed && dateParsed !== null && dateParsed !== '') {
                                                     try {
-                                                    // 等待 Material-UI 日期選擇器輸入框出現
-                                                    await newPage.waitForSelector('input.MuiInputBase-input.Mui-readOnly', { timeout: 10000 });
-                                                        
-                                                        // 點擊打開日期選擇器
-                                                    const dateInput = await newPage.$('input.MuiInputBase-input.Mui-readOnly');
-                                                    if (dateInput) {
-                                                        await dateInput.click();
-                                                    } else {
-                                                        await newPage.click('input[class*="MuiInputBase-input"][readonly]', { timeout: 5000 });
-                                                    }
+                                                    // 等待日期輸入框出現
+                                                    await newPage.waitForSelector('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly]', { timeout: 10000 });
                                                     
-                                                    await new Promise(resolve => setTimeout(resolve, 2000));
-                                                    
-                                                    // 設置日期
+                                                    // 計算日期範圍並填入 input
                                                     const dateFormatted = dateParsed;
-                                                    await newPage.evaluate((targetDate) => {
-                                                        const dateInputs = document.querySelectorAll('input[type="text"], input[type="date"]');
-                                                        for (let input of dateInputs) {
-                                                            const placeholder = input.placeholder || '';
-                                                            const label = input.getAttribute('aria-label') || '';
-                                                            if (placeholder.toLowerCase().includes('date') || 
-                                                                label.toLowerCase().includes('date') ||
-                                                                input.className.includes('date')) {
-                                                                input.value = targetDate;
-                                                                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                                                                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                                                                break;
+                                                    const dateSetResult = await newPage.evaluate((startDate) => {
+                                                        try {
+                                                            // 解析開始日期
+                                                            const [year, month, day] = startDate.split('-').map(Number);
+                                                            const startDateObj = new Date(year, month - 1, day);
+                                                            
+                                                            // 計算結束日期（開始日期 + 1 天）
+                                                            const endDateObj = new Date(startDateObj);
+                                                            endDateObj.setDate(endDateObj.getDate() + 1);
+                                                            
+                                                            // 格式化日期為 YYYY-MM-DD
+                                                            const formatDate = (date) => {
+                                                                const y = date.getFullYear();
+                                                                const m = String(date.getMonth() + 1).padStart(2, '0');
+                                                                const d = String(date.getDate()).padStart(2, '0');
+                                                                return y + '-' + m + '-' + d;
+                                                            };
+                                                            
+                                                            // 構建日期範圍字符串：YYYY-MM-DD 00:00:00 ⇢ YYYY-MM-DD 00:00:00
+                                                            const dateRangeValue = formatDate(startDateObj) + ' 00:00:00 ⇢ ' + formatDate(endDateObj) + ' 00:00:00';
+                                                            
+                                                            // 查找日期輸入框
+                                                            const dateInputs = Array.from(document.querySelectorAll('input.MuiInputBase-input.Mui-readOnly, input[class*="MuiInputBase-input"][readonly], input[readonly][class*="MuiInputBase"]'));
+                                                            
+                                                            let dateInput = null;
+                                                            
+                                                            // 優先查找包含 ⇢ 符號的 input（日期範圍輸入框）
+                                                            for (let input of dateInputs) {
+                                                                const value = input.value || '';
+                                                                if (value.includes('⇢') || value.includes('→')) {
+                                                                    dateInput = input;
+                                                                    break;
+                                                                }
                                                             }
+                                                            
+                                                            // 如果找不到，使用第一個符合條件的 input
+                                                            if (!dateInput && dateInputs.length > 0) {
+                                                                dateInput = dateInputs[0];
+                                                            }
+                                                            
+                                                            if (dateInput) {
+                                                                // 設置值
+                                                                dateInput.value = dateRangeValue;
+                                                                
+                                                                // 觸發多種事件確保值被正確設置
+                                                                dateInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                dateInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                                                dateInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                                
+                                                                // 嘗試觸發 React 的 onChange 事件
+                                                                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                                                nativeInputValueSetter.call(dateInput, dateRangeValue);
+                                                                
+                                                                const inputEvent = new Event('input', { bubbles: true });
+                                                                dateInput.dispatchEvent(inputEvent);
+                                                                
+                                                                const changeEvent = new Event('change', { bubbles: true });
+                                                                dateInput.dispatchEvent(changeEvent);
+                                                                
+                                                                return { 
+                                                                    success: true, 
+                                                                    dateRange: dateRangeValue
+                                                                };
+                                                            }
+                                                            
+                                                            return { success: false, error: 'Date input not found' };
+                                                        } catch (e) {
+                                                            return { success: false, error: e.message };
                                                         }
                                                     }, dateFormatted);
                                                     
-                                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                                    
-                                                    // 設置 End Time 為 23:59:59
-                                                    await newPage.evaluate(() => {
-                                                        const endTimeLabels = Array.from(document.querySelectorAll('span.MuiTypography-caption'));
-                                                        for (let label of endTimeLabels) {
-                                                            if (label.textContent.trim() === 'End Time') {
-                                                                const parent = label.closest('div.flex.flex-col, div[class*="flex"]');
-                                                                if (parent) {
-                                                                    const endTimeInput = parent.querySelector('input[type="text"].font-mono');
-                                                                    if (endTimeInput) {
-                                                                        endTimeInput.focus();
-                                                                        endTimeInput.select();
-                                                                        endTimeInput.value = '23:59:59';
-                                                                        endTimeInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                                                        endTimeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                                                        endTimeInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                                                                        
-                                                                        const timeContainer = endTimeInput.closest('div.flex.gap-2, div[class*="flex"]');
-                                                                        if (timeContainer) {
-                                                                            const pmButton = timeContainer.querySelector('div[class*="cursor-pointer"]:last-child, div:last-child');
-                                                                            if (pmButton && pmButton.classList.contains('cursor-pointer')) {
-                                                                                if (!pmButton.classList.contains('bg-primary')) {
-                                                                                    pmButton.click();
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        break;
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    });
-                                                    
-                                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                                    
-                                                    // 查找並點擊確認按鈕
-                                                    const confirmButton = await newPage.evaluate(() => {
-                                                        const buttons = Array.from(document.querySelectorAll('button'));
-                                                        let confirmBtn = buttons.find(btn => {
-                                                            const text = (btn.textContent || '').trim().toLowerCase();
-                                                            return text === 'ok' || text === 'apply' || text === '確認' || text === '確定';
-                                                        });
-                                                        if (confirmBtn) {
-                                                            const uniqueId = 'confirm-btn-' + Date.now();
-                                                            confirmBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                                                return {
-                                                                    found: true,
-                                                                    selector: '[data-puppeteer-id="' + uniqueId + '"]'
-                                                                };
-                                                            }
-                                                            return { found: false };
-                                                        });
-                                                        
-                                                    if (confirmButton.found) {
-                                                        await newPage.click(confirmButton.selector, { timeout: 5000 });
+                                                    if (dateSetResult.success) {
+                                                        console.log('✅ [Page ' + pageNum + '] Date range set: ' + dateSetResult.dateRange);
                                                     } else {
-                                                        await newPage.keyboard.press('Escape');
+                                                        console.log('⚠️  [Page ' + pageNum + '] Date setting failed: ' + (dateSetResult.error || 'Unknown error'));
                                                     }
                                                     
-                                                            await new Promise(resolve => setTimeout(resolve, 1500));
+                                                    await new Promise(resolve => setTimeout(resolve, 1000));
                                                             
-                                                    // 查找並點擊 Search 按鈕
-                                                            const searchButton = await newPage.evaluate(() => {
-                                                        const buttons = Array.from(document.querySelectorAll('button'));
-                                                        let searchBtn = buttons.find(btn => {
-                                                            const text = (btn.textContent || '').trim().toLowerCase();
-                                                            return text.includes('search') || text.includes('搜尋') || text.includes('查詢');
-                                                                });
-                                                                if (searchBtn) {
+                                                    // 查找並點擊 Search 按鈕（等待按鈕變為可用）
+                                                    let searchButtonReady = false;
+                                                    let searchButton = null;
+                                                    
+                                                    // 增加等待時間：最多嘗試 40 次，每次等待 500ms，總共最多 20 秒
+                                                    for (let attempt = 0; attempt < 40; attempt++) {
+                                                        searchButton = await newPage.evaluate(() => {
+                                                            const buttons = Array.from(document.querySelectorAll('button[type="submit"], button'));
+                                                            let searchBtn = buttons.find(btn => {
+                                                                const text = (btn.textContent || '').trim().toLowerCase();
+                                                                return text === 'search' || text.includes('search') || text.includes('搜尋') || text.includes('查詢');
+                                                            });
+                                                            
+                                                            if (searchBtn) {
+                                                                // 檢查按鈕是否可用（沒有 disabled 屬性或 disabled 為 false）
+                                                                const isDisabled = searchBtn.hasAttribute('disabled') && searchBtn.getAttribute('disabled') !== 'false';
+                                                                const hasDisabledClass = searchBtn.classList.contains('Mui-disabled');
+                                                                
+                                                                if (!isDisabled && !hasDisabledClass) {
                                                                     const uniqueId = 'search-btn-' + Date.now();
                                                                     searchBtn.setAttribute('data-puppeteer-id', uniqueId);
                                                                     return {
                                                                         found: true,
+                                                                        ready: true,
                                                                         selector: '[data-puppeteer-id="' + uniqueId + '"]'
                                                                     };
+                                                                } else {
+                                                                    return {
+                                                                        found: true,
+                                                                        ready: false
+                                                                    };
                                                                 }
-                                                                return { found: false };
-                                                            });
+                                                            }
                                                             
-                                                            if (searchButton.found) {
-                                                                await newPage.click(searchButton.selector, { timeout: 5000 });
-                                                                await new Promise(resolve => setTimeout(resolve, 3000));
-                                                        await newPage.waitForSelector('table', { timeout: 10000 }).catch(() => {});
-                                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                            return { found: false };
+                                                        });
+                                                        
+                                                        if (searchButton.found && searchButton.ready) {
+                                                            searchButtonReady = true;
+                                                            break;
+                                                        }
+                                                        
+                                                        // 如果按鈕存在但還不可用，等待一下再重試
+                                                        if (searchButton.found && !searchButton.ready) {
+                                                            await new Promise(resolve => setTimeout(resolve, 500));
+                                                        } else if (!searchButton.found) {
+                                                            await new Promise(resolve => setTimeout(resolve, 500));
+                                                        }
+                                                    }
+                                                            
+                                                    if (searchButton && searchButton.found && searchButtonReady) {
+                                                        // 高亮顯示要點擊的按鈕（添加紅色邊框）
+                                                        await newPage.evaluate((selector) => {
+                                                            const button = document.querySelector(selector);
+                                                            if (button) {
+                                                                // 保存原始樣式
+                                                                button.setAttribute('data-original-style', button.getAttribute('style') || '');
+                                                                // 添加明顯的紅色邊框和背景色
+                                                                button.style.border = '5px solid #ff0000';
+                                                                button.style.boxShadow = '0 0 20px rgba(255, 0, 0, 0.8)';
+                                                                button.style.backgroundColor = 'rgba(255, 0, 0, 0.2)';
+                                                                button.style.outline = '3px solid #ff0000';
+                                                                button.style.outlineOffset = '3px';
+                                                                button.style.zIndex = '9999';
+                                                                button.style.position = 'relative';
+                                                            }
+                                                        }, searchButton.selector);
+                                                        
+                                                        // 等待一下讓高亮效果顯示
+                                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                                        
+                                                        // 點擊 Search 按鈕
+                                                        await newPage.click(searchButton.selector, { timeout: 5000 });
+                                                        
+                                                        // 移除高亮樣式（恢復原始樣式）
+                                                        await newPage.evaluate((selector) => {
+                                                            const button = document.querySelector(selector);
+                                                            if (button) {
+                                                                const originalStyle = button.getAttribute('data-original-style');
+                                                                if (originalStyle) {
+                                                                    button.setAttribute('style', originalStyle);
+                                                                } else {
+                                                                    button.removeAttribute('style');
+                                                                }
+                                                                button.removeAttribute('data-original-style');
+                                                            }
+                                                        }, searchButton.selector);
+                                                        
+                                                        // 等待搜索結果載入（增加到 10 秒）
+                                                        await new Promise(resolve => setTimeout(resolve, 10000));
+                                                        // 等待表格出現（超時時間增加到 15 秒）
+                                                        await newPage.waitForSelector('table', { timeout: 15000 }).catch(() => {});
+                                                        await new Promise(resolve => setTimeout(resolve, 2000));
                                                         }
                                                     } catch (e) {
                                                     console.log('⚠️  [Page ' + pageNum + '] Error setting date: ' + e.message);
@@ -1293,11 +1758,12 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                         
                                         // 截圖表格
                                         console.log('📸 Taking screenshot of table...');
+                                        const tableScreenshotPath = path.join(scrapedDataDir, 'table_screenshot.png');
                                         await page.screenshot({ 
-                                            path: 'table_screenshot.png',
+                                            path: tableScreenshotPath,
                                             fullPage: false
                                         });
-                                        console.log('✅ Screenshot saved: table_screenshot.png');
+                                        console.log('✅ Screenshot saved: ' + tableScreenshotPath);
                                         
                                         // 返回表格資料
                                         return tableDataFile;
@@ -1305,20 +1771,13 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                                         console.log('⚠️  Failed to merge table data');
                                         return { success: false, error: 'Failed to merge table data' };
                                     }
-                                } else {
-                                    console.log('⚠️  Search button not found');
-                                    // 即使沒找到按鈕也截圖
-                                    await page.screenshot({ 
-                                        path: 'date_search_button_not_found_screenshot.png',
-                                    fullPage: false
-                                });
-                            }
                         } catch (e) {
                             console.log('⚠️  Error processing date range: ' + e.message);
                             console.log('Stack trace: ' + e.stack);
                             // 即使出錯也截圖
+                            const dateErrorPath = path.join(scrapedDataDir, 'date_error_screenshot.png');
                             await page.screenshot({ 
-                                path: 'date_error_screenshot.png',
+                                path: dateErrorPath,
                                 fullPage: false
                             });
                         }
