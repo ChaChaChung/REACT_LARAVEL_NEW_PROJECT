@@ -55,35 +55,10 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         
         if ($result) {
             $this->processScrapedData($result);
-            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-            $this->info("✅ Data scraping completed!");
             return 0;
         }
         
         $this->error('❌ Failed to scrape data via API');
-        return 1;
-
-        // 使用瀏覽器自動化方式（原有邏輯）
-        // 檢查 Node.js 環境
-        if (!$this->checkNodeJs()) {
-            return 1;
-        }
-        
-        // 獲取併發數量
-        $concurrency = (int) $this->option('concurrency');
-
-        // 創建並執行 Puppeteer 腳本（爬取表格數據）
-        $scriptPath = $this->createPuppeteerScript($url, $date, $concurrency);
-        $result = $this->runPuppeteerScript($scriptPath);
-
-        if ($result) {
-            $this->processScrapedData($result);
-            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-            $this->info("✅ Data scraping completed!");
-            return 0;
-        }
-
-        $this->error('❌ Failed to scrape data');
         return 1;
     }
 
@@ -2325,9 +2300,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                     $this->info("📸 Screenshot saved: {$screenshotDst}");
                 }
             }
-            
-            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-            $this->info("✅ Data processing completed!");
             return;
         }
         
@@ -2407,9 +2379,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             } else {
                 $this->warn('⚠️  No table data found in result');
             }
-            
-            $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-            $this->info("✅ Login and navigation process completed!");
             return;
         }
 
@@ -2581,8 +2550,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                 $platformFileName = "scraped_data/platform_{$safePlatformName}_{$timestamp}.json";
                 Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
             }
-            
-            $this->info("✅ All platform-specific files saved!");
         }
 
         if (!$mergedFileName) {
@@ -2661,10 +2628,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             $startDateTimeUTC->setTimezone($utcTimezone);
             $endDateTimeUTC = clone $endDateTime;
             $endDateTimeUTC->setTimezone($utcTimezone);
-            
-            $this->info("📅 Date range: {$dateFormatted} (from {$commitFrom} to {$commitTo})");
-            $this->info("📅 Taipei time: {$startDateTime->format('Y-m-d H:i:s')} GMT+8 to {$endDateTime->format('Y-m-d H:i:s')} GMT+8");
-            $this->info("📅 UTC time: {$startDateTimeUTC->format('Y-m-d H:i:s')} UTC to {$endDateTimeUTC->format('Y-m-d H:i:s')} UTC");
         }
 
         // 獲取認證 cookies（使用 Blodplay 專用的環境變數）
@@ -2723,8 +2686,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             $queryParams['player'] = $accountNumber;
         }
         
-        $this->info('📋 Query params: ' . json_encode($queryParams));
-        
         $firstPageResponse = Http::withHeaders($headers)->get($apiUrl, $queryParams);
 
         if (!$firstPageResponse->successful()) {
@@ -2736,25 +2697,15 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
 
         $firstPageData = $firstPageResponse->json();
         
-        // 顯示完整的 API 響應（用於調試）
-        $this->info('📋 API Response: ' . json_encode($firstPageData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-        
-        // API 返回的數據結構是 { "data": { "count": ..., "total_pages": ..., "results": [...] }, "status": 200 }
-        $apiData = $firstPageData['data'] ?? $firstPageData; // 兼容兩種格式
+        // 取得 API 資料
+        $apiData = $firstPageData['data'] ?? $firstPageData;
         $totalPages = $apiData['total_pages'] ?? 1;
         $totalCount = $apiData['count'] ?? 0;
         $results = $apiData['results'] ?? [];
         
-        $this->info("📊 Total pages: {$totalPages}, Total records: {$totalCount}");
-        $this->info("📊 First page results: " . count($results) . " records");
-        
         // 如果沒有數據，顯示可能的問題
         if ($totalCount == 0 && empty($results)) {
-            $this->warn('⚠️  No data returned. Possible issues:');
-            $this->warn('   1. Authentication may have failed (check cookies)');
-            $this->warn('   2. Date range may be incorrect');
-            $this->warn('   3. No data exists for this date range');
-            $this->warn('   4. API endpoint or parameters may be incorrect');
+            $this->warn('⚠️  No data returned.');
         }
 
         // 獲取併發數量
@@ -2768,15 +2719,12 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         if ($totalPages > 1) {
             // 降低併發數以避免超時（最多 5 個）
             $actualConcurrency = min($concurrency, 5);
-            $this->info("🚀 Fetching pages 2 to {$totalPages} with concurrency: {$actualConcurrency}...");
             
             $pagesToFetch = range(2, $totalPages);
             $chunks = array_chunk($pagesToFetch, $actualConcurrency);
             $failedPages = []; // 記錄失敗的頁面，稍後重試
             
             foreach ($chunks as $chunkIndex => $chunk) {
-                $this->info("📦 Processing chunk " . ($chunkIndex + 1) . "/" . count($chunks) . " (" . count($chunk) . " pages)...");
-                
                 // 使用 Http::pool() 的正確方式：傳入回調函數，增加超時時間
                 $responses = Http::timeout(60)->pool(function ($pool) use ($chunk, $apiUrl, $headers, $commitFrom, $commitTo, $accountNumber) {
                     $requests = [];
@@ -2817,7 +2765,6 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                         $pageApiData = $pageData['data'] ?? $pageData; // 兼容兩種格式
                         $pageResults = $pageApiData['results'] ?? [];
                         $allResults[] = $pageResults;
-                        $this->info("✅ Page {$page} fetched: " . count($pageResults) . " records");
                     } else {
                         $status = method_exists($response, 'status') ? $response->status() : 'Unknown';
                         $this->warn("⚠️  Page {$page} failed: " . $status);
