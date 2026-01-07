@@ -185,7 +185,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             // API 返回的格式：直接處理 domData.data
             $this->info('✅ Processing API data...');
             $domData = $result['domData'];
-            $queryParams = [];
+            $queryParams = $result['queryParams'] ?? [];
             
             // 直接使用 domData.data 作為 allData
             $allData = $domData['data'] ?? [];
@@ -267,35 +267,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
             }
             unset($row); // 解除引用
             
-            // 按照平台分類數資料
-            $platformData = [];
-            // 平台欄位名稱
-            $platformField = '平台';
-            
-            // 所有資料執行迴圈
-            foreach ($allData as $row) {
-                // 取出平台名稱
-                $platform = $row[$platformField] ?? 'Unknown';
-                
-                // 如果平台資料不存在，創建新的平台資料
-                if (!isset($platformData[$platform])) {
-                    // 創建新的平台資料
-                    $platformData[$platform] = [
-                        'rowCount' => 0,
-                        'data' => []
-                    ];
-                }
-                
-                // 將資料加入平台資料
-                $platformData[$platform]['data'][] = $row;
-                // 增加平台資料的行數
-                $platformData[$platform]['rowCount']++;
-            }
-            
-            // 按照平台名稱排序
-            ksort($platformData);
-            
-            // 創建合併後的數據結構（按平台分類）
+            // 創建合併後的數據結構
             $mergedData = [
                 'metadata' => [
                     'timestamp' => $timestamp,
@@ -307,38 +279,12 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
                 'headers' => $headers,
                 'headerCount' => count($headers),
                 'rowCount' => $totalRows,
-                'platforms' => $platformData
+                'data' => $allData
             ];
             
             // 保存合併後的資料到單一 JSON 檔案
             $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            
-            // 為每個平台單獨保存檔案
-            foreach ($platformData as $platform => $data) {
-                // 取出平台名稱
-                $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
-                
-                // 創建平台專屬的資料結構
-                $platformFileData = [
-                    'metadata' => [
-                        'timestamp' => $timestamp,
-                        'platform' => $platform,
-                        'url' => $result['url'] ?? '',
-                        'queryParams' => $queryParams,
-                        'totalPages' => $domData['totalPages'] ?? 1,
-                        'totalRows' => $data['rowCount']
-                    ],
-                    'headers' => $headers,
-                    'headerCount' => count($headers),
-                    'rowCount' => $data['rowCount'],
-                    'data' => $data['data']
-                ];
-                
-                // 保存平台專屬檔案
-                $platformFileName = "scraped_data/platform_{$safePlatformName}_{$timestamp}.json";
-                Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            }
         }
 
         if (!$mergedFileName) {
@@ -620,6 +566,7 @@ class ScrapeBrowserBlodplayDOMDetail extends Command
         // 構建返回數據結構（與瀏覽器方式一致）
         return [
             'url' => $url,
+            'queryParams' => $queryParams,
             'domData' => [
                 'totalPages' => $totalPages,
                 'totalRows' => count($allData),
