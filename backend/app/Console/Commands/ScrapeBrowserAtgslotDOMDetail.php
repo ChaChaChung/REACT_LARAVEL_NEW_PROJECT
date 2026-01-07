@@ -51,6 +51,29 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $this->info("Date End: {$date_end}");
         $this->info("Player Account: {$player_account}");
         $this->info("Concurrency: {$concurrency}");
+        
+        // 檢查是否設定了 loginInfo（可以跳過登入流程）
+        $loginInfo = env('ATGSLOT_AGENT_LOGIN_INFO', '');
+        if (!empty($loginInfo)) {
+            $this->info('✅ 已設定 loginInfo，將使用現有登入資訊（跳過登入流程）');
+        } else {
+            // 檢查是否設定了驗證碼
+            $verificationCode = env('ATGSLOT_AGENT_VERIFICATION_CODE', '');
+            if (empty($verificationCode)) {
+                $this->warn('');
+                $this->warn('═══════════════════════════════════════════════════════════');
+                $this->warn('⚠️  注意：未設定二階段驗證碼');
+                $this->warn('═══════════════════════════════════════════════════════════');
+                $this->warn('如果網站需要二階段驗證，系統會暫停並等待您輸入');
+                $this->warn('您可以在 .env 文件中設定：');
+                $this->warn('  - ATGSLOT_AGENT_VERIFICATION_CODE=your_code（僅驗證碼）');
+                $this->warn('  - ATGSLOT_AGENT_LOGIN_INFO={"token":"...","key":"..."}（完整登入資訊，可跳過登入）');
+                $this->warn('═══════════════════════════════════════════════════════════');
+                $this->warn('');
+            } else {
+                $this->info('✅ 已設定驗證碼，將自動填入');
+            }
+        }
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -130,14 +153,47 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
     {
         $this->info('2. Creating browser automation script...');
 
-        // 獲取 ATGSLOT 二階段登入流程程式碼片段（主頁面用）
-        $loginCodeForPage = $this->generateAtgslotPuppeteerLoginCode('page');
-        // 獲取認證 cookies 程式碼片段（併發頁面用，登入後可以重用 cookies）
-        $cookiesCodeForNewPage = $this->generateAtgslotPuppeteerCookiesCode('newPage');
+        // 檢查是否使用 loginInfo 跳過登入
+        $loginInfo = env('ATGSLOT_AGENT_LOGIN_INFO', '');
+        if (!empty($loginInfo)) {
+            // 使用 loginInfo 直接設置登入狀態
+            $loginCodeForPage = $this->generateAtgslotPuppeteerLoginInfoCode('page', $loginInfo);
+            $cookiesCodeForNewPage = $this->generateAtgslotPuppeteerCookiesCode('newPage');
+        } else {
+            // 使用正常的二階段登入流程
+            $loginCodeForPage = $this->generateAtgslotPuppeteerLoginCode('page');
+            $cookiesCodeForNewPage = $this->generateAtgslotPuppeteerCookiesCode('newPage');
+        }
 
         // 將 date 轉換為 JavaScript 可用的格式
-        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
-        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        // 格式化日期為 YYYY-MM-DD
+        $dateStartFormatted = null;
+        $dateEndFormatted = null;
+        
+        if ($date_start) {
+            // 如果已經是 YYYY-MM-DD 格式，直接使用；否則轉換
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_start)) {
+                $dateStartFormatted = $date_start;
+            } elseif (preg_match('/^\d{8}$/', $date_start)) {
+                // YYYYMMDD 格式轉換為 YYYY-MM-DD
+                $dateStartFormatted = substr($date_start, 0, 4) . '-' . substr($date_start, 4, 2) . '-' . substr($date_start, 6, 2);
+            } else {
+                $dateStartFormatted = date('Y-m-d', strtotime($date_start));
+            }
+        }
+        
+        if ($date_end) {
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_end)) {
+                $dateEndFormatted = $date_end;
+            } elseif (preg_match('/^\d{8}$/', $date_end)) {
+                $dateEndFormatted = substr($date_end, 0, 4) . '-' . substr($date_end, 4, 2) . '-' . substr($date_end, 6, 2);
+            } else {
+                $dateEndFormatted = date('Y-m-d', strtotime($date_end));
+            }
+        }
+        
+        $dateStartJs = $dateStartFormatted ? json_encode($dateStartFormatted) : 'null';
+        $dateEndJs = $dateEndFormatted ? json_encode($dateEndFormatted) : 'null';
         $playerAccountJs = $player_account ? json_encode($player_account) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
@@ -185,7 +241,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
              */
             async function scrapeDOMContent() {
                 const browser = await puppeteer.launch({
-                    headless: false,  // 改為 false 以便調試，如果不需要看到瀏覽器可以改回 'new'
+                    headless: 'new',  // 使用 headless 模式在背景運行
                     args: [
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
@@ -311,10 +367,274 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                         // 即使導航失敗，也繼續執行
                     }
                     
-                    // 截圖目標頁面
+                    // 填入日期範圍（如果提供了 date_start 或 date_end）
+                    let dateStartValue = null;
+                    let dateEndValue = null;
+                    
+                    // 安全地解析日期值
+                    if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs.trim() !== '') {
+                        try {
+                            const parsed = JSON.parse($dateStartJs);
+                            if (parsed !== null && parsed !== '') {
+                                dateStartValue = parsed;
+                            }
+                        } catch (e) {
+                            // 如果 JSON 解析失敗，嘗試直接使用字符串值
+                            console.log('⚠️  Error parsing date_start as JSON, using as string: ' + e.message);
+                            dateStartValue = $dateStartJs.replace(/^["']|["']$/g, ''); // 移除引號
+                        }
+                    }
+                    
+                    if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs.trim() !== '') {
+                        try {
+                            const parsed = JSON.parse($dateEndJs);
+                            if (parsed !== null && parsed !== '') {
+                                dateEndValue = parsed;
+                            }
+                        } catch (e) {
+                            // 如果 JSON 解析失敗，嘗試直接使用字符串值
+                            console.log('⚠️  Error parsing date_end as JSON, using as string: ' + e.message);
+                            dateEndValue = $dateEndJs.replace(/^["']|["']$/g, ''); // 移除引號
+                        }
+                    }
+                    
+                    if (dateStartValue || dateEndValue) {
+                        console.log('📅 Filling date range...');
+                        console.log('   Date Start: ' + (dateStartValue || 'N/A'));
+                        console.log('   Date End: ' + (dateEndValue || 'N/A'));
+                        
+                        try {
+                            // 等待頁面穩定
+                            await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 }).catch(() => {});
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                            // 查找日期輸入框
+                            const dateInputs = await page.$$('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                            console.log('📋 Found ' + dateInputs.length + ' date input(s)');
+                            
+                            if (dateInputs.length >= 2) {
+                                // 第一個輸入框填入開始日期
+                                if (dateStartValue) {
+                                    console.log('📝 Filling start date: ' + dateStartValue);
+                                    await page.evaluate((dateValue, index) => {
+                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        if (inputs[index]) {
+                                            const input = inputs[index];
+                                            input.value = '';
+                                            input.value = dateValue;
+                                            // 觸發各種事件確保應用檢測到變化
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            // 也觸發 keyup 和 keydown（某些框架需要）
+                                            input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                                            input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+                                        }
+                                    }, dateStartValue, 0);
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                }
+                                
+                                // 第二個輸入框填入結束日期
+                                if (dateEndValue) {
+                                    console.log('📝 Filling end date: ' + dateEndValue);
+                                    await page.evaluate((dateValue, index) => {
+                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        if (inputs[index]) {
+                                            const input = inputs[index];
+                                            input.value = '';
+                                            input.value = dateValue;
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                                            input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+                                        }
+                                    }, dateEndValue, 1);
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                }
+                                
+                                console.log('✅ Date range filled successfully');
+                            } else if (dateInputs.length === 1) {
+                                // 如果只有一個輸入框，可能是日期範圍選擇器
+                                console.log('📝 Found single date input, trying to fill as range...');
+                                if (dateStartValue && dateEndValue) {
+                                    // 嘗試填入範圍格式（根據實際需求調整格式）
+                                    const dateRange = dateStartValue + ' ~ ' + dateEndValue;
+                                    await page.evaluate((rangeValue) => {
+                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        if (input) {
+                                            input.value = '';
+                                            input.value = rangeValue;
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                        }
+                                    }, dateRange);
+                                    console.log('✅ Date range filled: ' + dateRange);
+                                } else if (dateStartValue) {
+                                    await page.evaluate((dateValue) => {
+                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        if (input) {
+                                            input.value = '';
+                                            input.value = dateValue;
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                        }
+                                    }, dateStartValue);
+                                    console.log('✅ Start date filled: ' + dateStartValue);
+                                }
+                            } else {
+                                console.log('⚠️  Date inputs not found, trying alternative selectors...');
+                                // 嘗試其他選擇器
+                                const altInputs = await page.$$('input[placeholder*="日期"], input[placeholder*="date"], input.ivu-input');
+                                console.log('📋 Found ' + altInputs.length + ' alternative input(s)');
+                            }
+                            
+                            // 等待一下讓日期輸入生效
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            
+                            // 點擊搜尋按鈕
+                            console.log('🔍 Looking for search button...');
+                            let searchButtonClicked = false;
+                            
+                            try {
+                                // 等待一下確保按鈕已渲染
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                
+                                // 使用精確的選擇器查找按鈕
+                                const buttonFound = await page.evaluate(() => {
+                                    // 優先查找包含 "搜尋" 文字的按鈕
+                                    const allButtons = Array.from(document.querySelectorAll('button.ivu-btn.ivu-btn-primary, button.ivu-btn-primary, .ivu-btn-primary'));
+                                    
+                                    console.log('Found ' + allButtons.length + ' primary button(s)');
+                                    
+                                    // 查找包含 "搜尋" 文字的按鈕
+                                    for (const btn of allButtons) {
+                                        // 獲取按鈕文字（包括 span 內的文字）
+                                        const text = (btn.textContent || btn.innerText || '').trim();
+                                        const textLower = text.toLowerCase();
+                                        
+                                        console.log('Checking button with text: "' + text + '"');
+                                        
+                                        // 檢查是否包含搜尋相關文字
+                                        if (textLower.includes('搜尋') || 
+                                            textLower.includes('搜索') || 
+                                            textLower.includes('查詢') || 
+                                            textLower.includes('search')) {
+                                            
+                                            console.log('Found search button with text: "' + text + '"');
+                                            
+                                            // 確保按鈕可見
+                                            if (btn.offsetParent === null) {
+                                                console.log('Button is not visible, skipping');
+                                                continue;
+                                            }
+                                            
+                                            // 嘗試點擊
+                                            try {
+                                                btn.focus();
+                                                btn.click();
+                                                return { found: true, method: 'click', text: text };
+                                            } catch (e) {
+                                                console.log('Click failed, trying dispatchEvent: ' + e.message);
+                                                // 如果點擊失敗，嘗試觸發事件
+                                                const clickEvent = new MouseEvent('click', { 
+                                                    bubbles: true, 
+                                                    cancelable: true,
+                                                    view: window
+                                                });
+                                                btn.dispatchEvent(clickEvent);
+                                                
+                                                // 也嘗試 mousedown 和 mouseup
+                                                btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                                                btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                                                
+                                                return { found: true, method: 'dispatchEvent', text: text };
+                                            }
+                                        }
+                                    }
+                                    
+                                    // 如果找不到包含文字的按鈕，嘗試點擊第一個主要按鈕
+                                    if (allButtons.length > 0) {
+                                        const firstButton = allButtons[0];
+                                        if (firstButton.offsetParent !== null) {
+                                            console.log('No text match found, clicking first primary button');
+                                            try {
+                                                firstButton.focus();
+                                                firstButton.click();
+                                                return { found: true, method: 'click', text: 'first primary button' };
+                                            } catch (e) {
+                                                const clickEvent = new MouseEvent('click', { 
+                                                    bubbles: true, 
+                                                    cancelable: true,
+                                                    view: window
+                                                });
+                                                firstButton.dispatchEvent(clickEvent);
+                                                return { found: true, method: 'dispatchEvent', text: 'first primary button' };
+                                            }
+                                        }
+                                    }
+                                    
+                                    return { found: false, message: 'No search button found' };
+                                });
+                                
+                                if (buttonFound.found) {
+                                    searchButtonClicked = true;
+                                    console.log('✅ Search button clicked using method: ' + buttonFound.method);
+                                    console.log('   Button text: ' + buttonFound.text);
+                                    
+                                    // 等待搜尋結果載入
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 等待頁面穩定
+                                    await page.waitForFunction(() => document.readyState === 'complete', { timeout: 10000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                } else {
+                                    console.log('⚠️  Search button not found: ' + (buttonFound.message || 'Unknown error'));
+                                    
+                                    // 嘗試使用 Puppeteer 的 waitForSelector 和 click
+                                    try {
+                                        console.log('🔍 Trying Puppeteer selector method...');
+                                        await page.waitForSelector('button.ivu-btn.ivu-btn-primary', { timeout: 5000 });
+                                        const button = await page.$('button.ivu-btn.ivu-btn-primary');
+                                        
+                                        if (button) {
+                                            // 檢查按鈕文字
+                                            const buttonText = await page.evaluate(btn => btn.textContent || btn.innerText, button);
+                                            console.log('Found button with text: "' + buttonText + '"');
+                                            
+                                            if (buttonText.includes('搜尋') || buttonText.includes('搜索') || buttonText.includes('查詢')) {
+                                                await button.click();
+                                                searchButtonClicked = true;
+                                                console.log('✅ Search button clicked using Puppeteer selector');
+                                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.log('⚠️  Puppeteer selector method failed: ' + e.message);
+                                    }
+                                }
+                                
+                                if (!searchButtonClicked) {
+                                    console.log('⚠️  Could not find or click search button, you may need to click it manually');
+                                }
+                                
+                            } catch (e) {
+                                console.log('⚠️  Error clicking search button: ' + e.message);
+                                console.error(e);
+                            }
+                            
+                        } catch (e) {
+                            console.log('⚠️  Error filling date range: ' + e.message);
+                            console.error(e);
+                        }
+                    }
+                    
+                    // 截圖目標頁面（填入日期和點擊搜尋後）
                     try {
-                        await page.screenshot({ path: '09_target_page_loaded.png', fullPage: true });
-                        console.log('📸 Screenshot 9: Target page loaded saved');
+                        await page.screenshot({ path: '10_after_search_clicked.png', fullPage: true });
+                        console.log('📸 Screenshot 10: After search clicked saved');
                     } catch (e) {
                         console.log('⚠️  Error taking screenshot: ' + e.message);
                     }

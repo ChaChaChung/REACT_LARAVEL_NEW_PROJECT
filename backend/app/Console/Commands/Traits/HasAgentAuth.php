@@ -787,11 +787,18 @@ trait HasAgentAuth
                     await {$pageVar}.screenshot({ path: '06_after_verification_code_filled_auto.png', fullPage: true });
                     console.log('📸 Screenshot 6: After verification code filled (auto) saved');
                 } else {
-                    // 如果沒有設定驗證碼，等待手動輸入（最多等待 120 秒）
-                    console.log('⚠️  Verification code not set in environment variable');
-                    console.log('⏳ Waiting for manual verification code input (120 seconds timeout)...');
-                    console.log('💡 Please enter the verification code in the browser');
-                    console.log('💡 You can also set ATGSLOT_AGENT_VERIFICATION_CODE in .env to skip manual input');
+                    // 如果沒有設定驗證碼，需要手動輸入
+                    console.log('');
+                    console.log('═══════════════════════════════════════════════════════════');
+                    console.log('⚠️  需要輸入二階段驗證碼！');
+                    console.log('═══════════════════════════════════════════════════════════');
+                    console.log('📱 請在瀏覽器中輸入驗證碼（如果瀏覽器已打開）');
+                    console.log('💡 或者您可以：');
+                    console.log('   1. 在 .env 文件中設定 ATGSLOT_AGENT_VERIFICATION_CODE=your_code');
+                    console.log('   2. 重新運行命令（會自動填入驗證碼）');
+                    console.log('⏳ 等待手動輸入驗證碼（最多等待 120 秒）...');
+                    console.log('═══════════════════════════════════════════════════════════');
+                    console.log('');
                     
                     // 等待驗證碼輸入框有值（最多 120 秒）
                     let codeEntered = false;
@@ -800,10 +807,24 @@ trait HasAgentAuth
                     const totalChecks = maxWaitTime / checkInterval;
                     
                     for (let i = 0; i < totalChecks; i++) {
-                        // 每 10 秒顯示進度
+                        // 每 10 秒顯示進度和提醒
                         if (i % 10 === 0 && i > 0) {
                             const remaining = maxWaitTime - (i * checkInterval);
-                            console.log('⏳ Still waiting... ' + remaining + ' seconds remaining');
+                            console.log('');
+                            console.log('⏳ 仍在等待驗證碼輸入... 剩餘 ' + remaining + ' 秒');
+                            console.log('💡 提示：如果瀏覽器在背景運行，請檢查瀏覽器窗口');
+                            console.log('');
+                        }
+                        
+                        // 每 30 秒再次顯示主要提醒
+                        if (i % 30 === 0 && i > 0) {
+                            console.log('');
+                            console.log('═══════════════════════════════════════════════════════════');
+                            console.log('⚠️  仍在等待驗證碼輸入！');
+                            console.log('📱 請在瀏覽器中輸入驗證碼');
+                            console.log('⏳ 剩餘時間：' + (maxWaitTime - (i * checkInterval)) + ' 秒');
+                            console.log('═══════════════════════════════════════════════════════════');
+                            console.log('');
                         }
                         
                         // 每 20 秒截圖一次，記錄等待過程
@@ -1031,6 +1052,105 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  Domain not configured, skipping cookie setup');
             }
+        JS;
+    }
+
+    /**
+     * 生成 ATGSLOT Puppeteer 使用 loginInfo 直接登入的程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @param string $loginInfoJson loginInfo 的 JSON 字符串
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateAtgslotPuppeteerLoginInfoCode(string $pageVar = 'page', string $loginInfoJson = ''): string
+    {
+        $domain = env('ATGSLOT_AGENT_DOMAIN', '');
+        $domainJs = json_encode($domain);
+        
+        // 驗證並轉義 loginInfo JSON
+        $loginInfo = json_decode($loginInfoJson, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            // 如果 JSON 無效，返回錯誤
+            return <<<JS
+                console.error('❌ Invalid loginInfo JSON format');
+                throw new Error('Invalid loginInfo JSON format');
+            JS;
+        }
+        
+        $loginInfoJs = json_encode($loginInfo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return <<<JS
+            console.log('🔐 Using loginInfo to skip login process...');
+            
+            // 導航到登入頁面（或直接導航到目標頁面）
+            await {$pageVar}.goto($domainJs, {
+                waitUntil: 'load',
+                timeout: 60000
+            });
+            
+            // 等待頁面載入
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 將 loginInfo 設置到 localStorage
+            console.log('💾 Setting loginInfo to localStorage...');
+            await {$pageVar}.evaluate((loginInfo) => {
+                try {
+                    // 設置 loginInfo 到 localStorage
+                    localStorage.setItem('loginInfo', JSON.stringify(loginInfo));
+                    console.log('✅ loginInfo set to localStorage');
+                    
+                    // 如果有 token，也可以設置到其他地方（根據實際需求）
+                    if (loginInfo.token) {
+                        // 可以設置到 sessionStorage 或其他地方
+                        sessionStorage.setItem('token', loginInfo.token);
+                    }
+                    
+                    // 觸發 storage 事件，讓應用知道 localStorage 已更新
+                    window.dispatchEvent(new StorageEvent('storage', {
+                        key: 'loginInfo',
+                        newValue: JSON.stringify(loginInfo),
+                        storageArea: localStorage
+                    }));
+                    
+                    // 如果頁面有監聽器，可能需要觸發自定義事件
+                    window.dispatchEvent(new Event('loginInfoUpdated'));
+                    
+                    return true;
+                } catch (e) {
+                    console.error('❌ Error setting loginInfo:', e.message);
+                    return false;
+                }
+            }, $loginInfoJs);
+            
+            // 等待一下讓頁面處理 localStorage 更新
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 刷新頁面或導航到目標頁面，讓應用讀取新的 loginInfo
+            console.log('🔄 Reloading page to apply loginInfo...');
+            await {$pageVar}.reload({
+                waitUntil: 'load',
+                timeout: 60000
+            });
+            
+            // 等待頁面完全載入
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // 驗證 loginInfo 是否已設置
+            const loginInfoSet = await {$pageVar}.evaluate(() => {
+                const stored = localStorage.getItem('loginInfo');
+                return stored !== null && stored !== '';
+            });
+            
+            if (loginInfoSet) {
+                console.log('✅ loginInfo successfully set and page reloaded');
+            } else {
+                console.log('⚠️  loginInfo may not be set correctly');
+            }
+            
+            // 截圖確認登入狀態
+            await {$pageVar}.screenshot({ path: '00_loginInfo_set.png', fullPage: true });
+            console.log('📸 Screenshot: loginInfo set saved');
+            
+            console.log('✅ Login process skipped using loginInfo');
         JS;
     }
 }
