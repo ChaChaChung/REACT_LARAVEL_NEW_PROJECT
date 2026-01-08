@@ -48,30 +48,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Player Account: {$player_account}");
-        
-        // 檢查是否設定了 loginInfo（可以跳過登入流程）
-        $loginInfo = env('ATGSLOT_AGENT_LOGIN_INFO', '');
-        if (!empty($loginInfo)) {
-            $this->info('✅ 已設定 loginInfo，將使用現有登入資訊（跳過登入流程）');
-        } else {
-            // 檢查是否設定了驗證碼
-            $verificationCode = env('ATGSLOT_AGENT_VERIFICATION_CODE', '');
-            if (empty($verificationCode)) {
-                $this->warn('');
-                $this->warn('═══════════════════════════════════════════════════════════');
-                $this->warn('⚠️  注意：未設定二階段驗證碼');
-                $this->warn('═══════════════════════════════════════════════════════════');
-                $this->warn('如果網站需要二階段驗證，系統會暫停並等待您輸入');
-                $this->warn('您可以在 .env 文件中設定：');
-                $this->warn('  - ATGSLOT_AGENT_VERIFICATION_CODE=your_code（僅驗證碼）');
-                $this->warn('  - ATGSLOT_AGENT_LOGIN_INFO={"token":"...","key":"..."}（完整登入資訊，可跳過登入）');
-                $this->warn('═══════════════════════════════════════════════════════════');
-                $this->warn('');
-            } else {
-                $this->info('✅ 已設定驗證碼，將自動填入');
-            }
-        }
-
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -151,12 +127,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
 
         // 檢查是否使用 loginInfo 跳過登入
         $loginInfo = env('ATGSLOT_AGENT_LOGIN_INFO', '');
+
+        // 如果設定了 loginInfo，則使用 loginInfo 直接設置登入狀態
         if (!empty($loginInfo)) {
-            // 使用 loginInfo 直接設置登入狀態
             $loginCodeForPage = $this->generateAtgslotPuppeteerLoginInfoCode('page', $loginInfo);
         } else {
-            // 使用正常的二階段登入流程
-            $loginCodeForPage = $this->generateAtgslotPuppeteerLoginCode('page');
+            $this->info('❌ 未設定 ATGSLOT_AGENT_LOGIN_INFO，請先在 .env 文件中設定');
         }
 
         // 格式化日期為 YYYY-MM-DD 的輔助函數
@@ -190,23 +166,29 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
 
             /**
              * 從 DOM 提取資料的函數
+             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容
              */
             async function scrapeDOMContent() {
+                // 啟動無頭瀏覽器（headless mode）
                 const browser = await puppeteer.launch({
-                    headless: 'new',  // 使用 headless 模式在背景運行
+                    headless: 'new',
                     args: [
+                        // 安全性相關參數（用於容器環境）
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
+                        // 性能優化參數
                         '--disable-accelerated-2d-canvas',
                         '--no-first-run',
                         '--no-zygote',
                         '--single-process',
                         '--disable-gpu',
                         '--disable-software-rasterizer',
+                        // 背景處理優化
                         '--disable-background-timer-throttling',
                         '--disable-backgrounding-occluded-windows',
                         '--disable-renderer-backgrounding',
+                        // 功能禁用（減少資源使用）
                         '--disable-features=TranslateUI',
                         '--disable-ipc-flooding-protection',
                         '--disable-crash-reporter',
@@ -218,21 +200,27 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                         '--disable-features=VizDisplayCompositor',
                         '--temp-profile',
                         '--memory-pressure-off',
+                        // 額外的性能優化
                         '--disable-javascript-harmony-shipping',
                         '--disable-sync'
                     ],
+                    // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
                 });
 
                 try {
+                    // 創建新的瀏覽器頁面
                     const page = await browser.newPage();
-                    await page.setViewport({ width: 1920, height: 1080 });
-                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
+                    // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
+                    await page.setViewport({ width: 1920, height: 1080 });
+
+                    // 設定 User Agent，模擬真實的瀏覽器請求
+                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
                     // 執行二階段登入流程
                     {$loginCodeForPage}
-
+                    
                     // 等待登入完成
                     console.log('⏳ Waiting for login to complete...');
                     await new Promise(resolve => setTimeout(resolve, 3000));
