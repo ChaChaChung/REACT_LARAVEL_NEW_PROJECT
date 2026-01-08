@@ -199,6 +199,235 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             }
 
             /**
+             * 輔助函數：查找並點擊搜尋按鈕
+             * @param {Page} page - Puppeteer 頁面對象
+             * @returns {Promise<boolean>} 返回是否成功點擊
+             */
+            async function clickSearchButton(page) {
+                const searchButton = await page.evaluate(() => {
+                    const allButtons = Array.from(document.querySelectorAll('button'));
+                    let searchBtn = allButtons.find(btn => {
+                        const text = btn.textContent.trim();
+                        return text === '搜尋';
+                    });
+
+                    if (searchBtn) {
+                        const uniqueId = 'search-btn-' + Date.now();
+                        searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                        return {
+                            found: true,
+                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                            text: searchBtn.textContent.trim()
+                        };
+                    }
+                    
+                    return { found: false };
+                });
+
+                if (searchButton.found) {
+                    await page.click(searchButton.selector, { timeout: 5000 });
+                    await page.waitForSelector('#simple-table', { timeout: 8000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    return true;
+                }
+                
+                return false;
+            }
+
+            /**
+             * 輔助函數：查找帳號連結
+             * @param {Page} page - Puppeteer 頁面對象
+             * @param {string} accountValue - 帳號值
+             * @param {boolean} onlyInTable - 是否只在表格內查找（用於重試）
+             * @returns {Promise<Object>} 返回找到的連結信息或調試信息
+             */
+            async function findAccountLink(page, accountValue, onlyInTable = false) {
+                return await page.evaluate((accountValue, onlyInTable) => {
+                    const allLinks = onlyInTable ? [] : Array.from(document.querySelectorAll('a'));
+                    const totalLinks = allLinks.length;
+                    const sampleLinks = allLinks.slice(0, 20).map(a => ({
+                        text: a.textContent.trim(),
+                        href: a.href
+                    }));
+                    
+                    let link = null;
+                    const table = document.querySelector('#simple-table');
+                    
+                    if (table) {
+                        const tableLinks = Array.from(table.querySelectorAll('a'));
+                        // 優先完全匹配
+                        link = tableLinks.find(a => {
+                            const text = a.textContent.trim();
+                            return text === accountValue;
+                        });
+                        // 如果沒有完全匹配，則查找包含帳號的連結
+                        if (!link) {
+                            link = tableLinks.find(a => {
+                                const text = a.textContent.trim();
+                                return text.includes(accountValue);
+                            });
+                        }
+                    }
+                    
+                    // 如果表格內沒找到且允許在整個頁面查找
+                    if (!link && !onlyInTable) {
+                        link = allLinks.find(a => {
+                            const text = a.textContent.trim();
+                            return text === accountValue;
+                        });
+                        
+                        if (!link) {
+                            link = allLinks.find(a => {
+                                const text = a.textContent.trim();
+                                return text.includes(accountValue);
+                            });
+                        }
+                    }
+                    
+                    if (link) {
+                        const uniqueId = 'account-link-' + Date.now();
+                        link.setAttribute('data-puppeteer-id', uniqueId);
+                        return {
+                            found: true,
+                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                            href: link.href,
+                            text: link.textContent.trim()
+                        };
+                    }
+                    
+                    // 返回調試信息
+                    if (onlyInTable) {
+                        if (table) {
+                            const tableRows = Array.from(table.querySelectorAll('tbody tr'));
+                            const tableLinks = Array.from(table.querySelectorAll('a'));
+                            const sampleTableLinks = tableLinks.slice(0, 10).map(a => ({
+                                text: a.textContent.trim(),
+                                href: a.href
+                            }));
+                            return {
+                                found: false,
+                                debug: {
+                                    tableRows: tableRows.length,
+                                    tableLinks: tableLinks.length,
+                                    sampleTableLinks: sampleTableLinks,
+                                    accountValue: accountValue
+                                }
+                            };
+                        } else {
+                            return {
+                                found: false,
+                                debug: { error: 'Table not found' }
+                            };
+                        }
+                    }
+                    
+                    return {
+                        found: false,
+                        debug: {
+                            totalLinks: totalLinks,
+                            sampleLinks: sampleLinks,
+                            accountValue: accountValue
+                        }
+                    };
+                }, accountValue, onlyInTable);
+            }
+
+            /**
+             * 輔助函數：處理 URL（轉換相對路徑為絕對路徑）
+             * @param {string} href - 原始 URL
+             * @param {string} currentUrl - 當前頁面 URL
+             * @returns {string} 處理後的完整 URL
+             */
+            function normalizeUrl(href, currentUrl) {
+                if (href.startsWith('//')) {
+                    return 'https:' + href;
+                } else if (href.startsWith('/')) {
+                    const urlObj = new URL(currentUrl);
+                    return urlObj.origin + href;
+                }
+                return href;
+            }
+
+            /**
+             * 輔助函數：導航到帳號連結
+             * @param {Page} page - Puppeteer 頁面對象（可能被修改）
+             * @param {Browser} browser - Puppeteer 瀏覽器對象
+             * @param {Object} accountLink - 帳號連結信息
+             * @returns {Promise<Page>} 返回當前使用的頁面對象
+             */
+            async function navigateToAccountLink(page, browser, accountLink) {
+                console.log('🔗 Found account link: ' + accountLink.href);
+                console.log('🔗 Link text: ' + accountLink.text);
+                
+                // 處理 URL
+                const currentUrl = page.url();
+                const targetUrl = normalizeUrl(accountLink.href, currentUrl);
+                console.log('🔗 Navigating to: ' + targetUrl);
+                
+                // 檢查連結是否有 target="_blank" 屬性
+                const linkInfo = await page.evaluate((selector) => {
+                    const link = document.querySelector(selector);
+                    if (link) {
+                        return {
+                            hasTargetBlank: link.getAttribute('target') === '_blank',
+                            href: link.href
+                        };
+                    }
+                    return null;
+                }, accountLink.selector);
+                
+                if (linkInfo && linkInfo.hasTargetBlank) {
+                    console.log('🔗 Link has target="_blank", opening in new tab...');
+                    
+                    const pagesBefore = await browser.pages();
+                    
+                    await page.evaluate((selector) => {
+                        const link = document.querySelector(selector);
+                        if (link) {
+                            link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            link.click();
+                        }
+                    }, accountLink.selector);
+                    
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    const pagesAfter = await browser.pages();
+                    const newPage = pagesAfter.length > pagesBefore.length 
+                        ? pagesAfter.find(p => !pagesBefore.includes(p))
+                        : null;
+                    
+                    if (newPage) {
+                        await page.close();
+                        page = newPage;
+                        await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        console.log('✅ Navigated to account detail page (new tab)');
+                        return page;
+                    } else {
+                        console.log('⚠️  No new tab detected, navigating directly...');
+                        await page.goto(targetUrl, {
+                            waitUntil: 'domcontentloaded',
+                            timeout: 30000
+                        });
+                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        console.log('✅ Navigated to account detail page');
+                        return page;
+                    }
+                } else {
+                    console.log('🔗 Navigating directly to URL...');
+                    await page.goto(targetUrl, {
+                        waitUntil: 'domcontentloaded',
+                        timeout: 30000
+                    });
+                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log('✅ Navigated to account detail page');
+                    return page;
+                }
+            }
+
+            /**
              * 從 DOM 提取資料的函數
              * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
              */
@@ -342,36 +571,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 500));
 
                             // 查找並點擊搜尋按鈕
-                            const searchButton = await page.evaluate(() => {
-                                // 優先查找包含 "搜尋" 文本的按鈕
-                                const allButtons = Array.from(document.querySelectorAll('button'));
-                                let searchBtn = allButtons.find(btn => {
-                                    const text = btn.textContent.trim();
-                                    return text === '搜尋';
-                                });
-
-                                // 判斷 searchBtn 是否存在
-                                if (searchBtn) {
-                                    const uniqueId = 'search-btn-' + Date.now();
-                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                    return {
-                                        found: true,
-                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: searchBtn.textContent.trim()
-                                    };
-                                }
-                                
-                                return { found: false };
-                            });
-
-                            // 判斷是否有找到 searchButton
-                            if (searchButton.found) {
-                                await page.click(searchButton.selector, { timeout: 5000 });
-                                
-                                // 等待表格更新（使用更短的等待時間）
-                                await page.waitForSelector('#simple-table', { timeout: 8000 }).catch(() => {});
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                            }
+                            await clickSearchButton(page);
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
                         }
@@ -399,280 +599,42 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 500));
 
                             // 查找並點擊搜尋按鈕
-                            const searchButton = await page.evaluate(() => {
-                                // 優先查找包含 "搜尋" 文本的按鈕
-                                const allButtons = Array.from(document.querySelectorAll('button'));
-                                let searchBtn = allButtons.find(btn => {
-                                    const text = btn.textContent.trim();
-                                    return text === '搜尋';
-                                });
-
-                                // 判斷 searchBtn 是否存在
-                                if (searchBtn) {
-                                    const uniqueId = 'search-btn-' + Date.now();
-                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
-                                    return {
-                                        found: true,
-                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                        text: searchBtn.textContent.trim()
-                                    };
-                                }
-                                
-                                return { found: false };
-                            });
-
-                            // 判斷是否有找到 searchButton
-                            if (searchButton.found) {
-                                await page.click(searchButton.selector, { timeout: 5000 });
-                                
-                                // 等待表格更新（增加等待時間確保數據完全載入）
-                                await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
-                                // 等待表格行出現
+                            if (await clickSearchButton(page)) {
+                                // 等待表格行出現（用於帳號搜索）
                                 await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
                                 await new Promise(resolve => setTimeout(resolve, 2000));
                                 
                                 console.log('🔍 Searching for account link: ' + accountNumberParsed);
                                 
-                                // 查找包含帳號的 <a> 標籤並點擊
-                                const accountLinkResult = await page.evaluate((accountValue) => {
-                                    // 先查找所有 <a> 標籤
-                                    const allLinks = Array.from(document.querySelectorAll('a'));
-                                    const totalLinks = allLinks.length;
-                                    
-                                    // 打印前幾個連結的文本，用於調試
-                                    const sampleLinks = allLinks.slice(0, 20).map(a => ({
-                                        text: a.textContent.trim(),
-                                        href: a.href
-                                    }));
-                                    
-                                    // 優先在表格內查找（因為帳號連結通常在表格中）
-                                    let link = null;
-                                    const table = document.querySelector('#simple-table');
-                                    if (table) {
-                                        const tableLinks = Array.from(table.querySelectorAll('a'));
-                                        // 完全匹配
-                                        link = tableLinks.find(a => {
-                                            const text = a.textContent.trim();
-                                            return text === accountValue;
-                                        });
-                                        // 如果沒有完全匹配，則查找包含帳號的連結
-                                        if (!link) {
-                                            link = tableLinks.find(a => {
-                                                const text = a.textContent.trim();
-                                                return text.includes(accountValue);
-                                            });
-                                        }
-                                    }
-                                    
-                                    // 如果表格內沒找到，則在整個頁面查找
-                                    if (!link) {
-                                        // 優先查找完全匹配帳號的連結
-                                        link = allLinks.find(a => {
-                                            const text = a.textContent.trim();
-                                            return text === accountValue;
-                                        });
-                                        
-                                        // 如果沒有完全匹配，則查找包含帳號的連結
-                                        if (!link) {
-                                            link = allLinks.find(a => {
-                                                const text = a.textContent.trim();
-                                                return text.includes(accountValue);
-                                            });
-                                        }
-                                    }
-                                    
-                                    if (link) {
-                                        // 為連結添加唯一標識
-                                        const uniqueId = 'account-link-' + Date.now();
-                                        link.setAttribute('data-puppeteer-id', uniqueId);
-                                        return {
-                                            found: true,
-                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                            href: link.href,
-                                            text: link.textContent.trim()
-                                        };
-                                    }
-                                    
-                                    return { 
-                                        found: false,
-                                        debug: {
-                                            totalLinks: totalLinks,
-                                            sampleLinks: sampleLinks,
-                                            accountValue: accountValue
-                                        }
-                                    };
-                                }, accountNumberParsed);
+                                // 查找包含帳號的 <a> 標籤
+                                const accountLinkResult = await findAccountLink(page, accountNumberParsed, false);
                                 
                                 // 輸出調試信息
                                 if (!accountLinkResult.found && accountLinkResult.debug) {
                                     console.log('📊 Debug info:');
-                                    console.log('   Total links: ' + accountLinkResult.debug.totalLinks);
-                                    console.log('   Account value: ' + accountLinkResult.debug.accountValue);
-                                    console.log('   Sample links (first 10):');
-                                    accountLinkResult.debug.sampleLinks.slice(0, 10).forEach((link, idx) => {
-                                        console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
-                                    });
+                                    if (accountLinkResult.debug.totalLinks !== undefined) {
+                                        console.log('   Total links: ' + accountLinkResult.debug.totalLinks);
+                                        console.log('   Account value: ' + accountLinkResult.debug.accountValue);
+                                        console.log('   Sample links (first 10):');
+                                        accountLinkResult.debug.sampleLinks.slice(0, 10).forEach((link, idx) => {
+                                            console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
+                                        });
+                                    }
                                 }
                                 
-                                const accountLink = accountLinkResult;
-                                
-                                // 如果找到帳號連結，點擊它
-                                if (accountLink.found) {
-                                    console.log('🔗 Found account link: ' + accountLink.href);
-                                    console.log('🔗 Link text: ' + accountLink.text);
-                                    
-                                    // 獲取完整的 URL（如果是相對路徑，需要轉換為絕對路徑）
-                                    let targetUrl = accountLink.href;
-                                    if (targetUrl.startsWith('//')) {
-                                        // 如果是 // 開頭，添加 https:
-                                        targetUrl = 'https:' + targetUrl;
-                                    } else if (targetUrl.startsWith('/')) {
-                                        // 如果是相對路徑，需要獲取當前頁面的 origin
-                                        const currentUrl = page.url();
-                                        const urlObj = new URL(currentUrl);
-                                        targetUrl = urlObj.origin + targetUrl;
-                                    }
-                                    
-                                    console.log('🔗 Navigating to: ' + targetUrl);
-                                    
-                                    // 檢查連結是否有 target="_blank" 屬性
-                                    const linkInfo = await page.evaluate((selector) => {
-                                        const link = document.querySelector(selector);
-                                        if (link) {
-                                            return {
-                                                hasTargetBlank: link.getAttribute('target') === '_blank',
-                                                href: link.href
-                                            };
-                                        }
-                                        return null;
-                                    }, accountLink.selector);
-                                    
-                                    if (linkInfo && linkInfo.hasTargetBlank) {
-                                        // 如果連結有 target="_blank"，需要在新標籤頁打開
-                                        console.log('🔗 Link has target="_blank", opening in new tab...');
-                                        
-                                        // 記錄當前頁面數量
-                                        const pagesBefore = await browser.pages();
-                                        
-                                        // 使用 evaluate 直接點擊連結（這樣會觸發新標籤頁）
-                                        await page.evaluate((selector) => {
-                                            const link = document.querySelector(selector);
-                                            if (link) {
-                                                link.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                                link.click();
-                                            }
-                                        }, accountLink.selector);
-                                        
-                                        // 等待新標籤頁創建
-                                        await new Promise(resolve => setTimeout(resolve, 2000));
-                                        
-                                        // 檢查是否有新頁面創建
-                                        const pagesAfter = await browser.pages();
-                                        const newPage = pagesAfter.length > pagesBefore.length 
-                                            ? pagesAfter.find(p => !pagesBefore.includes(p))
-                                            : null;
-                                        
-                                        if (newPage) {
-                                            // 關閉舊頁面，切換到新頁面
-                                            await page.close();
-                                            page = newPage;
-                                            
-                                            // 等待新頁面載入
-                                            await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            
-                                            console.log('✅ Navigated to account detail page (new tab)');
-                                        } else {
-                                            // 如果沒有新標籤頁，直接導航到 URL
-                                            console.log('⚠️  No new tab detected, navigating directly...');
-                                            await page.goto(targetUrl, {
-                                                waitUntil: 'domcontentloaded',
-                                                timeout: 30000
-                                            });
-                                            await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            console.log('✅ Navigated to account detail page');
-                                        }
-                                    } else {
-                                        // 如果沒有 target="_blank"，直接導航到 URL
-                                        console.log('🔗 Navigating directly to URL...');
-                                        await page.goto(targetUrl, {
-                                            waitUntil: 'domcontentloaded',
-                                            timeout: 30000
-                                        });
-                                        
-                                        // 等待表格載入
-                                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
-                                        await new Promise(resolve => setTimeout(resolve, 1000));
-                                        
-                                        console.log('✅ Navigated to account detail page');
-                                    }
+                                // 如果找到帳號連結，導航到它
+                                if (accountLinkResult.found) {
+                                    page = await navigateToAccountLink(page, browser, accountLinkResult);
                                 } else {
                                     console.log('⚠️  Account link not found for: ' + accountNumberParsed);
                                     console.log('⚠️  Waiting longer and retrying...');
                                     
                                     // 再次嘗試，等待更長時間讓表格完全載入
                                     await new Promise(resolve => setTimeout(resolve, 3000));
-                                    
-                                    // 確保表格行已載入
                                     await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
                                     
-                                    const retryResult = await page.evaluate((accountValue) => {
-                                        const table = document.querySelector('#simple-table');
-                                        let result = { found: false };
-                                        
-                                        if (table) {
-                                            const allLinks = Array.from(table.querySelectorAll('a'));
-                                            const tableRows = Array.from(table.querySelectorAll('tbody tr'));
-                                            
-                                            // 優先完全匹配
-                                            let link = allLinks.find(a => {
-                                                const text = a.textContent.trim();
-                                                return text === accountValue;
-                                            });
-                                            
-                                            // 如果沒有完全匹配，則查找包含帳號的連結
-                                            if (!link) {
-                                                link = allLinks.find(a => {
-                                                    const text = a.textContent.trim();
-                                                    return text.includes(accountValue);
-                                                });
-                                            }
-                                            
-                                            if (link) {
-                                                const uniqueId = 'account-link-retry-' + Date.now();
-                                                link.setAttribute('data-puppeteer-id', uniqueId);
-                                                result = {
-                                                    found: true,
-                                                    selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                                                    href: link.href,
-                                                    text: link.textContent.trim()
-                                                };
-                                            } else {
-                                                // 調試信息
-                                                const sampleTableLinks = allLinks.slice(0, 10).map(a => ({
-                                                    text: a.textContent.trim(),
-                                                    href: a.href
-                                                }));
-                                                result = {
-                                                    found: false,
-                                                    debug: {
-                                                        tableRows: tableRows.length,
-                                                        tableLinks: allLinks.length,
-                                                        sampleTableLinks: sampleTableLinks,
-                                                        accountValue: accountValue
-                                                    }
-                                                };
-                                            }
-                                        } else {
-                                            result = {
-                                                found: false,
-                                                debug: { error: 'Table not found' }
-                                            };
-                                        }
-                                        
-                                        return result;
-                                    }, accountNumberParsed);
+                                    // 重試：只在表格內查找
+                                    const retryResult = await findAccountLink(page, accountNumberParsed, true);
                                     
                                     // 輸出重試的調試信息
                                     if (!retryResult.found && retryResult.debug) {
@@ -689,98 +651,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                         }
                                     }
                                     
-                                    const retryLink = retryResult;
-                                    
-                                    if (retryLink.found) {
-                                        console.log('🔗 Found account link on retry: ' + retryLink.href);
-                                        console.log('🔗 Link text: ' + retryLink.text);
-                                        
-                                        // 獲取完整的 URL（如果是相對路徑，需要轉換為絕對路徑）
-                                        let targetUrl = retryLink.href;
-                                        if (targetUrl.startsWith('//')) {
-                                            // 如果是 // 開頭，添加 https:
-                                            targetUrl = 'https:' + targetUrl;
-                                        } else if (targetUrl.startsWith('/')) {
-                                            // 如果是相對路徑，需要獲取當前頁面的 origin
-                                            const currentUrl = page.url();
-                                            const urlObj = new URL(currentUrl);
-                                            targetUrl = urlObj.origin + targetUrl;
-                                        }
-                                        
-                                        console.log('🔗 Navigating to: ' + targetUrl);
-                                        
-                                        // 檢查連結是否有 target="_blank" 屬性
-                                        const linkInfo = await page.evaluate((selector) => {
-                                            const link = document.querySelector(selector);
-                                            if (link) {
-                                                return {
-                                                    hasTargetBlank: link.getAttribute('target') === '_blank',
-                                                    href: link.href
-                                                };
-                                            }
-                                            return null;
-                                        }, retryLink.selector);
-                                        
-                                        if (linkInfo && linkInfo.hasTargetBlank) {
-                                            // 如果連結有 target="_blank"，需要在新標籤頁打開
-                                            console.log('🔗 Link has target="_blank", opening in new tab...');
-                                            
-                                            // 記錄當前頁面數量
-                                            const pagesBefore = await browser.pages();
-                                            
-                                            // 使用 evaluate 直接點擊連結（這樣會觸發新標籤頁）
-                                            await page.evaluate((selector) => {
-                                                const link = document.querySelector(selector);
-                                                if (link) {
-                                                    link.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                                    link.click();
-                                                }
-                                            }, retryLink.selector);
-                                            
-                                            // 等待新標籤頁創建
-                                            await new Promise(resolve => setTimeout(resolve, 2000));
-                                            
-                                            // 檢查是否有新頁面創建
-                                            const pagesAfter = await browser.pages();
-                                            const newPage = pagesAfter.length > pagesBefore.length 
-                                                ? pagesAfter.find(p => !pagesBefore.includes(p))
-                                                : null;
-                                            
-                                            if (newPage) {
-                                                // 關閉舊頁面，切換到新頁面
-                                                await page.close();
-                                                page = newPage;
-                                                
-                                                // 等待新頁面載入
-                                                await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                                
-                                                console.log('✅ Navigated to account detail page (new tab)');
-                                            } else {
-                                                // 如果沒有新標籤頁，直接導航到 URL
-                                                console.log('⚠️  No new tab detected, navigating directly...');
-                                                await page.goto(targetUrl, {
-                                                    waitUntil: 'domcontentloaded',
-                                                    timeout: 30000
-                                                });
-                                                await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
-                                                await new Promise(resolve => setTimeout(resolve, 1000));
-                                                console.log('✅ Navigated to account detail page');
-                                            }
-                                        } else {
-                                            // 如果沒有 target="_blank"，直接導航到 URL
-                                            console.log('🔗 Navigating directly to URL...');
-                                            await page.goto(targetUrl, {
-                                                waitUntil: 'domcontentloaded',
-                                                timeout: 30000
-                                            });
-                                            
-                                            // 等待表格載入
-                                            await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
-                                            await new Promise(resolve => setTimeout(resolve, 1000));
-                                            
-                                            console.log('✅ Navigated to account detail page');
-                                        }
+                                    if (retryResult.found) {
+                                        console.log('🔗 Found account link on retry: ' + retryResult.href);
+                                        page = await navigateToAccountLink(page, browser, retryResult);
                                     } else {
                                         console.log('❌ Account link still not found after retry');
                                     }
