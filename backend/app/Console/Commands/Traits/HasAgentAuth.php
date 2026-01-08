@@ -1146,10 +1146,6 @@ trait HasAgentAuth
                 console.log('⚠️  loginInfo may not be set correctly');
             }
             
-            // 截圖確認登入狀態
-            await {$pageVar}.screenshot({ path: '00_loginInfo_set.png', fullPage: true });
-            console.log('📸 Screenshot: loginInfo set saved');
-            
             console.log('✅ Login process skipped using loginInfo');
         JS;
     }

@@ -22,9 +22,8 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
      * {player_account?} - 玩家帳號（可選參數）
-     * {--concurrency=8} - 併發數量（可選，預設為 8）
      */
-    protected $signature = 'agent:scrape-atgslot-dom-detail {url} {date_start?} {date_end?} {player_account?} {--concurrency=8}';
+    protected $signature = 'agent:scrape-atgslot-dom-detail {url} {date_start?} {date_end?} {player_account?}';
 
     /**
      * 命令描述
@@ -43,14 +42,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
         $player_account = $this->argument('player_account');
-        $concurrency = $this->option('concurrency');
 
         $this->info('=== ATGSLOT DOM Data Scraper ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Player Account: {$player_account}");
-        $this->info("Concurrency: {$concurrency}");
         
         // 檢查是否設定了 loginInfo（可以跳過登入流程）
         $loginInfo = env('ATGSLOT_AGENT_LOGIN_INFO', '');
@@ -83,7 +80,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $player_account, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $player_account);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -146,10 +143,9 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
      * @param string|null $player_account 玩家帳號（可選）
-     * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $player_account = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $player_account = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -158,39 +154,30 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         if (!empty($loginInfo)) {
             // 使用 loginInfo 直接設置登入狀態
             $loginCodeForPage = $this->generateAtgslotPuppeteerLoginInfoCode('page', $loginInfo);
-            $cookiesCodeForNewPage = $this->generateAtgslotPuppeteerCookiesCode('newPage');
         } else {
             // 使用正常的二階段登入流程
             $loginCodeForPage = $this->generateAtgslotPuppeteerLoginCode('page');
-            $cookiesCodeForNewPage = $this->generateAtgslotPuppeteerCookiesCode('newPage');
         }
 
-        // 將 date 轉換為 JavaScript 可用的格式
-        // 格式化日期為 YYYY-MM-DD
-        $dateStartFormatted = null;
-        $dateEndFormatted = null;
-        
-        if ($date_start) {
-            // 如果已經是 YYYY-MM-DD 格式，直接使用；否則轉換
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_start)) {
-                $dateStartFormatted = $date_start;
-            } elseif (preg_match('/^\d{8}$/', $date_start)) {
-                // YYYYMMDD 格式轉換為 YYYY-MM-DD
-                $dateStartFormatted = substr($date_start, 0, 4) . '-' . substr($date_start, 4, 2) . '-' . substr($date_start, 6, 2);
-            } else {
-                $dateStartFormatted = date('Y-m-d', strtotime($date_start));
+        // 格式化日期為 YYYY-MM-DD 的輔助函數
+        $formatDate = function($date) {
+            if (!$date) {
+                return null;
             }
-        }
-        
-        if ($date_end) {
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_end)) {
-                $dateEndFormatted = $date_end;
-            } elseif (preg_match('/^\d{8}$/', $date_end)) {
-                $dateEndFormatted = substr($date_end, 0, 4) . '-' . substr($date_end, 4, 2) . '-' . substr($date_end, 6, 2);
-            } else {
-                $dateEndFormatted = date('Y-m-d', strtotime($date_end));
+            // 如果已經是 YYYY-MM-DD 格式，直接使用
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+                return $date;
             }
-        }
+            // YYYYMMDD 格式轉換為 YYYY-MM-DD
+            if (preg_match('/^\d{8}$/', $date)) {
+                return substr($date, 0, 4) . '-' . substr($date, 4, 2) . '-' . substr($date, 6, 2);
+            }
+            // 其他格式嘗試轉換
+            return date('Y-m-d', strtotime($date));
+        };
+        
+        $dateStartFormatted = $formatDate($date_start);
+        $dateEndFormatted = $formatDate($date_end);
         
         $dateStartJs = $dateStartFormatted ? json_encode($dateStartFormatted) : 'null';
         $dateEndJs = $dateEndFormatted ? json_encode($dateEndFormatted) : 'null';
@@ -200,41 +187,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $script = <<<JS
             const puppeteer = require('puppeteer');
             const fs = require('fs');
-
-            /**
-             * 併發控制器：限制同時執行的 Promise 數量
-             */
-            async function promiseAllWithLimit(items, limit, fn) {
-                const results = [];
-                const executing = [];
-                let completedCount = 0;
-                const totalItems = items.length;
-                
-                for (const [index, item] of items.entries()) {
-                    const promise = Promise.resolve().then(() => fn(item, index))
-                        .then((result) => {
-                            completedCount++;
-                            return result;
-                        });
-                    
-                    results.push(promise);
-                    
-                    if (limit <= items.length) {
-                        const executing_promise = promise.then(() => 
-                            executing.splice(executing.indexOf(executing_promise), 1)
-                        );
-                        
-                        executing.push(executing_promise);
-                        
-                        if (executing.length >= limit) {
-                            await Promise.race(executing);
-                        }
-                    }
-                }
-                
-                console.log('⏳ Waiting for all pages to complete...');
-                return Promise.all(results);
-            }
 
             /**
              * 從 DOM 提取資料的函數
@@ -277,18 +229,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                     await page.setViewport({ width: 1920, height: 1080 });
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
-                    // 暫時不攔截資源，確保頁面能正常載入和渲染
-                    // 如果需要提升速度，可以在登入完成後再啟用資源攔截
-                    // await page.setRequestInterception(true);
-                    // page.on('request', (req) => {
-                    //     const resourceType = req.resourceType();
-                    //     const url = req.url();
-                    //     if (['image', 'font', 'media', 'websocket', 'manifest', 'texttrack'].includes(resourceType)) {
-                    //         req.abort();
-                    //     } else {
-                    //         req.continue();
-                    //     }
-                    // });
 
                     // 執行二階段登入流程
                     {$loginCodeForPage}
@@ -559,27 +499,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                                 console.log('✅ Player account filled successfully');
                             } else {
                                 console.log('⚠️  Player account input field not found');
-                                // 嘗試其他可能的選擇器
-                                const altInput = await page.$('input.ivu-input.ivu-input-default[placeholder="搜尋用戶/注單ID"]');
-                                if (altInput) {
-                                    console.log('✅ Found player account input field using alternative selector');
-                                    await page.evaluate((accountValue) => {
-                                        const input = document.querySelector('input.ivu-input.ivu-input-default[placeholder="搜尋用戶/注單ID"]');
-                                        if (input) {
-                                            input.value = '';
-                                            input.value = accountValue;
-                                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
-                                            input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-                                            input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-                                            input.focus();
-                                            input.dispatchEvent(new Event('focus', { bubbles: true }));
-                                        }
-                                    }, playerAccountValue);
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                    console.log('✅ Player account filled using alternative selector');
-                                }
                             }
                         } catch (e) {
                             console.log('⚠️  Error filling player account: ' + e.message);
@@ -986,17 +905,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                             
                             // 滾動到頁面底部
                             await page.evaluate(() => {
-                                // 滾動到頁面最底部
-                                window.scrollTo({
-                                    top: document.body.scrollHeight || document.documentElement.scrollHeight,
-                                    behavior: 'smooth'
-                                });
-                            });
-                            
-                            // 滾動到頁面底部（直接滾動，不等待）
-                            await page.evaluate(() => {
                                 const scrollHeight = document.body.scrollHeight || document.documentElement.scrollHeight;
-                                // 直接滾動到底部，不需要逐步滾動
                                 window.scrollTo(0, scrollHeight);
                             });
                             
@@ -1370,8 +1279,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                         }
                     }
 
-                    // 這裡可以根據實際網頁結構提取表格資料
-                    // 暫時返回基本結構
+                    // 返回結果
                     const result = {
                         success: true,
                         url: '$url',
@@ -1463,20 +1371,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
             $this->info('✅ Scraping completed successfully!');
             $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
             
-            // 保存 cookies 和認證資訊
-            $dataFileName = "scraped_data/atgslot_data_{$timestamp}.json";
-            $fileData = [
-                'metadata' => [
-                    'timestamp' => $timestamp,
-                    'url' => $result['url'] ?? '',
-                ],
-                'cookies' => $result['cookies'] ?? [],
-                'authData' => $result['authData'] ?? [],
-            ];
-            
-            Storage::put($dataFileName, json_encode($fileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            $this->info("✅ Auth data saved: {$dataFileName}");
-            
             // 如果有表格數據，保存表格數據到單獨的文件
             if (isset($result['tableData']) && is_array($result['tableData'])) {
                 $tableData = $result['tableData'];
@@ -1505,9 +1399,6 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                     Storage::put($tableFileName, json_encode($tableFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
                     $this->info("✅ Table data saved: {$tableFileName}");
                     $this->info("   Rows extracted: {$rowCount}");
-                    if (!empty($tableData['headers'])) {
-                        $this->info("   Headers: " . implode(', ', $tableData['headers']));
-                    }
                 } else {
                     $this->warn('⚠️  Table data extraction failed: ' . ($tableData['error'] ?? 'Unknown error'));
                     if (isset($tableData['debug'])) {
@@ -1525,7 +1416,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
     }
 
     /**
-     * 處理截圖文件，將它們從臨時目錄移動到永久儲存目錄
+     * 處理截圖文件，將它們從臨時目錄移動到永久儲存目錄（與數據文件同資料夾）
      * @param string $workingDir 工作目錄（臨時目錄）
      * @param string $timestamp 時間戳
      */
@@ -1548,9 +1439,11 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
             '06_waiting_for_manual_code_*.png',
             '07_after_confirm_button_clicked.png',
             '08_login_completed_final_page.png',
+            '10_after_search_clicked.png',
         ];
         
-        $screenshotsDir = storage_path("app/scraped_data/atgslot_screenshots_{$timestamp}");
+        // 截圖直接保存在 scraped_data 資料夾，與數據文件同級（不使用子資料夾）
+        $screenshotsDir = storage_path('app/scraped_data');
         if (!is_dir($screenshotsDir)) {
             mkdir($screenshotsDir, 0755, true);
         }
@@ -1566,10 +1459,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                 foreach ($files as $file) {
                     if (file_exists($file)) {
                         $filename = basename($file);
-                        $destPath = $screenshotsDir . '/' . $filename;
+                        // 添加時間戳前綴以避免文件名衝突
+                        $destFilename = "atgslot_{$timestamp}_{$filename}";
+                        $destPath = $screenshotsDir . '/' . $destFilename;
                         if (rename($file, $destPath)) {
                             $screenshotCount++;
-                            $this->line("   ✅ {$filename}");
+                            $this->line("   ✅ {$destFilename}");
                         }
                     }
                 }
@@ -1577,10 +1472,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                 // 處理固定文件名
                 $srcPath = $workingDir . '/' . $pattern;
                 if (file_exists($srcPath)) {
-                    $destPath = $screenshotsDir . '/' . $pattern;
+                    // 添加時間戳前綴以避免文件名衝突
+                    $destFilename = "atgslot_{$timestamp}_{$pattern}";
+                    $destPath = $screenshotsDir . '/' . $destFilename;
                     if (rename($srcPath, $destPath)) {
                         $screenshotCount++;
-                        $this->line("   ✅ {$pattern}");
+                        $this->line("   ✅ {$destFilename}");
                     }
                 }
             }
@@ -1590,10 +1487,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $allScreenshots = glob($workingDir . '/[0-9]*.png');
         foreach ($allScreenshots as $file) {
             $filename = basename($file);
-            $destPath = $screenshotsDir . '/' . $filename;
+            // 添加時間戳前綴以避免文件名衝突
+            $destFilename = "atgslot_{$timestamp}_{$filename}";
+            $destPath = $screenshotsDir . '/' . $destFilename;
             if (!file_exists($destPath) && rename($file, $destPath)) {
                 $screenshotCount++;
-                $this->line("   ✅ {$filename}");
+                $this->line("   ✅ {$destFilename}");
             }
         }
         
