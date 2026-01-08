@@ -509,33 +509,50 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             const cells = Array.from(row.querySelectorAll('td'));
                             const rowData = {};
                             
-                            if (headers && headers.length > 0) {
-                                headers.forEach((header, colIndex) => {
-                                    // 清理字段名
-                                    let cleanHeader = header
-                                        .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-                                        .replace(/^_+|_+$/g, '');
-                                    
-                                    if (!cleanHeader) {
-                                        cleanHeader = 'column_' + colIndex;
+                                    if (headers && headers.length > 0) {
+                                        headers.forEach((header, colIndex) => {
+                                            // 清理字段名
+                                            let cleanHeader = header
+                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                .replace(/^_+|_+$/g, '');
+                                            
+                                            if (!cleanHeader) {
+                                                cleanHeader = 'column_' + colIndex;
+                                            }
+                                            
+                                            // 確保字段名唯一
+                                            let finalHeader = cleanHeader;
+                                            let counter = 1;
+                                            while (rowData.hasOwnProperty(finalHeader)) {
+                                                finalHeader = cleanHeader + '_' + counter;
+                                                counter++;
+                                            }
+                                            
+                                            const cellValue = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                            
+                                            // 特殊處理：如果字段是「投注時間_單號」或「投注時間/單號」，則分割成兩個字段
+                                            if (cellValue && (cleanHeader === '投注時間_單號' || cleanHeader === '投注時間單號' || (header.includes('投注時間') && header.includes('單號')))) {
+                                                // 分割換行符（使用 RegExp 構造函數避免 heredoc 換行問題）
+                                                const parts = cellValue.split(new RegExp('[\\n\\r]+'));
+                                                if (parts.length >= 2) {
+                                                    // 分割成「投注時間」和「單號」兩個字段
+                                                    rowData['投注時間'] = parts[0].trim();
+                                                    // 合併剩餘部分並去除多餘空白
+                                                    rowData['單號'] = parts.slice(1).map(p => p.trim()).filter(p => p).join('').trim();
+                                                } else {
+                                                    // 如果沒有換行符，保持原值
+                                                    rowData[finalHeader] = cellValue;
+                                                }
+                                            } else {
+                                                rowData[finalHeader] = cellValue;
+                                            }
+                                        });
+                                    } else {
+                                        // 如果沒有表頭，使用索引作為 key
+                                        cells.forEach((cell, colIndex) => {
+                                            rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
+                                        });
                                     }
-                                    
-                                    // 確保字段名唯一
-                                    let finalHeader = cleanHeader;
-                                    let counter = 1;
-                                    while (rowData.hasOwnProperty(finalHeader)) {
-                                        finalHeader = cleanHeader + '_' + counter;
-                                        counter++;
-                                    }
-                                    
-                                    rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
-                                });
-                            } else {
-                                // 如果沒有表頭，使用索引作為 key
-                                cells.forEach((cell, colIndex) => {
-                                    rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
-                                });
-                            }
                             
                             // 添加原始行索引
                             rowData._rowIndex = rowIndex;
@@ -703,9 +720,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             }
                             if (pageInfo.tableData.data) {
                                 pageInfo.tableData.data.forEach(row => {
-                                    // 使用「投注時間_單號」作為唯一標識符進行去重
-                                    // 如果沒有這個欄位，使用整個行的 JSON 字符串作為標識符
-                                    const rowKey = row['投注時間_單號'] || row['投注時間/單號'] || JSON.stringify(row);
+                                    // 使用「單號」作為唯一標識符進行去重（因為已經分割了）
+                                    // 如果沒有「單號」，則嘗試使用「投注時間_單號」或「投注時間/單號」
+                                    // 如果都沒有，使用整個行的 JSON 字符串作為標識符
+                                    const rowKey = row['單號'] || row['投注時間_單號'] || row['投注時間/單號'] || JSON.stringify(row);
                                     
                                     if (!seenRows.has(rowKey)) {
                                         seenRows.add(rowKey);
