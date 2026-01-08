@@ -206,10 +206,32 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             async function clickSearchButton(page) {
                 const searchButton = await page.evaluate(() => {
                     const allButtons = Array.from(document.querySelectorAll('button'));
-                    let searchBtn = allButtons.find(btn => {
+                    let searchBtn = null;
+                    
+                    // 優先查找文本為 "Search" 的按鈕
+                    searchBtn = allButtons.find(btn => {
                         const text = btn.textContent.trim();
-                        return text === '搜尋';
+                        return text === 'Search' || text === '搜尋';
                     });
+                    
+                    // 如果沒找到，嘗試通過 class 查找
+                    if (!searchBtn) {
+                        searchBtn = allButtons.find(btn => {
+                            return btn.classList.contains('btn-primary') && 
+                                   (btn.textContent.trim() === 'Search' || 
+                                    btn.textContent.trim() === '搜尋' ||
+                                    btn.textContent.trim().toLowerCase().includes('search'));
+                        });
+                    }
+                    
+                    // 如果還是沒找到，查找 type="submit" 或 type="sbumit" 的按鈕
+                    if (!searchBtn) {
+                        searchBtn = allButtons.find(btn => {
+                            const type = btn.getAttribute('type');
+                            return (type === 'submit' || type === 'sbumit') && 
+                                   btn.classList.contains('btn-primary');
+                        });
+                    }
 
                     if (searchBtn) {
                         const uniqueId = 'search-btn-' + Date.now();
@@ -217,7 +239,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         return {
                             found: true,
                             selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                            text: searchBtn.textContent.trim()
+                            text: searchBtn.textContent.trim(),
+                            type: searchBtn.getAttribute('type')
                         };
                     }
                     
@@ -353,9 +376,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
              * @returns {Promise<Page>} 返回當前使用的頁面對象
              */
             async function navigateToAccountLink(page, browser, accountLink) {
-                console.log('🔗 Found account link: ' + accountLink.href);
-                console.log('🔗 Link text: ' + accountLink.text);
-                
                 // 處理 URL
                 let currentUrl;
                 try {
@@ -368,7 +388,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 }
                 
                 const targetUrl = normalizeUrl(accountLink.href, currentUrl);
-                console.log('🔗 Navigating to: ' + targetUrl);
                 
                 // 檢查連結是否有 target="_blank" 屬性
                 let linkInfo = null;
@@ -388,8 +407,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 }
                 
                 if (linkInfo && linkInfo.hasTargetBlank) {
-                    console.log('🔗 Link has target="_blank", opening in new tab...');
-                    
                     const pagesBefore = await browser.pages();
                     
                     try {
@@ -409,7 +426,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         });
                         await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
-                        console.log('✅ Navigated to account detail page');
                         return page;
                     }
                     
@@ -426,17 +442,14 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         page = newPage;
                         await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
-                        console.log('✅ Navigated to account detail page (new tab)');
                         return page;
                     } else {
-                        console.log('⚠️  No new tab detected, navigating directly...');
                         await page.goto(targetUrl, {
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
                         await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
-                        console.log('✅ Navigated to account detail page');
                         return page;
                     }
                 } else {
@@ -447,7 +460,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     });
                     await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 1000));
-                    console.log('✅ Navigated to account detail page');
                     return page;
                 }
             }
@@ -539,6 +551,20 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                                     rowData['投注時間'] = parts[0].trim();
                                                     // 合併剩餘部分並去除多餘空白
                                                     rowData['單號'] = parts.slice(1).map(p => p.trim()).filter(p => p).join('').trim();
+                                                } else {
+                                                    // 如果沒有換行符，保持原值
+                                                    rowData[finalHeader] = cellValue;
+                                                }
+                                            } 
+                                            // 特殊處理：如果字段是 Bet_Time_Order_Number，則分割成兩個字段
+                                            else if (cellValue && (cleanHeader === 'Bet_Time_Order_Number' || cleanHeader.toLowerCase() === 'bet_time_order_number')) {
+                                                // 分割換行符
+                                                const parts = cellValue.split(new RegExp('[\\n\\r]+'));
+                                                if (parts.length >= 2) {
+                                                    // 分割成 Bet_Time 和 Order_Number 兩個字段
+                                                    rowData['Bet_Time'] = parts[0].trim();
+                                                    // 合併剩餘部分並去除多餘空白
+                                                    rowData['Order_Number'] = parts.slice(1).map(p => p.trim()).filter(p => p).join('').trim();
                                                 } else {
                                                     // 如果沒有換行符，保持原值
                                                     rowData[finalHeader] = cellValue;
@@ -685,8 +711,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 如果有多頁，爬取其他頁面
                     if (paginationInfo.totalPages > 1) {
                         for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
-                            console.log('📄 Crawling page ' + pageNum + '/' + paginationInfo.totalPages + '...');
-                            
                             // 查找對應的頁面連結
                             const pageLink = paginationInfo.pageLinks.find(p => p.pageNumber === pageNum);
                             if (pageLink) {
@@ -720,10 +744,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             }
                             if (pageInfo.tableData.data) {
                                 pageInfo.tableData.data.forEach(row => {
-                                    // 使用「單號」作為唯一標識符進行去重（因為已經分割了）
-                                    // 如果沒有「單號」，則嘗試使用「投注時間_單號」或「投注時間/單號」
+                                    // 使用「單號」或 Order_Number 作為唯一標識符進行去重（因為已經分割了）
+                                    // 如果沒有，則嘗試使用原始字段
                                     // 如果都沒有，使用整個行的 JSON 字符串作為標識符
-                                    const rowKey = row['單號'] || row['投注時間_單號'] || row['投注時間/單號'] || JSON.stringify(row);
+                                    const rowKey = row['單號'] || row['Order_Number'] || row['投注時間_單號'] || row['投注時間/單號'] || row['Bet_Time_Order_Number'] || JSON.stringify(row);
                                     
                                     if (!seenRows.has(rowKey)) {
                                         seenRows.add(rowKey);
@@ -966,22 +990,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                     allAccountLinksResult = await findAllAccountLinks(page, accountNumberParsed);
                                 }
                                 
-                                // 輸出調試信息
-                                if (!allAccountLinksResult.found && allAccountLinksResult.debug) {
-                                    console.log('📊 Debug info:');
-                                    if (allAccountLinksResult.debug.tableRows !== undefined) {
-                                        console.log('   Table rows: ' + allAccountLinksResult.debug.tableRows);
-                                        console.log('   Table links: ' + allAccountLinksResult.debug.tableLinks);
-                                        console.log('   Account value: ' + allAccountLinksResult.debug.accountValue);
-                                        console.log('   Sample table links (first 10):');
-                                        allAccountLinksResult.debug.sampleTableLinks.slice(0, 10).forEach((link, idx) => {
-                                            console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
-                                        });
-                                    } else {
-                                        console.log('   Error: ' + allAccountLinksResult.debug.error);
-                                    }
-                                }
-                                
                                 // 存儲所有詳情頁面的結果
                                 const allDetailResults = [];
                                 
@@ -996,9 +1004,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                     // 依次處理每個連結
                                     for (let i = 0; i < allAccountLinksResult.links.length; i++) {
                                         const accountLink = allAccountLinksResult.links[i];
-                                        console.log('\\n📌 Processing link ' + (i + 1) + '/' + allAccountLinksResult.links.length + ': ' + accountLink.text);
-                                        console.log('   URL: ' + accountLink.href);
-                                        
                                         let detailPage = null;
                                         try {
                                             // 如果是第一個連結，使用當前頁面；否則創建新頁面
@@ -1007,7 +1012,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                                 detailPage = await navigateToAccountLink(mainListPage, browser, accountLink);
                                             } else {
                                                 // 後續連結：創建新頁面
-                                                console.log('   Creating new page for link ' + (i + 1) + '...');
                                                 detailPage = await browser.newPage();
                                                 await detailPage.setViewport({ width: 1920, height: 1080 });
                                                 await detailPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
@@ -1030,7 +1034,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                                 
                                                 // 導航到連結（使用保存的主列表頁面 URL）
                                                 const targetUrl = normalizeUrl(accountLink.href, mainListPageUrl);
-                                                console.log('   Navigating to: ' + targetUrl);
                                                 await detailPage.goto(targetUrl, {
                                                     waitUntil: 'domcontentloaded',
                                                     timeout: 30000
@@ -1063,8 +1066,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                                 page = detailPage;
                                             }
                                             
-                                            console.log('✅ Completed processing link ' + (i + 1) + '/' + allAccountLinksResult.links.length);
-                                            
                                         } catch (error) {
                                             console.error('❌ Error processing link ' + (i + 1) + ': ' + error.message);
                                             console.error('❌ Error stack: ' + (error.stack || 'No stack trace'));
@@ -1090,16 +1091,12 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                         }
                                     }
                                     
-                                    console.log('\\n✅ All account links processed: ' + allDetailResults.length + ' result(s)');
-                                    
                                     // 將詳情結果存儲到函數作用域變量中
                                     accountDetailResults = allDetailResults;
                                     
                                     // 如果處理了多個帳號詳情連結，跳過主列表的分頁處理
                                     // 因為頁面已經在不同的詳情頁面了
                                     if (allDetailResults.length > 1) {
-                                        console.log('ℹ️  Multiple account detail pages processed, skipping main list pagination');
-                                        
                                         // 直接構建結果並返回（不需要訪問頁面，因為已經處理完了）
                                         const result = {
                                             timestamp: new Date().toISOString(),
@@ -1632,10 +1629,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             }
             
             $this->info("✅ All platform-specific files saved!");
-        }
-
-        if (!$mergedFileName) {
-            $this->warn("⚠️ No data to save.");
         }
 
         // 將截圖從臨時目錄移動到永久儲存目錄

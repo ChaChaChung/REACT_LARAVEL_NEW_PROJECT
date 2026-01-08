@@ -76,6 +76,7 @@ trait HasAgentAuth
      */
     protected function generateFoqqPuppeteerCookiesCode(string $pageVar = 'page'): string
     {
+        $lang = env('FOQQ_AGENT_LANG');
         $auth = env('FOQQ_AGENT_AUTH', '');
         $token = env('FOQQ_AGENT_TOKEN', '');
         $domain = env('FOQQ_AGENT_DOMAIN');
@@ -86,6 +87,7 @@ trait HasAgentAuth
             // 根據環境變數設定認證 cookies
             // 這些 cookies 用於通過需要登入的頁面驗證
             const cookies = [];
+            if ('$lang') cookies.push({ name: 'lang', value: '$lang', domain: '$domain' });
             if ('$auth') cookies.push({ name: 'ci_session', value: '$auth', domain: '$domain' });
             if ('$token') cookies.push({ name: 'login_root', value: '$token', domain: '$domain' });
 
@@ -362,7 +364,7 @@ trait HasAgentAuth
             }
         JS;
     }
-    
+
     /**
      * 生成 ATGSLOT Puppeteer 使用 loginInfo 直接登入的程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
