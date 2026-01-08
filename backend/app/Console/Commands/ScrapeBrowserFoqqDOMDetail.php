@@ -235,101 +235,98 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             }
 
             /**
-             * 輔助函數：查找帳號連結
+             * 輔助函數：查找所有帳號連結（從表格中）
+             * @param {Page} page - Puppeteer 頁面對象
+             * @param {string} accountValue - 帳號值
+             * @returns {Promise<Object>} 返回找到的所有連結信息或調試信息
+             */
+            async function findAllAccountLinks(page, accountValue) {
+                return await page.evaluate((accountValue) => {
+                    const table = document.querySelector('#simple-table');
+                    
+                    if (!table) {
+                        return {
+                            found: false,
+                            links: [],
+                            debug: { error: 'Table #simple-table not found' }
+                        };
+                    }
+                    
+                    // 從表格中獲取所有連結
+                    const tableLinks = Array.from(table.querySelectorAll('a'));
+                    const matchedLinks = [];
+                    
+                    // 查找所有匹配的連結
+                    tableLinks.forEach((link, index) => {
+                        const text = link.textContent.trim();
+                        // 完全匹配或包含帳號
+                        if (text === accountValue || text.includes(accountValue)) {
+                            // 為每個連結設定唯一 ID
+                            const uniqueId = 'account-link-' + index + '-' + Date.now();
+                            link.setAttribute('data-puppeteer-id', uniqueId);
+                            
+                            matchedLinks.push({
+                                selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                href: link.href,
+                                text: text,
+                                index: index
+                            });
+                        }
+                    });
+                    
+                    if (matchedLinks.length > 0) {
+                        return {
+                            found: true,
+                            links: matchedLinks,
+                            count: matchedLinks.length
+                        };
+                    }
+                    
+                    // 返回調試信息
+                    const tableRows = Array.from(table.querySelectorAll('tbody tr'));
+                    const sampleTableLinks = tableLinks.slice(0, 10).map(a => ({
+                        text: a.textContent.trim(),
+                        href: a.href
+                    }));
+                    
+                    return {
+                        found: false,
+                        links: [],
+                        debug: {
+                            tableRows: tableRows.length,
+                            tableLinks: tableLinks.length,
+                            sampleTableLinks: sampleTableLinks,
+                            accountValue: accountValue
+                        }
+                    };
+                }, accountValue);
+            }
+
+            /**
+             * 輔助函數：查找帳號連結（保留用於向後兼容）
              * @param {Page} page - Puppeteer 頁面對象
              * @param {string} accountValue - 帳號值
              * @param {boolean} onlyInTable - 是否只在表格內查找（用於重試）
              * @returns {Promise<Object>} 返回找到的連結信息或調試信息
              */
             async function findAccountLink(page, accountValue, onlyInTable = false) {
-                return await page.evaluate((accountValue, onlyInTable) => {
-                    const allLinks = onlyInTable ? [] : Array.from(document.querySelectorAll('a'));
-                    const totalLinks = allLinks.length;
-                    const sampleLinks = allLinks.slice(0, 20).map(a => ({
-                        text: a.textContent.trim(),
-                        href: a.href
-                    }));
-                    
-                    let link = null;
-                    const table = document.querySelector('#simple-table');
-                    
-                    if (table) {
-                        const tableLinks = Array.from(table.querySelectorAll('a'));
-                        // 優先完全匹配
-                        link = tableLinks.find(a => {
-                            const text = a.textContent.trim();
-                            return text === accountValue;
-                        });
-                        // 如果沒有完全匹配，則查找包含帳號的連結
-                        if (!link) {
-                            link = tableLinks.find(a => {
-                                const text = a.textContent.trim();
-                                return text.includes(accountValue);
-                            });
-                        }
-                    }
-                    
-                    // 如果表格內沒找到且允許在整個頁面查找
-                    if (!link && !onlyInTable) {
-                        link = allLinks.find(a => {
-                            const text = a.textContent.trim();
-                            return text === accountValue;
-                        });
-                        
-                        if (!link) {
-                            link = allLinks.find(a => {
-                                const text = a.textContent.trim();
-                                return text.includes(accountValue);
-                            });
-                        }
-                    }
-                    
-                    if (link) {
-                        const uniqueId = 'account-link-' + Date.now();
-                        link.setAttribute('data-puppeteer-id', uniqueId);
-                        return {
-                            found: true,
-                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
-                            href: link.href,
-                            text: link.textContent.trim()
-                        };
-                    }
-                    
-                    // 返回調試信息
-                    if (onlyInTable) {
-                        if (table) {
-                            const tableRows = Array.from(table.querySelectorAll('tbody tr'));
-                            const tableLinks = Array.from(table.querySelectorAll('a'));
-                            const sampleTableLinks = tableLinks.slice(0, 10).map(a => ({
-                                text: a.textContent.trim(),
-                                href: a.href
-                            }));
-                            return {
-                                found: false,
-                                debug: {
-                                    tableRows: tableRows.length,
-                                    tableLinks: tableLinks.length,
-                                    sampleTableLinks: sampleTableLinks,
-                                    accountValue: accountValue
-                                }
-                            };
-                        } else {
-                            return {
-                                found: false,
-                                debug: { error: 'Table not found' }
-                            };
-                        }
-                    }
-                    
+                const allLinksResult = await findAllAccountLinks(page, accountValue);
+                
+                if (allLinksResult.found && allLinksResult.links.length > 0) {
+                    // 返回第一個連結（向後兼容）
                     return {
-                        found: false,
-                        debug: {
-                            totalLinks: totalLinks,
-                            sampleLinks: sampleLinks,
-                            accountValue: accountValue
-                        }
+                        found: true,
+                        selector: allLinksResult.links[0].selector,
+                        href: allLinksResult.links[0].href,
+                        text: allLinksResult.links[0].text
                     };
-                }, accountValue, onlyInTable);
+                }
+                
+                // 返回調試信息
+                return {
+                    found: false,
+                    debug: allLinksResult.debug || { error: 'No links found' }
+                };
             }
 
             /**
@@ -360,34 +357,61 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 console.log('🔗 Link text: ' + accountLink.text);
                 
                 // 處理 URL
-                const currentUrl = page.url();
+                let currentUrl;
+                try {
+                    currentUrl = page.url();
+                } catch (e) {
+                    // 如果頁面已關閉，使用 accountLink.href 中的域名信息
+                    currentUrl = accountLink.href.startsWith('//') ? 'https:' + accountLink.href : accountLink.href;
+                    const urlObj = new URL(currentUrl);
+                    currentUrl = urlObj.origin + urlObj.pathname;
+                }
+                
                 const targetUrl = normalizeUrl(accountLink.href, currentUrl);
                 console.log('🔗 Navigating to: ' + targetUrl);
                 
                 // 檢查連結是否有 target="_blank" 屬性
-                const linkInfo = await page.evaluate((selector) => {
-                    const link = document.querySelector(selector);
-                    if (link) {
-                        return {
-                            hasTargetBlank: link.getAttribute('target') === '_blank',
-                            href: link.href
-                        };
-                    }
-                    return null;
-                }, accountLink.selector);
+                let linkInfo = null;
+                try {
+                    linkInfo = await page.evaluate((selector) => {
+                        const link = document.querySelector(selector);
+                        if (link) {
+                            return {
+                                hasTargetBlank: link.getAttribute('target') === '_blank',
+                                href: link.href
+                            };
+                        }
+                        return null;
+                    }, accountLink.selector);
+                } catch (e) {
+                    console.log('⚠️  Could not evaluate link info, assuming direct navigation: ' + e.message);
+                }
                 
                 if (linkInfo && linkInfo.hasTargetBlank) {
                     console.log('🔗 Link has target="_blank", opening in new tab...');
                     
                     const pagesBefore = await browser.pages();
                     
-                    await page.evaluate((selector) => {
-                        const link = document.querySelector(selector);
-                        if (link) {
-                            link.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            link.click();
-                        }
-                    }, accountLink.selector);
+                    try {
+                        await page.evaluate((selector) => {
+                            const link = document.querySelector(selector);
+                            if (link) {
+                                link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                link.click();
+                            }
+                        }, accountLink.selector);
+                    } catch (e) {
+                        console.log('⚠️  Could not click link, navigating directly: ' + e.message);
+                        // 如果點擊失敗，直接導航
+                        await page.goto(targetUrl, {
+                            waitUntil: 'domcontentloaded',
+                            timeout: 30000
+                        });
+                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        console.log('✅ Navigated to account detail page');
+                        return page;
+                    }
                     
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
@@ -397,7 +421,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         : null;
                     
                     if (newPage) {
-                        await page.close();
+                        // 不關閉原始頁面，因為可能需要用於後續連結
+                        // await page.close();
                         page = newPage;
                         await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -428,10 +453,316 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             }
 
             /**
+             * 提取表格資料的函數（可重用）
+             * @param {Page} pageObject - Puppeteer 頁面對象（可以是 page 或 newPage）
+             * @returns {Promise<Object>} 返回提取的表格資料
+             */
+            async function extractTableData(pageObject) {
+                return await pageObject.evaluate(() => {
+                    // 查找 id="simple-table" 的表格
+                    const table = document.querySelector('#simple-table');
+                    
+                    if (!table) {
+                        return {
+                            found: false,
+                            error: 'Table #simple-table not found'
+                        };
+                    }
+
+                    // 提取表頭
+                    let headers = [];
+                    const thead = table.querySelector('thead');
+                    if (thead) {
+                        const headerRows = Array.from(thead.querySelectorAll('tr'));
+                        if (headerRows.length > 0) {
+                            const headerCells = headerRows[0].querySelectorAll('th, td');
+                            headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                        }
+                    } else {
+                        // 如果沒有 thead，嘗試從第一行提取表頭
+                        const firstRow = table.querySelector('tr');
+                        if (firstRow) {
+                            const headerCells = firstRow.querySelectorAll('th, td');
+                            headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                        }
+                    }
+
+                    // 提取資料行
+                    const tbody = table.querySelector('tbody');
+                    let rows = [];
+                    let dataStartIndex = 0;
+
+                    if (tbody) {
+                        rows = Array.from(tbody.querySelectorAll('tr'));
+                    } else {
+                        // 如果沒有 tbody，從表格直接獲取所有行
+                        rows = Array.from(table.querySelectorAll('tr'));
+                        // 如果有表頭，跳過第一行
+                        if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) {
+                            dataStartIndex = 1;
+                        }
+                    }
+
+                    // 將資料行轉換為對象數組
+                    const dataRows = rows.slice(dataStartIndex)
+                        .map((row, rowIndex) => {
+                            const cells = Array.from(row.querySelectorAll('td'));
+                            const rowData = {};
+                            
+                            if (headers && headers.length > 0) {
+                                headers.forEach((header, colIndex) => {
+                                    // 清理字段名
+                                    let cleanHeader = header
+                                        .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                        .replace(/^_+|_+$/g, '');
+                                    
+                                    if (!cleanHeader) {
+                                        cleanHeader = 'column_' + colIndex;
+                                    }
+                                    
+                                    // 確保字段名唯一
+                                    let finalHeader = cleanHeader;
+                                    let counter = 1;
+                                    while (rowData.hasOwnProperty(finalHeader)) {
+                                        finalHeader = cleanHeader + '_' + counter;
+                                        counter++;
+                                    }
+                                    
+                                    rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
+                                });
+                            } else {
+                                // 如果沒有表頭，使用索引作為 key
+                                cells.forEach((cell, colIndex) => {
+                                    rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
+                                });
+                            }
+                            
+                            // 添加原始行索引
+                            rowData._rowIndex = rowIndex;
+                            
+                            return rowData;
+                        })
+                        .filter(rowData => {
+                            // 過濾掉小計和總計行
+                            // 檢查第一個欄位（通常是日期欄位）是否包含"小計"或"總計"
+                            const firstValue = Object.values(rowData)[0];
+                            return firstValue !== '小計' && firstValue !== '總計';
+                        });
+
+                    return {
+                        found: true,
+                        tableId: table.id || null,
+                        tableClass: table.className || null,
+                        headers: headers,
+                        headerCount: headers.length,
+                        rowCount: dataRows.length,
+                        rawRows: rows.slice(dataStartIndex)
+                            .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
+                            .filter(rowArray => {
+                                // 過濾掉小計和總計行
+                                return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
+                            }),
+                        data: dataRows
+                    };
+                });
+            }
+
+            /**
+             * 輔助函數：處理單個帳號連結的詳情頁面（爬取數據並截圖，支持分頁）
+             * @param {Page} detailPage - 詳情頁面對象
+             * @param {Object} accountLink - 帳號連結信息
+             * @param {number} linkIndex - 連結索引（用於文件命名）
+             * @param {string} accountValue - 帳號值（用於文件命名）
+             * @returns {Promise<Object>} 返回爬取的數據和文件路徑
+             */
+            async function processAccountLinkDetail(detailPage, accountLink, linkIndex, accountValue) {
+                console.log('📄 Processing detail page ' + (linkIndex + 1) + ' for account: ' + accountValue);
+                
+                try {
+                    // 等待表格載入
+                    await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // 獲取當前頁面 URL（用於識別平台）
+                    const pageUrl = detailPage.url();
+                    const urlParams = new URL(pageUrl).searchParams;
+                    const platform = urlParams.get('gm') || 'unknown';
+                    
+                    // 獲取分頁信息（改進版：避免重複）
+                    const paginationInfo = await detailPage.evaluate(() => {
+                        const pageLinksMap = new Map(); // 使用 Map 避免重複的頁碼
+                        
+                        // 查找分頁區域
+                        const paginationContainer = document.querySelector('.pagination') || 
+                                                   document.querySelector('ul.pagination') ||
+                                                   document.querySelector('[class*="pag"]');
+                        
+                        if (paginationContainer) {
+                            const links = paginationContainer.querySelectorAll('a[data-ci-pagination-page]');
+                            links.forEach(link => {
+                                const pageNum = parseInt(link.getAttribute('data-ci-pagination-page'));
+                                if (!isNaN(pageNum) && link.href) {
+                                    // 使用 Map 確保每個頁碼只保存一次
+                                    if (!pageLinksMap.has(pageNum)) {
+                                        pageLinksMap.set(pageNum, link.href);
+                                    }
+                                }
+                            });
+                        }
+                        
+                        // 獲取當前頁碼（從 URL 中提取，如果有的話）
+                        const currentUrl = new URL(window.location.href);
+                        const currentPageFromUrl = parseInt(currentUrl.searchParams.get('p')) || 1;
+                        
+                        // 檢查是否有下一頁按鈕
+                        const nextLink = document.querySelector('a[rel="next"]');
+                        if (nextLink && nextLink.href) {
+                            const style = window.getComputedStyle(nextLink);
+                            const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                            if (isVisible) {
+                                // 計算最大頁碼
+                                const maxPageFromLinks = pageLinksMap.size > 0 ? Math.max(...Array.from(pageLinksMap.keys())) : currentPageFromUrl;
+                                
+                                // 從 next 鏈接的 URL 中提取頁碼
+                                try {
+                                    const nextUrl = new URL(nextLink.href);
+                                    const nextPageNum = parseInt(nextUrl.searchParams.get('p'));
+                                    if (!isNaN(nextPageNum) && nextPageNum > maxPageFromLinks) {
+                                        pageLinksMap.set(nextPageNum, nextLink.href);
+                                    }
+                                } catch (e) {
+                                    // 如果無法解析 URL，嘗試使用最大頁碼+1
+                                    const estimatedNextPage = maxPageFromLinks + 1;
+                                    if (!pageLinksMap.has(estimatedNextPage)) {
+                                        pageLinksMap.set(estimatedNextPage, nextLink.href);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 轉換為數組
+                        const pageLinks = Array.from(pageLinksMap.entries()).map(([pageNumber, url]) => ({
+                            pageNumber: pageNumber,
+                            url: url
+                        })).sort((a, b) => a.pageNumber - b.pageNumber);
+                        
+                        return {
+                            totalPages: pageLinks.length > 0 ? Math.max(...pageLinks.map(p => p.pageNumber)) : 1,
+                            pageLinks: pageLinks,
+                            currentUrl: window.location.href
+                        };
+                    });
+                    
+                    console.log('📑 Found ' + paginationInfo.totalPages + ' page(s) for this detail');
+                    
+                    // 存儲所有頁面的數據
+                    const allPagesData = [];
+                    
+                    // 爬取第一頁
+                    const firstPageData = await extractTableData(detailPage);
+                    allPagesData.push({
+                        pageNumber: 1,
+                        tableData: firstPageData
+                    });
+                    
+                    // 如果有多頁，爬取其他頁面
+                    if (paginationInfo.totalPages > 1) {
+                        for (let pageNum = 2; pageNum <= paginationInfo.totalPages; pageNum++) {
+                            console.log('📄 Crawling page ' + pageNum + '/' + paginationInfo.totalPages + '...');
+                            
+                            // 查找對應的頁面連結
+                            const pageLink = paginationInfo.pageLinks.find(p => p.pageNumber === pageNum);
+                            if (pageLink) {
+                                // 導航到該頁
+                                await detailPage.goto(pageLink.url, {
+                                    waitUntil: 'domcontentloaded',
+                                    timeout: 30000
+                                });
+                                await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                // 提取數據
+                                const pageData = await extractTableData(detailPage);
+                                allPagesData.push({
+                                    pageNumber: pageNum,
+                                    tableData: pageData
+                                });
+                            }
+                        }
+                    }
+                    
+                    // 合併所有頁面的數據，並進行去重
+                    const allData = [];
+                    const seenRows = new Set(); // 用於追蹤已看到的行
+                    let allHeaders = [];
+                    
+                    allPagesData.forEach(pageInfo => {
+                        if (pageInfo.tableData && pageInfo.tableData.found) {
+                            if (allHeaders.length === 0 && pageInfo.tableData.headers) {
+                                allHeaders = pageInfo.tableData.headers;
+                            }
+                            if (pageInfo.tableData.data) {
+                                pageInfo.tableData.data.forEach(row => {
+                                    // 使用「投注時間_單號」作為唯一標識符進行去重
+                                    // 如果沒有這個欄位，使用整個行的 JSON 字符串作為標識符
+                                    const rowKey = row['投注時間_單號'] || row['投注時間/單號'] || JSON.stringify(row);
+                                    
+                                    if (!seenRows.has(rowKey)) {
+                                        seenRows.add(rowKey);
+                                        allData.push(row);
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    
+                    console.log('📊 After deduplication: ' + allData.length + ' unique rows (from ' + allPagesData.reduce((sum, p) => sum + (p.tableData?.data?.length || 0), 0) + ' total rows)');
+                    
+                    // 創建合併後的表格數據對象
+                    const mergedTableData = {
+                        found: true,
+                        headers: allHeaders,
+                        headerCount: allHeaders.length,
+                        rowCount: allData.length,
+                        data: allData,
+                        totalPages: paginationInfo.totalPages,
+                        pages: allPagesData
+                    };
+                    
+                    // 截圖（為每個連結生成獨立的截圖文件）- 截取最後一頁
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const screenshotFilename = 'account_' + accountValue + '_link_' + (linkIndex + 1) + '_' + timestamp + '.png';
+                    await detailPage.screenshot({ 
+                        path: screenshotFilename,
+                        fullPage: false
+                    });
+                    console.log('📸 Screenshot saved: ' + screenshotFilename);
+                    console.log('✅ Total rows extracted: ' + allData.length);
+                    
+                    return {
+                        linkIndex: linkIndex,
+                        accountLink: accountLink,
+                        platform: platform,
+                        tableData: mergedTableData,
+                        screenshot: screenshotFilename,
+                        pageUrl: pageUrl,
+                        success: mergedTableData.found
+                    };
+                } catch (error) {
+                    // 如果頁面已經關閉或無效，捕獲錯誤
+                    console.error('❌ Error in processAccountLinkDetail: ' + error.message);
+                    throw error;
+                }
+            }
+
+            /**
              * 從 DOM 提取資料的函數
              * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
              */
             async function scrapeDOMContent() {
+                // 存儲所有帳號詳情結果（在函數作用域內）
+                let accountDetailResults = [];
+                
                 // 啟動無頭瀏覽器（headless mode）
                 const browser = await puppeteer.launch({
                     headless: 'new',
@@ -472,8 +803,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 });
 
                 try {
-                    // 創建新的瀏覽器頁面
-                    const page = await browser.newPage();
+                    // 創建新的瀏覽器頁面（使用 let 因為可能需要重新賦值）
+                    let page = await browser.newPage();
 
                     // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
                     await page.setViewport({ width: 1920, height: 1080 });
@@ -604,177 +935,206 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                 await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
                                 await new Promise(resolve => setTimeout(resolve, 2000));
                                 
-                                console.log('🔍 Searching for account link: ' + accountNumberParsed);
+                                console.log('🔍 Searching for all account links: ' + accountNumberParsed);
                                 
-                                // 查找包含帳號的 <a> 標籤
-                                const accountLinkResult = await findAccountLink(page, accountNumberParsed, false);
+                                // 查找所有包含帳號的 <a> 標籤（從表格中）
+                                let allAccountLinksResult = await findAllAccountLinks(page, accountNumberParsed);
+                                
+                                // 如果第一次沒找到，等待更長時間後重試
+                                if (!allAccountLinksResult.found) {
+                                    console.log('⚠️  Account links not found, waiting longer and retrying...');
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                                    allAccountLinksResult = await findAllAccountLinks(page, accountNumberParsed);
+                                }
                                 
                                 // 輸出調試信息
-                                if (!accountLinkResult.found && accountLinkResult.debug) {
+                                if (!allAccountLinksResult.found && allAccountLinksResult.debug) {
                                     console.log('📊 Debug info:');
-                                    if (accountLinkResult.debug.totalLinks !== undefined) {
-                                        console.log('   Total links: ' + accountLinkResult.debug.totalLinks);
-                                        console.log('   Account value: ' + accountLinkResult.debug.accountValue);
-                                        console.log('   Sample links (first 10):');
-                                        accountLinkResult.debug.sampleLinks.slice(0, 10).forEach((link, idx) => {
+                                    if (allAccountLinksResult.debug.tableRows !== undefined) {
+                                        console.log('   Table rows: ' + allAccountLinksResult.debug.tableRows);
+                                        console.log('   Table links: ' + allAccountLinksResult.debug.tableLinks);
+                                        console.log('   Account value: ' + allAccountLinksResult.debug.accountValue);
+                                        console.log('   Sample table links (first 10):');
+                                        allAccountLinksResult.debug.sampleTableLinks.slice(0, 10).forEach((link, idx) => {
                                             console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
                                         });
+                                    } else {
+                                        console.log('   Error: ' + allAccountLinksResult.debug.error);
                                     }
                                 }
                                 
-                                // 如果找到帳號連結，導航到它
-                                if (accountLinkResult.found) {
-                                    page = await navigateToAccountLink(page, browser, accountLinkResult);
-                                } else {
-                                    console.log('⚠️  Account link not found for: ' + accountNumberParsed);
-                                    console.log('⚠️  Waiting longer and retrying...');
+                                // 存儲所有詳情頁面的結果
+                                const allDetailResults = [];
+                                
+                                // 如果找到帳號連結，依次處理每個連結
+                                if (allAccountLinksResult.found && allAccountLinksResult.links.length > 0) {
+                                    console.log('✅ Found ' + allAccountLinksResult.links.length + ' account link(s)');
                                     
-                                    // 再次嘗試，等待更長時間讓表格完全載入
-                                    await new Promise(resolve => setTimeout(resolve, 3000));
-                                    await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                                    // 保存主列表頁面的引用和 URL（用於後續連結）
+                                    const mainListPage = page;
+                                    const mainListPageUrl = page.url();
                                     
-                                    // 重試：只在表格內查找
-                                    const retryResult = await findAccountLink(page, accountNumberParsed, true);
-                                    
-                                    // 輸出重試的調試信息
-                                    if (!retryResult.found && retryResult.debug) {
-                                        console.log('📊 Retry debug info:');
-                                        if (retryResult.debug.tableRows !== undefined) {
-                                            console.log('   Table rows: ' + retryResult.debug.tableRows);
-                                            console.log('   Table links: ' + retryResult.debug.tableLinks);
-                                            console.log('   Sample table links (first 10):');
-                                            retryResult.debug.sampleTableLinks.slice(0, 10).forEach((link, idx) => {
-                                                console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
+                                    // 依次處理每個連結
+                                    for (let i = 0; i < allAccountLinksResult.links.length; i++) {
+                                        const accountLink = allAccountLinksResult.links[i];
+                                        console.log('\\n📌 Processing link ' + (i + 1) + '/' + allAccountLinksResult.links.length + ': ' + accountLink.text);
+                                        console.log('   URL: ' + accountLink.href);
+                                        
+                                        let detailPage = null;
+                                        try {
+                                            // 如果是第一個連結，使用當前頁面；否則創建新頁面
+                                            if (i === 0) {
+                                                // 第一個連結：導航當前頁面
+                                                detailPage = await navigateToAccountLink(mainListPage, browser, accountLink);
+                                            } else {
+                                                // 後續連結：創建新頁面
+                                                console.log('   Creating new page for link ' + (i + 1) + '...');
+                                                detailPage = await browser.newPage();
+                                                await detailPage.setViewport({ width: 1920, height: 1080 });
+                                                await detailPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                                                
+                                                // 設定資源攔截
+                                                await detailPage.setRequestInterception(true);
+                                                detailPage.on('request', (req) => {
+                                                    const resourceType = req.resourceType();
+                                                    if (['image', 'font', 'media'].includes(resourceType)) {
+                                                        req.abort();
+                                                    } else {
+                                                        req.continue();
+                                                    }
+                                                });
+                                                
+                                                // 設置 cookies（需要將 newPage 變量名替換為 detailPage）
+                                                // 臨時創建一個 newPage 變量指向 detailPage
+                                                const newPage = detailPage;
+                                                $cookiesCodeForNewPage
+                                                
+                                                // 導航到連結（使用保存的主列表頁面 URL）
+                                                const targetUrl = normalizeUrl(accountLink.href, mainListPageUrl);
+                                                console.log('   Navigating to: ' + targetUrl);
+                                                await detailPage.goto(targetUrl, {
+                                                    waitUntil: 'domcontentloaded',
+                                                    timeout: 30000
+                                                });
+                                                await detailPage.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {
+                                                    console.log('⚠️  Table not found on detail page, continuing...');
+                                                });
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                            }
+                                            
+                                            // 確保頁面有效
+                                            if (!detailPage) {
+                                                throw new Error('Detail page is invalid');
+                                            }
+                                            
+                                            // 處理詳情頁面（爬取數據並截圖）
+                                            const detailResult = await processAccountLinkDetail(detailPage, accountLink, i, accountNumberParsed);
+                                            allDetailResults.push(detailResult);
+                                            
+                                            // 如果不是第一個連結，關閉詳情頁面
+                                            if (i > 0 && detailPage) {
+                                                try {
+                                                    await detailPage.close();
+                                                } catch (closeError) {
+                                                    // 忽略關閉錯誤（頁面可能已經關閉）
+                                                    console.log('⚠️  Page already closed or error closing: ' + closeError.message);
+                                                }
+                                            } else if (i === 0) {
+                                                // 第一個連結的頁面保留，用於後續處理
+                                                page = detailPage;
+                                            }
+                                            
+                                            console.log('✅ Completed processing link ' + (i + 1) + '/' + allAccountLinksResult.links.length);
+                                            
+                                        } catch (error) {
+                                            console.error('❌ Error processing link ' + (i + 1) + ': ' + error.message);
+                                            console.error('❌ Error stack: ' + (error.stack || 'No stack trace'));
+                                            allDetailResults.push({
+                                                linkIndex: i,
+                                                accountLink: accountLink,
+                                                success: false,
+                                                error: error.message,
+                                                errorStack: error.stack || ''
                                             });
-                                        } else {
-                                            console.log('   Error: ' + retryResult.debug.error);
+                                            
+                                            // 確保在錯誤時關閉頁面（如果它是新創建的）
+                                            if (detailPage && i > 0) {
+                                                try {
+                                                    if (!detailPage.isClosed()) {
+                                                        await detailPage.close();
+                                                    }
+                                                } catch (closeError) {
+                                                    // 忽略關閉錯誤
+                                                    console.log('⚠️  Could not close page: ' + closeError.message);
+                                                }
+                                            }
                                         }
                                     }
                                     
-                                    if (retryResult.found) {
-                                        console.log('🔗 Found account link on retry: ' + retryResult.href);
-                                        page = await navigateToAccountLink(page, browser, retryResult);
-                                    } else {
-                                        console.log('❌ Account link still not found after retry');
+                                    console.log('\\n✅ All account links processed: ' + allDetailResults.length + ' result(s)');
+                                    
+                                    // 將詳情結果存儲到函數作用域變量中
+                                    accountDetailResults = allDetailResults;
+                                    
+                                    // 如果處理了多個帳號詳情連結，跳過主列表的分頁處理
+                                    // 因為頁面已經在不同的詳情頁面了
+                                    if (allDetailResults.length > 1) {
+                                        console.log('ℹ️  Multiple account detail pages processed, skipping main list pagination');
+                                        
+                                        // 直接構建結果並返回（不需要訪問頁面，因為已經處理完了）
+                                        const result = {
+                                            timestamp: new Date().toISOString(),
+                                            url: '$url',
+                                            queryParams: {
+                                                date_start: dateStartParsed,
+                                                date_end: dateEndParsed,
+                                                account_number: accountNumberParsed
+                                            },
+                                            domData: {
+                                                pageInfo: {
+                                                    title: 'Account Detail Pages',
+                                                    url: '$url'
+                                                },
+                                                queryParams: {
+                                                    date_start: dateStartParsed,
+                                                    date_end: dateEndParsed,
+                                                    account_number: accountNumberParsed
+                                                },
+                                                totalPages: 1,
+                                                pages: [],
+                                                tables: []
+                                            },
+                                            accountDetailResults: accountDetailResults,
+                                            success: true
+                                        };
+
+                                        // 嘗試截圖（如果頁面仍然有效）
+                                        try {
+                                            if (page && !page.isClosed && !page.isClosed()) {
+                                                await page.screenshot({ 
+                                                    path: 'scraped_page_screenshot.png',
+                                                    fullPage: false
+                                                });
+                                            }
+                                        } catch (screenshotError) {
+                                            console.log('⚠️  Could not take screenshot: ' + screenshotError.message);
+                                        }
+
+                                        fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
+                                        console.log('💾 Results saved to: scraped_result.json');
+                                        return result;
                                     }
+                                    // 如果只有一個連結，繼續處理該詳情頁面的分頁（如果有的話）
+                                    
+                                } else {
+                                    console.log('❌ No account links found for: ' + accountNumberParsed);
                                 }
                             }
                         } catch (e) {
                             console.log('⚠️  Error filling account number: ' + e.message);
                         }
                     }
-
-                    // 提取表格資料的函數（可重用）
-                    // @param {Page} pageObject - Puppeteer 頁面對象（可以是 page 或 newPage）
-                    const extractTableData = async (pageObject) => {
-                        return await pageObject.evaluate(() => {
-                            // 查找 id="simple-table" 的表格
-                            const table = document.querySelector('#simple-table');
-                            
-                            if (!table) {
-                                return {
-                                    found: false,
-                                    error: 'Table #simple-table not found'
-                                };
-                            }
-
-                            // 提取表頭
-                            let headers = [];
-                            const thead = table.querySelector('thead');
-                            if (thead) {
-                                const headerRows = Array.from(thead.querySelectorAll('tr'));
-                                if (headerRows.length > 0) {
-                                    const headerCells = headerRows[0].querySelectorAll('th, td');
-                                    headers = Array.from(headerCells).map(cell => cell.textContent.trim());
-                                }
-                            } else {
-                                // 如果沒有 thead，嘗試從第一行提取表頭
-                                const firstRow = table.querySelector('tr');
-                                if (firstRow) {
-                                    const headerCells = firstRow.querySelectorAll('th, td');
-                                    headers = Array.from(headerCells).map(cell => cell.textContent.trim());
-                                }
-                            }
-
-                            // 提取資料行
-                            const tbody = table.querySelector('tbody');
-                            let rows = [];
-                            let dataStartIndex = 0;
-
-                            if (tbody) {
-                                rows = Array.from(tbody.querySelectorAll('tr'));
-                            } else {
-                                // 如果沒有 tbody，從表格直接獲取所有行
-                                rows = Array.from(table.querySelectorAll('tr'));
-                                // 如果有表頭，跳過第一行
-                                if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) {
-                                    dataStartIndex = 1;
-                                }
-                            }
-
-                            // 將資料行轉換為對象數組
-                            const dataRows = rows.slice(dataStartIndex)
-                                .map((row, rowIndex) => {
-                                    const cells = Array.from(row.querySelectorAll('td'));
-                                    const rowData = {};
-                                    
-                                    if (headers && headers.length > 0) {
-                                        headers.forEach((header, colIndex) => {
-                                            // 清理字段名
-                                            let cleanHeader = header
-                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-                                                .replace(/^_+|_+$/g, '');
-                                            
-                                            if (!cleanHeader) {
-                                                cleanHeader = 'column_' + colIndex;
-                                            }
-                                            
-                                            // 確保字段名唯一
-                                            let finalHeader = cleanHeader;
-                                            let counter = 1;
-                                            while (rowData.hasOwnProperty(finalHeader)) {
-                                                finalHeader = cleanHeader + '_' + counter;
-                                                counter++;
-                                            }
-                                            
-                                            rowData[finalHeader] = cells[colIndex] ? cells[colIndex].textContent.trim() : null;
-                                        });
-                                    } else {
-                                        // 如果沒有表頭，使用索引作為 key
-                                        cells.forEach((cell, colIndex) => {
-                                            rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
-                                        });
-                                    }
-                                    
-                                    // 添加原始行索引
-                                    rowData._rowIndex = rowIndex;
-                                    
-                                    return rowData;
-                                })
-                                .filter(rowData => {
-                                    // 過濾掉小計和總計行
-                                    // 檢查第一個欄位（通常是日期欄位）是否包含"小計"或"總計"
-                                    const firstValue = Object.values(rowData)[0];
-                                    return firstValue !== '小計' && firstValue !== '總計';
-                                });
-
-                            return {
-                                found: true,
-                                tableId: table.id || null,
-                                tableClass: table.className || null,
-                                headers: headers,
-                                headerCount: headers.length,
-                                rowCount: dataRows.length,
-                                rawRows: rows.slice(dataStartIndex)
-                                    .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
-                                    .filter(rowArray => {
-                                        // 過濾掉小計和總計行
-                                        return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
-                                    }),
-                                data: dataRows
-                            };
-                        });
-                    };
 
                     // 檢查是否有下一頁的函數
                     const checkNextPage = async () => {
@@ -994,7 +1354,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
-                    // 合併所有提取的資料
+                    // 合併所有提取的資料（accountDetailResults 已在函數作用域內定義）
                     const result = {
                         timestamp: new Date().toISOString(),
                         url: '$url',
@@ -1004,6 +1364,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             account_number: accountNumberParsed
                         },
                         domData: domData,
+                        accountDetailResults: accountDetailResults,
                         success: true
                     };
 
@@ -1266,6 +1627,62 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         if (file_exists($screenshotSrc)) {
             rename($screenshotSrc, $screenshotDst);
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
+        }
+
+        // 處理帳號詳情結果
+        $accountDetailResults = $result['accountDetailResults'] ?? [];
+        if (!empty($accountDetailResults)) {
+            $this->info('📋 Processing account detail results: ' . count($accountDetailResults) . ' result(s)');
+            
+            foreach ($accountDetailResults as $index => $detailResult) {
+                if (!isset($detailResult['success']) || !$detailResult['success']) {
+                    $this->warn("⚠️  Detail result " . ($index + 1) . " failed: " . ($detailResult['error'] ?? 'Unknown error'));
+                    continue;
+                }
+
+                // 移動截圖文件
+                if (isset($detailResult['screenshot'])) {
+                    $screenshotSrc = storage_path('app/temp/' . $detailResult['screenshot']);
+                    $screenshotDst = storage_path("app/scraped_data/account_detail_{$timestamp}_link_" . ($index + 1) . ".png");
+                    
+                    if (file_exists($screenshotSrc)) {
+                        rename($screenshotSrc, $screenshotDst);
+                        $this->info("📸 Detail screenshot saved: {$screenshotDst}");
+                    }
+                }
+
+                // 保存詳情頁面的數據
+                if (isset($detailResult['tableData']) && !empty($detailResult['tableData']['data'])) {
+                    $accountNumber = $queryParams['account_number'] ?? 'unknown';
+                    $platform = $detailResult['platform'] ?? 'unknown';
+                    
+                    // 創建詳情頁面數據結構
+                    $detailData = [
+                        'metadata' => [
+                            'timestamp' => $timestamp,
+                            'accountNumber' => $accountNumber,
+                            'platform' => $platform,
+                            'linkIndex' => $index + 1,
+                            'pageUrl' => $detailResult['pageUrl'] ?? '',
+                            'queryParams' => $queryParams
+                        ],
+                        'headers' => $detailResult['tableData']['headers'] ?? [],
+                        'headerCount' => count($detailResult['tableData']['headers'] ?? []),
+                        'rowCount' => $detailResult['tableData']['rowCount'] ?? 0,
+                        'data' => $detailResult['tableData']['data'] ?? []
+                    ];
+                    
+                    // 保存詳情頁面數據文件
+                    $safeAccountNumber = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $accountNumber);
+                    $safePlatform = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
+                    $detailFileName = "scraped_data/account_detail_{$safeAccountNumber}_{$safePlatform}_link_" . ($index + 1) . "_{$timestamp}.json";
+                    
+                    Storage::put($detailFileName, json_encode($detailData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                    $this->info("💾 Detail data saved: {$detailFileName}");
+                }
+            }
+            
+            $this->info("✅ All account detail results processed!");
         }
         
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
