@@ -325,32 +325,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 }, accountValue);
             }
 
-            /**
-             * 輔助函數：查找帳號連結（保留用於向後兼容）
-             * @param {Page} page - Puppeteer 頁面對象
-             * @param {string} accountValue - 帳號值
-             * @param {boolean} onlyInTable - 是否只在表格內查找（用於重試）
-             * @returns {Promise<Object>} 返回找到的連結信息或調試信息
-             */
-            async function findAccountLink(page, accountValue, onlyInTable = false) {
-                const allLinksResult = await findAllAccountLinks(page, accountValue);
-                
-                if (allLinksResult.found && allLinksResult.links.length > 0) {
-                    // 返回第一個連結（向後兼容）
-                    return {
-                        found: true,
-                        selector: allLinksResult.links[0].selector,
-                        href: allLinksResult.links[0].href,
-                        text: allLinksResult.links[0].text
-                    };
-                }
-                
-                // 返回調試信息
-                return {
-                    found: false,
-                    debug: allLinksResult.debug || { error: 'No links found' }
-                };
-            }
 
             /**
              * 輔助函數：處理 URL（轉換相對路徑為絕對路徑）
@@ -462,6 +436,27 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     return page;
                 }
+            }
+
+            /**
+             * 輔助函數：設置頁面基本配置（viewport, userAgent, request interception）
+             * @param {Page} pageObject - Puppeteer 頁面對象
+             * @returns {Promise<void>}
+             */
+            async function setupPage(pageObject) {
+                await pageObject.setViewport({ width: 1920, height: 1080 });
+                await pageObject.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                
+                // 設定資源攔截
+                await pageObject.setRequestInterception(true);
+                pageObject.on('request', (req) => {
+                    const resourceType = req.resourceType();
+                    if (['image', 'font', 'media'].includes(resourceType)) {
+                        req.abort();
+                    } else {
+                        req.continue();
+                    }
+                });
             }
 
             /**
@@ -848,23 +843,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 創建新的瀏覽器頁面（使用 let 因為可能需要重新賦值）
                     let page = await browser.newPage();
 
-                    // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
-                    await page.setViewport({ width: 1920, height: 1080 });
-
-                    // 設定 User Agent，模擬真實的瀏覽器請求
-                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-
-                    // 攔截並阻止不必要的資源載入（大幅提升速度）
-                    await page.setRequestInterception(true);
-                    page.on('request', (req) => {
-                        const resourceType = req.resourceType();
-                        // 只阻止圖片、字體、媒體檔案，保留 CSS 和 JS 以確保分頁功能正常
-                        if (['image', 'font', 'media'].includes(resourceType)) {
-                            req.abort();
-                        } else {
-                            req.continue();
-                        }
-                    });
+                    // 設置頁面基本配置
+                    await setupPage(page);
 
                     $cookiesCodeForPage
 
@@ -1013,19 +993,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                             } else {
                                                 // 後續連結：創建新頁面
                                                 detailPage = await browser.newPage();
-                                                await detailPage.setViewport({ width: 1920, height: 1080 });
-                                                await detailPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-                                                
-                                                // 設定資源攔截
-                                                await detailPage.setRequestInterception(true);
-                                                detailPage.on('request', (req) => {
-                                                    const resourceType = req.resourceType();
-                                                    if (['image', 'font', 'media'].includes(resourceType)) {
-                                                        req.abort();
-                                                    } else {
-                                                        req.continue();
-                                                    }
-                                                });
+                                                await setupPage(detailPage);
                                                 
                                                 // 設置 cookies（需要將 newPage 變量名替換為 detailPage）
                                                 // 臨時創建一個 newPage 變量指向 detailPage
@@ -1151,33 +1119,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         }
                     }
 
-                    // 檢查是否有下一頁的函數
-                    const checkNextPage = async () => {
-                        return await page.evaluate(() => {
-                            // 查找包含 rel="next" 的分頁連結
-                            const nextLink = document.querySelector('a[rel="next"]');
-                            
-                            if (nextLink && nextLink.href) {
-                                // 檢查連結是否可見和可點擊
-                                const style = window.getComputedStyle(nextLink);
-                                const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-                                
-                                return {
-                                    hasNext: true,
-                                    nextUrl: nextLink.href,
-                                    pageNumber: nextLink.getAttribute('data-ci-pagination-page'),
-                                    isVisible: isVisible,
-                                    text: nextLink.textContent.trim()
-                                };
-                            }
-                            
-                            return {
-                                hasNext: false,
-                                nextUrl: null,
-                                pageNumber: null
-                            };
-                        });
-                    };
 
                     // ========== 步驟 1：爬取第一頁，獲取分頁資訊 ==========
                     console.log('📄 Step 1: Extracting first page and pagination info...');
@@ -1256,22 +1197,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         const newPage = await browser.newPage();
                         
                         try {
-                            // 設定視窗大小
-                            await newPage.setViewport({ width: 1920, height: 1080 });
-                            
-                            // 設定 User Agent
-                            await newPage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
-                            
-                            // 設定資源攔截
-                            await newPage.setRequestInterception(true);
-                            newPage.on('request', (req) => {
-                                const resourceType = req.resourceType();
-                                if (['image', 'font', 'media'].includes(resourceType)) {
-                                    req.abort();
-                                } else {
-                                    req.continue();
-                                }
-                            });
+                            // 設置頁面基本配置
+                            await setupPage(newPage);
                             
                             $cookiesCodeForNewPage
                             
