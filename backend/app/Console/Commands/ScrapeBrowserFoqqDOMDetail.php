@@ -753,8 +753,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         }
                     });
                     
-                    console.log('📊 After deduplication: ' + allData.length + ' unique rows (from ' + allPagesData.reduce((sum, p) => sum + (p.tableData?.data?.length || 0), 0) + ' total rows)');
-                    
                     // 創建合併後的表格數據對象
                     const mergedTableData = {
                         found: true,
@@ -773,8 +771,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         path: screenshotFilename,
                         fullPage: false
                     });
-                    console.log('📸 Screenshot saved: ' + screenshotFilename);
-                    console.log('✅ Total rows extracted: ' + allData.length);
                     
                     return {
                         linkIndex: linkIndex,
