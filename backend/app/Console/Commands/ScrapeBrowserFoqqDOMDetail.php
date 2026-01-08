@@ -21,9 +21,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
+     * {account_number?} - 要填入的帳號（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -41,12 +42,14 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
+        $account_number = $this->argument('account_number');
         $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
+        $this->info("Account Number: {$account_number}");
         $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
@@ -57,7 +60,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -119,10 +122,11 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * @param string $url 要爬取的目標網址
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
+     * @param string|null $account_number 要填入的帳號（可選）
      * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -134,6 +138,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -288,6 +293,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 解析 date
                     let dateStartParsed = null;
                     let dateEndParsed = null;
+                    let accountNumberParsed = null;
                     
                     try {
                         if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
@@ -296,9 +302,13 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
                             dateEndParsed = JSON.parse($dateEndJs);
                         }
+                        if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                            accountNumberParsed = JSON.parse($accountNumberJs);
+                        }
                     } catch (e) {
                         dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                        accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs : null;
                     }
 
                     // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
@@ -364,6 +374,420 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             }
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
+                        }
+                    }
+
+                    // 如果提供了 account_number，填入 input#find4 並點擊搜尋
+                    if (accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '') {
+                        try {
+                            // 查找 input#find4 欄位
+                            await page.waitForSelector('#find4', { timeout: 10000 });
+                            
+                            // 清空並填入帳號到 find4 欄位
+                            await page.evaluate((accountValue) => {
+                                const input4 = document.querySelector('#find4');
+                                
+                                if (input4) {
+                                    input4.value = '';
+                                    input4.value = accountValue;
+                                    input4.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input4.dispatchEvent(new Event('change', { bubbles: true }));
+                                }
+                            }, accountNumberParsed);
+
+                            // 減少等待時間
+                            await new Promise(resolve => setTimeout(resolve, 500));
+
+                            // 查找並點擊搜尋按鈕
+                            const searchButton = await page.evaluate(() => {
+                                // 優先查找包含 "搜尋" 文本的按鈕
+                                const allButtons = Array.from(document.querySelectorAll('button'));
+                                let searchBtn = allButtons.find(btn => {
+                                    const text = btn.textContent.trim();
+                                    return text === '搜尋';
+                                });
+
+                                // 判斷 searchBtn 是否存在
+                                if (searchBtn) {
+                                    const uniqueId = 'search-btn-' + Date.now();
+                                    searchBtn.setAttribute('data-puppeteer-id', uniqueId);
+                                    return {
+                                        found: true,
+                                        selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                        text: searchBtn.textContent.trim()
+                                    };
+                                }
+                                
+                                return { found: false };
+                            });
+
+                            // 判斷是否有找到 searchButton
+                            if (searchButton.found) {
+                                await page.click(searchButton.selector, { timeout: 5000 });
+                                
+                                // 等待表格更新（增加等待時間確保數據完全載入）
+                                await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                                // 等待表格行出現
+                                await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                console.log('🔍 Searching for account link: ' + accountNumberParsed);
+                                
+                                // 查找包含帳號的 <a> 標籤並點擊
+                                const accountLinkResult = await page.evaluate((accountValue) => {
+                                    // 先查找所有 <a> 標籤
+                                    const allLinks = Array.from(document.querySelectorAll('a'));
+                                    const totalLinks = allLinks.length;
+                                    
+                                    // 打印前幾個連結的文本，用於調試
+                                    const sampleLinks = allLinks.slice(0, 20).map(a => ({
+                                        text: a.textContent.trim(),
+                                        href: a.href
+                                    }));
+                                    
+                                    // 優先在表格內查找（因為帳號連結通常在表格中）
+                                    let link = null;
+                                    const table = document.querySelector('#simple-table');
+                                    if (table) {
+                                        const tableLinks = Array.from(table.querySelectorAll('a'));
+                                        // 完全匹配
+                                        link = tableLinks.find(a => {
+                                            const text = a.textContent.trim();
+                                            return text === accountValue;
+                                        });
+                                        // 如果沒有完全匹配，則查找包含帳號的連結
+                                        if (!link) {
+                                            link = tableLinks.find(a => {
+                                                const text = a.textContent.trim();
+                                                return text.includes(accountValue);
+                                            });
+                                        }
+                                    }
+                                    
+                                    // 如果表格內沒找到，則在整個頁面查找
+                                    if (!link) {
+                                        // 優先查找完全匹配帳號的連結
+                                        link = allLinks.find(a => {
+                                            const text = a.textContent.trim();
+                                            return text === accountValue;
+                                        });
+                                        
+                                        // 如果沒有完全匹配，則查找包含帳號的連結
+                                        if (!link) {
+                                            link = allLinks.find(a => {
+                                                const text = a.textContent.trim();
+                                                return text.includes(accountValue);
+                                            });
+                                        }
+                                    }
+                                    
+                                    if (link) {
+                                        // 為連結添加唯一標識
+                                        const uniqueId = 'account-link-' + Date.now();
+                                        link.setAttribute('data-puppeteer-id', uniqueId);
+                                        return {
+                                            found: true,
+                                            selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                            href: link.href,
+                                            text: link.textContent.trim()
+                                        };
+                                    }
+                                    
+                                    return { 
+                                        found: false,
+                                        debug: {
+                                            totalLinks: totalLinks,
+                                            sampleLinks: sampleLinks,
+                                            accountValue: accountValue
+                                        }
+                                    };
+                                }, accountNumberParsed);
+                                
+                                // 輸出調試信息
+                                if (!accountLinkResult.found && accountLinkResult.debug) {
+                                    console.log('📊 Debug info:');
+                                    console.log('   Total links: ' + accountLinkResult.debug.totalLinks);
+                                    console.log('   Account value: ' + accountLinkResult.debug.accountValue);
+                                    console.log('   Sample links (first 10):');
+                                    accountLinkResult.debug.sampleLinks.slice(0, 10).forEach((link, idx) => {
+                                        console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
+                                    });
+                                }
+                                
+                                const accountLink = accountLinkResult;
+                                
+                                // 如果找到帳號連結，點擊它
+                                if (accountLink.found) {
+                                    console.log('🔗 Found account link: ' + accountLink.href);
+                                    console.log('🔗 Link text: ' + accountLink.text);
+                                    
+                                    // 獲取完整的 URL（如果是相對路徑，需要轉換為絕對路徑）
+                                    let targetUrl = accountLink.href;
+                                    if (targetUrl.startsWith('//')) {
+                                        // 如果是 // 開頭，添加 https:
+                                        targetUrl = 'https:' + targetUrl;
+                                    } else if (targetUrl.startsWith('/')) {
+                                        // 如果是相對路徑，需要獲取當前頁面的 origin
+                                        const currentUrl = page.url();
+                                        const urlObj = new URL(currentUrl);
+                                        targetUrl = urlObj.origin + targetUrl;
+                                    }
+                                    
+                                    console.log('🔗 Navigating to: ' + targetUrl);
+                                    
+                                    // 檢查連結是否有 target="_blank" 屬性
+                                    const linkInfo = await page.evaluate((selector) => {
+                                        const link = document.querySelector(selector);
+                                        if (link) {
+                                            return {
+                                                hasTargetBlank: link.getAttribute('target') === '_blank',
+                                                href: link.href
+                                            };
+                                        }
+                                        return null;
+                                    }, accountLink.selector);
+                                    
+                                    if (linkInfo && linkInfo.hasTargetBlank) {
+                                        // 如果連結有 target="_blank"，需要在新標籤頁打開
+                                        console.log('🔗 Link has target="_blank", opening in new tab...');
+                                        
+                                        // 記錄當前頁面數量
+                                        const pagesBefore = await browser.pages();
+                                        
+                                        // 使用 evaluate 直接點擊連結（這樣會觸發新標籤頁）
+                                        await page.evaluate((selector) => {
+                                            const link = document.querySelector(selector);
+                                            if (link) {
+                                                link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                link.click();
+                                            }
+                                        }, accountLink.selector);
+                                        
+                                        // 等待新標籤頁創建
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                        
+                                        // 檢查是否有新頁面創建
+                                        const pagesAfter = await browser.pages();
+                                        const newPage = pagesAfter.length > pagesBefore.length 
+                                            ? pagesAfter.find(p => !pagesBefore.includes(p))
+                                            : null;
+                                        
+                                        if (newPage) {
+                                            // 關閉舊頁面，切換到新頁面
+                                            await page.close();
+                                            page = newPage;
+                                            
+                                            // 等待新頁面載入
+                                            await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                            
+                                            console.log('✅ Navigated to account detail page (new tab)');
+                                        } else {
+                                            // 如果沒有新標籤頁，直接導航到 URL
+                                            console.log('⚠️  No new tab detected, navigating directly...');
+                                            await page.goto(targetUrl, {
+                                                waitUntil: 'domcontentloaded',
+                                                timeout: 30000
+                                            });
+                                            await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                            console.log('✅ Navigated to account detail page');
+                                        }
+                                    } else {
+                                        // 如果沒有 target="_blank"，直接導航到 URL
+                                        console.log('🔗 Navigating directly to URL...');
+                                        await page.goto(targetUrl, {
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 30000
+                                        });
+                                        
+                                        // 等待表格載入
+                                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                                        await new Promise(resolve => setTimeout(resolve, 1000));
+                                        
+                                        console.log('✅ Navigated to account detail page');
+                                    }
+                                } else {
+                                    console.log('⚠️  Account link not found for: ' + accountNumberParsed);
+                                    console.log('⚠️  Waiting longer and retrying...');
+                                    
+                                    // 再次嘗試，等待更長時間讓表格完全載入
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    // 確保表格行已載入
+                                    await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
+                                    
+                                    const retryResult = await page.evaluate((accountValue) => {
+                                        const table = document.querySelector('#simple-table');
+                                        let result = { found: false };
+                                        
+                                        if (table) {
+                                            const allLinks = Array.from(table.querySelectorAll('a'));
+                                            const tableRows = Array.from(table.querySelectorAll('tbody tr'));
+                                            
+                                            // 優先完全匹配
+                                            let link = allLinks.find(a => {
+                                                const text = a.textContent.trim();
+                                                return text === accountValue;
+                                            });
+                                            
+                                            // 如果沒有完全匹配，則查找包含帳號的連結
+                                            if (!link) {
+                                                link = allLinks.find(a => {
+                                                    const text = a.textContent.trim();
+                                                    return text.includes(accountValue);
+                                                });
+                                            }
+                                            
+                                            if (link) {
+                                                const uniqueId = 'account-link-retry-' + Date.now();
+                                                link.setAttribute('data-puppeteer-id', uniqueId);
+                                                result = {
+                                                    found: true,
+                                                    selector: '[data-puppeteer-id="' + uniqueId + '"]',
+                                                    href: link.href,
+                                                    text: link.textContent.trim()
+                                                };
+                                            } else {
+                                                // 調試信息
+                                                const sampleTableLinks = allLinks.slice(0, 10).map(a => ({
+                                                    text: a.textContent.trim(),
+                                                    href: a.href
+                                                }));
+                                                result = {
+                                                    found: false,
+                                                    debug: {
+                                                        tableRows: tableRows.length,
+                                                        tableLinks: allLinks.length,
+                                                        sampleTableLinks: sampleTableLinks,
+                                                        accountValue: accountValue
+                                                    }
+                                                };
+                                            }
+                                        } else {
+                                            result = {
+                                                found: false,
+                                                debug: { error: 'Table not found' }
+                                            };
+                                        }
+                                        
+                                        return result;
+                                    }, accountNumberParsed);
+                                    
+                                    // 輸出重試的調試信息
+                                    if (!retryResult.found && retryResult.debug) {
+                                        console.log('📊 Retry debug info:');
+                                        if (retryResult.debug.tableRows !== undefined) {
+                                            console.log('   Table rows: ' + retryResult.debug.tableRows);
+                                            console.log('   Table links: ' + retryResult.debug.tableLinks);
+                                            console.log('   Sample table links (first 10):');
+                                            retryResult.debug.sampleTableLinks.slice(0, 10).forEach((link, idx) => {
+                                                console.log('     ' + (idx + 1) + '. "' + link.text + '" -> ' + link.href);
+                                            });
+                                        } else {
+                                            console.log('   Error: ' + retryResult.debug.error);
+                                        }
+                                    }
+                                    
+                                    const retryLink = retryResult;
+                                    
+                                    if (retryLink.found) {
+                                        console.log('🔗 Found account link on retry: ' + retryLink.href);
+                                        console.log('🔗 Link text: ' + retryLink.text);
+                                        
+                                        // 獲取完整的 URL（如果是相對路徑，需要轉換為絕對路徑）
+                                        let targetUrl = retryLink.href;
+                                        if (targetUrl.startsWith('//')) {
+                                            // 如果是 // 開頭，添加 https:
+                                            targetUrl = 'https:' + targetUrl;
+                                        } else if (targetUrl.startsWith('/')) {
+                                            // 如果是相對路徑，需要獲取當前頁面的 origin
+                                            const currentUrl = page.url();
+                                            const urlObj = new URL(currentUrl);
+                                            targetUrl = urlObj.origin + targetUrl;
+                                        }
+                                        
+                                        console.log('🔗 Navigating to: ' + targetUrl);
+                                        
+                                        // 檢查連結是否有 target="_blank" 屬性
+                                        const linkInfo = await page.evaluate((selector) => {
+                                            const link = document.querySelector(selector);
+                                            if (link) {
+                                                return {
+                                                    hasTargetBlank: link.getAttribute('target') === '_blank',
+                                                    href: link.href
+                                                };
+                                            }
+                                            return null;
+                                        }, retryLink.selector);
+                                        
+                                        if (linkInfo && linkInfo.hasTargetBlank) {
+                                            // 如果連結有 target="_blank"，需要在新標籤頁打開
+                                            console.log('🔗 Link has target="_blank", opening in new tab...');
+                                            
+                                            // 記錄當前頁面數量
+                                            const pagesBefore = await browser.pages();
+                                            
+                                            // 使用 evaluate 直接點擊連結（這樣會觸發新標籤頁）
+                                            await page.evaluate((selector) => {
+                                                const link = document.querySelector(selector);
+                                                if (link) {
+                                                    link.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                    link.click();
+                                                }
+                                            }, retryLink.selector);
+                                            
+                                            // 等待新標籤頁創建
+                                            await new Promise(resolve => setTimeout(resolve, 2000));
+                                            
+                                            // 檢查是否有新頁面創建
+                                            const pagesAfter = await browser.pages();
+                                            const newPage = pagesAfter.length > pagesBefore.length 
+                                                ? pagesAfter.find(p => !pagesBefore.includes(p))
+                                                : null;
+                                            
+                                            if (newPage) {
+                                                // 關閉舊頁面，切換到新頁面
+                                                await page.close();
+                                                page = newPage;
+                                                
+                                                // 等待新頁面載入
+                                                await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                
+                                                console.log('✅ Navigated to account detail page (new tab)');
+                                            } else {
+                                                // 如果沒有新標籤頁，直接導航到 URL
+                                                console.log('⚠️  No new tab detected, navigating directly...');
+                                                await page.goto(targetUrl, {
+                                                    waitUntil: 'domcontentloaded',
+                                                    timeout: 30000
+                                                });
+                                                await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                console.log('✅ Navigated to account detail page');
+                                            }
+                                        } else {
+                                            // 如果沒有 target="_blank"，直接導航到 URL
+                                            console.log('🔗 Navigating directly to URL...');
+                                            await page.goto(targetUrl, {
+                                                waitUntil: 'domcontentloaded',
+                                                timeout: 30000
+                                            });
+                                            
+                                            // 等待表格載入
+                                            await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                                            await new Promise(resolve => setTimeout(resolve, 1000));
+                                            
+                                            console.log('✅ Navigated to account detail page');
+                                        }
+                                    } else {
+                                        console.log('❌ Account link still not found after retry');
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error filling account number: ' + e.message);
                         }
                     }
 
@@ -675,7 +1099,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         pageInfo: pageInfo,
                         queryParams: {
                             date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_end: dateEndParsed,
+                            account_number: accountNumberParsed
                         },
                         totalPages: allPagesData.length,
                         pages: allPagesData,
@@ -702,7 +1127,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         url: '$url',
                         queryParams: {
                             date_start: dateStartParsed,
-                            date_end: dateEndParsed
+                            date_end: dateEndParsed,
+                            account_number: accountNumberParsed
                         },
                         domData: domData,
                         success: true
