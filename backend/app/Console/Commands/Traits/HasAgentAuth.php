@@ -459,4 +459,109 @@ trait HasAgentAuth
             console.log('✅ Login process skipped using loginInfo');
         JS;
     }
+
+    /**
+     * 生成 ZGSLOT Puppeteer 使用 sessionStorage 直接登入的程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @param string $sessionStorageJson sessionStorage 的 JSON 字符串
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateZgslotPuppeteerSessionStorageCode(string $pageVar = 'page', string $sessionStorageJson = ''): string
+    {
+        $domain = env('ZGSLOT_AGENT_DOMAIN', '');
+        $domainJs = json_encode($domain);
+        
+        // 驗證並轉義 sessionStorage JSON
+        $sessionStorage = json_decode($sessionStorageJson, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            // 如果 JSON 無效，返回錯誤
+            return <<<JS
+                console.error('❌ Invalid sessionStorage JSON format');
+                throw new Error('Invalid sessionStorage JSON format');
+            JS;
+        }
+        
+        $sessionStorageJs = json_encode($sessionStorage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return <<<JS
+            console.log('🔐 Setting sessionStorage to skip login process...');
+            
+            // 導航到登入頁面（或直接導航到目標頁面）
+            await {$pageVar}.goto($domainJs, {
+                waitUntil: 'load',
+                timeout: 60000
+            });
+            
+            // 等待頁面載入
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 將 sessionStorage 數據設置到頁面
+            console.log('💾 Setting sessionStorage data...');
+            await {$pageVar}.evaluate((sessionData) => {
+                try {
+                    // 清空現有的 sessionStorage（可選）
+                    // sessionStorage.clear();
+                    
+                    // 設置所有 sessionStorage 鍵值對
+                    for (const key in sessionData) {
+                        if (sessionData.hasOwnProperty(key)) {
+                            const value = sessionData[key];
+                            // 如果值是對象或數組，轉換為 JSON 字符串
+                            if (typeof value === 'object' && value !== null) {
+                                sessionStorage.setItem(key, JSON.stringify(value));
+                            } else {
+                                sessionStorage.setItem(key, value);
+                            }
+                            console.log('✅ Set sessionStorage[' + key + ']');
+                        }
+                    }
+                    
+                    // 觸發 storage 事件，讓應用知道 sessionStorage 已更新
+                    window.dispatchEvent(new StorageEvent('storage', {
+                        key: null,
+                        newValue: null,
+                        oldValue: null,
+                        storageArea: sessionStorage
+                    }));
+                    
+                    // 如果頁面有監聽器，可能需要觸發自定義事件
+                    window.dispatchEvent(new Event('sessionStorageUpdated'));
+                    
+                    return true;
+                } catch (e) {
+                    console.error('❌ Error setting sessionStorage:', e.message);
+                    return false;
+                }
+            }, $sessionStorageJs);
+            
+            // 等待一下讓頁面處理 sessionStorage 更新
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 刷新頁面或導航到目標頁面，讓應用讀取新的 sessionStorage
+            console.log('🔄 Reloading page to apply sessionStorage...');
+            await {$pageVar}.reload({
+                waitUntil: 'load',
+                timeout: 60000
+            });
+            
+            // 等待頁面完全載入
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // 驗證 sessionStorage 是否已設置
+            const sessionStorageSet = await {$pageVar}.evaluate(() => {
+                // 檢查關鍵的 sessionStorage 項目是否存在
+                const isLoggedin = sessionStorage.getItem('isLoggedin');
+                const grpcSession = sessionStorage.getItem('grpc-session');
+                return isLoggedin === 'true' && grpcSession !== null && grpcSession !== '';
+            });
+            
+            if (sessionStorageSet) {
+                console.log('✅ sessionStorage successfully set and page reloaded');
+            } else {
+                console.log('⚠️  sessionStorage may not be set correctly');
+            }
+            
+            console.log('✅ Login process completed using sessionStorage');
+        JS;
+    }
 }

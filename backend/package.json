@@ -34,6 +34,8 @@
         "eslint-plugin-react-hooks": "^4.6.0",
         "puppeteer": "^24.34.0",
         "react": "^18.2.0",
-        "react-dom": "^18.2.0"
+        "react-dom": "^18.2.0",
+        "sharp": "^0.34.5",
+        "tesseract.js": "^7.0.0"
     }
 }
