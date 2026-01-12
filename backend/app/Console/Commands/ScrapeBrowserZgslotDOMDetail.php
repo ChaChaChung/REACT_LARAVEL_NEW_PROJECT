@@ -51,6 +51,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         if ($endDate) {
             $this->info("End Date: {$endDate}");
         }
+        $this->info("📋 Dialog scraping: ALL rows");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -67,10 +68,21 @@ class ScrapeBrowserZgslotDOMDetail extends Command
             return 1;
         }
         
+        // 從環境變數獲取登入帳號和密碼
+        $account = env('ZGSLOT_AGENT_ACCOUNT', '');
+        $password = env('ZGSLOT_AGENT_PASSWORD', '');
+        
+        if (empty($account) || empty($password)) {
+            $this->warn('⚠️  ZGSLOT_AGENT_ACCOUNT or ZGSLOT_AGENT_PASSWORD not set, will require manual input');
+        } else {
+            $this->info("Account: {$account}");
+            $this->info("Password: " . str_repeat('*', strlen($password)));
+        }
+        
         $this->info("Login Domain: {$domain}");
 
         // 創建 Puppeteer 腳本（手動輸入模式）
-        $scriptPath = $this->createPuppeteerScript($domain, $url, $startDate, $endDate);
+        $scriptPath = $this->createPuppeteerScript($domain, $url, $startDate, $endDate, $account, $password);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -159,9 +171,11 @@ class ScrapeBrowserZgslotDOMDetail extends Command
      * @param string $url 要爬取的目標網址
      * @param string|null $startDate 開始日期（格式：YYYY-MM-DD）
      * @param string|null $endDate 結束日期（格式：YYYY-MM-DD）
+     * @param string|null $account 登入帳號
+     * @param string|null $password 登入密碼
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $url, $startDate = null, $endDate = null)
+    private function createPuppeteerScript($domain, $url, $startDate = null, $endDate = null, $account = null, $password = null)
     {
         $this->info('2. Creating browser automation script (manual input mode)...');
 
@@ -170,6 +184,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         $urlJs = json_encode($url);
         $startDateJs = json_encode($startDate);
         $endDateJs = json_encode($endDate);
+        $accountJs = json_encode($account);
+        $passwordJs = json_encode($password);
         
         // 獲取工作目錄的絕對路徑
         $workingDir = storage_path('app/temp');
@@ -330,12 +346,129 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         console.log('⚠️  Error taking screenshot: ' + e.message);
                     }
                     
-                    // 提示使用者開始手動輸入
+                    // 自動填入帳號和密碼（如果提供了）
+                    const account = $accountJs && $accountJs !== 'null' ? $accountJs.replace(/^"|"$/g, '') : null;
+                    const password = $passwordJs && $passwordJs !== 'null' ? $passwordJs.replace(/^"|"$/g, '') : null;
+                    
+                    if (account && password) {
+                        console.log('🔐 Auto-filling account and password...');
+                        
+                        try {
+                            // 查找帳號輸入框（優先使用特定的選擇器）
+                            const accountSelectors = [
+                                'input#mat-input-0',
+                                'input[placeholder="用户名"]',
+                                'input[autocomplete="username"]',
+                                'input[type="text"][name*="account"]',
+                                'input[type="text"][name*="username"]',
+                                'input[type="text"][name*="user"]',
+                                'input[type="text"][id*="account"]',
+                                'input[type="text"][id*="username"]',
+                                'input[type="text"][id*="user"]',
+                                'input[type="text"][placeholder*="帳號"]',
+                                'input[type="text"][placeholder*="账号"]',
+                                'input[type="text"][placeholder*="帳戶"]',
+                                'input[type="text"][placeholder*="账户"]',
+                                'input[type="text"][placeholder*="用戶名"]',
+                                'input[type="email"]',
+                                'input[type="text"]:first-of-type'
+                            ];
+                            
+                            let accountInput = null;
+                            for (const selector of accountSelectors) {
+                                accountInput = await page.$(selector).catch(() => null);
+                                if (accountInput) {
+                                    console.log('   ✅ Found account input: ' + selector);
+                                    break;
+                                }
+                            }
+                            
+                            if (accountInput) {
+                                await accountInput.click();
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                                await accountInput.click({ clickCount: 3 }); // 選中現有內容
+                                await page.keyboard.press('Backspace');
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                                await accountInput.type(account, { delay: 50 });
+                                
+                                // 觸發 Angular 變化檢測
+                                await page.evaluate(() => {
+                                    const input = document.querySelector('input#mat-input-0') || document.querySelector('input[placeholder="用户名"]');
+                                    if (input) {
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    }
+                                });
+                                
+                                console.log('   ✅ Account filled');
+                            } else {
+                                console.log('   ⚠️  Account input not found, please enter manually');
+                            }
+                            
+                            // 查找密碼輸入框（優先使用特定的選擇器）
+                            const passwordSelectors = [
+                                'input#mat-input-1',
+                                'input[type="password"][placeholder="密码英或数半形"]',
+                                'input[type="password"]',
+                                'input[name*="password"]',
+                                'input[name*="pass"]',
+                                'input[id*="password"]',
+                                'input[id*="pass"]',
+                                'input[placeholder*="密碼"]',
+                                'input[placeholder*="密码"]'
+                            ];
+                            
+                            let passwordInput = null;
+                            for (const selector of passwordSelectors) {
+                                passwordInput = await page.$(selector).catch(() => null);
+                                if (passwordInput) {
+                                    console.log('   ✅ Found password input: ' + selector);
+                                    break;
+                                }
+                            }
+                            
+                            if (passwordInput) {
+                                await passwordInput.click();
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                                await passwordInput.click({ clickCount: 3 }); // 選中現有內容
+                                await page.keyboard.press('Backspace');
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                                await passwordInput.type(password, { delay: 50 });
+                                
+                                // 觸發 Angular 變化檢測
+                                await page.evaluate(() => {
+                                    const input = document.querySelector('input#mat-input-1') || document.querySelector('input[type="password"][placeholder="密码英或数半形"]');
+                                    if (input) {
+                                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    }
+                                });
+                                
+                                console.log('   ✅ Password filled');
+                            } else {
+                                console.log('   ⚠️  Password input not found, please enter manually');
+                            }
+                            
+                            console.log('✅ Account and password auto-filled successfully');
+                        } catch (e) {
+                            console.log('⚠️  Error auto-filling account/password: ' + e.message);
+                            console.log('   Please enter manually if needed');
+                        }
+                    } else {
+                        console.log('⚠️  Account or password not provided in environment variables');
+                        console.log('   Please enter account and password manually');
+                    }
+                    
+                    // 提示使用者輸入驗證碼
                     console.log('');
                     console.log('═══════════════════════════════════════════════════════════');
-                    console.log('👤 MANUAL LOGIN INSTRUCTIONS:');
-                    console.log('   1. Please enter your account in the browser window');
-                    console.log('   2. Please enter your password in the browser window');
+                    console.log('👤 LOGIN INSTRUCTIONS:');
+                    if (!account || !password) {
+                        console.log('   1. Please enter your account in the browser window');
+                        console.log('   2. Please enter your password in the browser window');
+                    }
                     console.log('   3. Please enter the verification code in the browser window');
                     console.log('   4. Click the login button');
                     console.log('   5. Wait for the login to complete');
@@ -425,6 +558,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     // 獲取登入後的 Cookies
                     const cookies = await page.cookies();
                     console.log('✅ Login completed, obtained ' + cookies.length + ' cookie(s)');
+                    
+                    // 保存 cookies 以便併發爬取時使用
+                    const savedCookies = cookies;
 
                     // 如果提供了目標 URL，導航到目標 URL
                     let targetUrlReached = false;
@@ -482,71 +618,284 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             // 填寫開始日期
                             if (startDate) {
                                 console.log('📝 Filling start date: ' + startDate);
-                                const startDateInput = await page.waitForSelector('input#mat-input-9, input[placeholder*="结算时间 开始"], input[placeholder*="結算時間 開始"]', { timeout: 10000 }).catch(() => null);
+                                // 等待開始日期輸入框出現（優先使用特定的選擇器）
+                                const startDateInput = await page.waitForSelector('input[placeholder="结算时间 开始"], input#mat-input-9, input[placeholder*="结算时间 开始"], input[placeholder*="結算時間 開始"]', { timeout: 10000 }).catch(() => null);
                                 
                                 if (startDateInput) {
                                     // 點擊輸入框
                                     await startDateInput.click();
                                     await new Promise(resolve => setTimeout(resolve, 500));
                                     
-                                    // 清空輸入框
+                                    // 徹底清空輸入框（使用 Ctrl+A 選中全部，然後刪除）
+                                    await page.keyboard.down('Control');
+                                    await page.keyboard.press('a');
+                                    await page.keyboard.up('Control');
+                                    await page.keyboard.press('Backspace');
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    
+                                    // 再次確保清空（雙擊選中全部）
                                     await startDateInput.click({ clickCount: 3 });
                                     await page.keyboard.press('Backspace');
                                     await new Promise(resolve => setTimeout(resolve, 200));
                                     
-                                    // 輸入日期
-                                    await startDateInput.type(startDate, { delay: 50 });
-                                    
-                                    // 觸發事件確保 Angular 檢測到變化
-                                    await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-9') || 
+                                    // 使用 evaluate 直接設置值，然後觸發事件
+                                    await page.evaluate((date) => {
+                                        const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                                     document.querySelector('input#mat-input-9') || 
                                                      document.querySelector('input[placeholder*="结算时间 开始"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 開始"]');
                                         if (input) {
-                                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            // 直接設置值
+                                            input.value = date;
+                                            // 觸發多種事件確保 Angular 檢測到變化
+                                            input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+                                            // 觸發 Angular 特定的變化事件
+                                            input.dispatchEvent(new Event('ngModelChange', { bubbles: true }));
+                                            // 觸發 focus 和 blur 來確保驗證
+                                            input.focus();
+                                            input.blur();
                                         }
+                                    }, startDate);
+                                    
+                                    // 也使用 type 方法作為備選
+                                    await startDateInput.type(startDate, { delay: 30 });
+                                    
+                                    // 驗證開始日期是否正確填入
+                                    const startDateValue = await page.evaluate(() => {
+                                        const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                                     document.querySelector('input#mat-input-9') || 
+                                                     document.querySelector('input[placeholder*="结算时间 开始"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 開始"]');
+                                        return input ? input.value : null;
                                     });
                                     
-                                    console.log('✅ Start date filled');
-                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    if (startDateValue && startDateValue.includes(startDate)) {
+                                        console.log('✅ Start date filled and verified: ' + startDateValue);
+                                    } else {
+                                        console.log('⚠️  Start date may not be set correctly. Expected: ' + startDate + ', Got: ' + startDateValue);
+                                        // 重試一次
+                                        await startDateInput.click();
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await page.keyboard.down('Control');
+                                        await page.keyboard.press('a');
+                                        await page.keyboard.up('Control');
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await startDateInput.type(startDate, { delay: 50 });
+                                        await page.evaluate(() => {
+                                            const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                                         document.querySelector('input#mat-input-9') || 
+                                                         document.querySelector('input[placeholder*="结算时间 开始"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 開始"]');
+                                            if (input) {
+                                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            }
+                                        });
+                                        console.log('✅ Start date retried');
+                                    }
+                                    
+                                    // 等待頁面可能自動設置結束日期（如果有這個功能）
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
                                 } else {
                                     console.log('⚠️  Start date input field not found');
                                 }
                             }
                             
-                            // 填寫結束日期
+                            // 填寫結束日期（如果提供了，一定要填寫，覆蓋頁面自動設置的值）
                             if (endDate) {
                                 console.log('📝 Filling end date: ' + endDate);
-                                const endDateInput = await page.waitForSelector('input#mat-input-10, input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
+                                // 等待結束日期輸入框出現（優先使用特定的選擇器）
+                                const endDateInput = await page.waitForSelector('input#mat-input-7, input[placeholder="结算时间 结束"], input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
                                 
                                 if (endDateInput) {
-                                    // 點擊輸入框
+                                    console.log('   🧹 Clearing end date input field first...');
+                                    
+                                    // 先點擊輸入框使其獲得焦點
                                     await endDateInput.click();
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    
+                                    // 使用 evaluate 徹底清空輸入框的值（多次嘗試確保清空）
+                                    let clearAttempts = 0;
+                                    let isCleared = false;
+                                    
+                                    while (!isCleared && clearAttempts < 5) {
+                                        clearAttempts++;
+                                        
+                                        // 方法1: 直接設置 value 為空
+                                        await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-7') || 
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            if (input) {
+                                                input.value = '';
+                                                input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+                                            }
+                                        });
+                                        
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        
+                                        // 方法2: 使用鍵盤清空
+                                        await page.keyboard.down('Control');
+                                        await page.keyboard.press('a');
+                                        await page.keyboard.up('Control');
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        
+                                        // 方法3: 雙擊選中全部後刪除
+                                        await endDateInput.click({ clickCount: 3 });
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        
+                                        // 驗證是否已清空
+                                        const clearedValue = await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-7') || 
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            return input ? input.value : null;
+                                        });
+                                        
+                                        if (!clearedValue || clearedValue.trim() === '') {
+                                            isCleared = true;
+                                            console.log('   ✅ End date input cleared successfully');
+                                        } else {
+                                            console.log('   ⚠️  End date input still has value: ' + clearedValue + ', retrying... (attempt ' + clearAttempts + '/5)');
+                                        }
+                                    }
+                                    
+                                    if (!isCleared) {
+                                        console.log('   ⚠️  Warning: Could not completely clear end date input, but will proceed to fill...');
+                                    }
+                                    
+                                    // 等待一下確保清空操作完成
                                     await new Promise(resolve => setTimeout(resolve, 500));
                                     
-                                    // 清空輸入框
-                                    await endDateInput.click({ clickCount: 3 });
-                                    await page.keyboard.press('Backspace');
-                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    // 再次驗證輸入框是否真的為空
+                                    const finalCheck = await page.evaluate(() => {
+                                        const input = document.querySelector('input#mat-input-7') || 
+                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                        return input ? input.value : null;
+                                    });
                                     
-                                    // 輸入日期
-                                    await endDateInput.type(endDate, { delay: 50 });
+                                    if (finalCheck && finalCheck.trim() !== '') {
+                                        console.log('   ⚠️  Input still has value: ' + finalCheck + ', forcing clear...');
+                                        // 強制清空
+                                        await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-7') || 
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            if (input) {
+                                                // 先 focus
+                                                input.focus();
+                                                // 選中所有內容
+                                                input.select();
+                                                // 設置為空
+                                                input.value = '';
+                                                // 觸發事件
+                                                input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+                                            }
+                                        });
+                                        await new Promise(resolve => setTimeout(resolve, 300));
+                                    }
                                     
-                                    // 觸發事件確保 Angular 檢測到變化
-                                    await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-10') || 
+                                    console.log('   ✅ Now filling end date...');
+                                    
+                                    // 確保輸入框是空的，然後使用 evaluate 直接設置值
+                                    await page.evaluate((date) => {
+                                        const input = document.querySelector('input#mat-input-7') || 
+                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 結束"]');
                                         if (input) {
-                                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            // 先確保是空的
+                                            input.value = '';
+                                            // 等待一下（在 evaluate 中無法使用 await，所以直接設置）
+                                            // 直接設置新值
+                                            input.value = date;
+                                            // 觸發多種事件確保 Angular 檢測到變化
+                                            input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+                                            // 觸發 Angular 特定的變化事件
+                                            input.dispatchEvent(new Event('ngModelChange', { bubbles: true }));
                                         }
+                                    }, endDate);
+                                    
+                                    // 等待一下確保值被設置
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    
+                                    // 驗證值是否正確設置
+                                    const checkValue = await page.evaluate(() => {
+                                        const input = document.querySelector('input#mat-input-7') || 
+                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                        return input ? input.value : null;
                                     });
                                     
-                                    console.log('✅ End date filled');
+                                    if (!checkValue || !checkValue.includes(endDate)) {
+                                        console.log('   ⚠️  Value not set correctly, using type method...');
+                                        // 如果 evaluate 方法失敗，使用 type 方法
+                                        await endDateInput.click();
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        // 先清空
+                                        await page.keyboard.down('Control');
+                                        await page.keyboard.press('a');
+                                        await page.keyboard.up('Control');
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        // 再輸入
+                                        await endDateInput.type(endDate, { delay: 30 });
+                                    }
+                                    
+                                    // 驗證結束日期是否正確填入
+                                    const endDateValue = await page.evaluate(() => {
+                                        const input = document.querySelector('input#mat-input-7') || 
+                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                        return input ? input.value : null;
+                                    });
+                                    
+                                    if (endDateValue && endDateValue.includes(endDate)) {
+                                        console.log('✅ End date filled and verified: ' + endDateValue);
+                                    } else {
+                                        console.log('⚠️  End date may not be set correctly. Expected: ' + endDate + ', Got: ' + endDateValue);
+                                        // 重試一次
+                                        await endDateInput.click();
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await page.keyboard.down('Control');
+                                        await page.keyboard.press('a');
+                                        await page.keyboard.up('Control');
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await endDateInput.type(endDate, { delay: 50 });
+                                        await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-7') || 
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            if (input) {
+                                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            }
+                                        });
+                                        console.log('✅ End date retried');
+                                    }
+                                    
                                     await new Promise(resolve => setTimeout(resolve, 500));
                                 } else {
                                     console.log('⚠️  End date input field not found');
@@ -728,6 +1077,225 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     });
                     
                     console.log('✅ Table data scraped: ' + tableData.rowCount + ' rows found');
+                    
+                    // 爬取每行的投注信息 dialog（串行處理）
+                    if (tableData.rows && tableData.rows.length > 0) {
+                        console.log('📋 Scraping bet information dialogs...');
+                        
+                        // 首先标记所有"投注信息"按钮
+                        const buttonInfo = await page.evaluate(() => {
+                            const buttons = Array.from(document.querySelectorAll('button.mat-button'));
+                            const betInfoButtons = [];
+                            
+                            buttons.forEach((button, index) => {
+                                const text = (button.textContent || button.innerText || '').trim();
+                                if (text.includes('投注信息') || text.includes('投注資訊')) {
+                                    // 找到按钮所在的行
+                                    let row = button.closest('mat-row') || button.closest('tr');
+                                    if (!row) {
+                                        let parent = button.parentElement;
+                                        let depth = 0;
+                                        while (parent && depth < 5) {
+                                            if (parent.tagName === 'MAT-ROW' || parent.tagName === 'TR') {
+                                                row = parent;
+                                                break;
+                                            }
+                                            parent = parent.parentElement;
+                                            depth++;
+                                        }
+                                    }
+                                    
+                                    if (row) {
+                                        const buttonId = 'bet-info-btn-' + index;
+                                        button.setAttribute('data-bet-info-button', buttonId);
+                                        betInfoButtons.push({
+                                            buttonId: buttonId,
+                                            index: index
+                                        });
+                                    }
+                                }
+                            });
+                            
+                            return betInfoButtons;
+                        });
+                        
+                        console.log('   Found ' + buttonInfo.length + ' bet info buttons');
+                        
+                        // 确定要爬取的数量（全部）
+                        const totalRows = Math.min(tableData.rows.length, buttonInfo.length);
+                        
+                        // 遍历每一行，点击对应的按钮并爬取 dialog
+                        for (let i = 0; i < totalRows; i++) {
+                            try {
+                                console.log('   Processing row ' + (i + 1) + '/' + totalRows + '...');
+                                
+                                const buttonId = buttonInfo[i].buttonId;
+                                const buttonSelector = 'button[data-bet-info-button="' + buttonId + '"]';
+                                
+                                // 点击按钮
+                                await page.click(buttonSelector).catch(() => {});
+                                console.log('   ✅ Clicked bet info button for row ' + (i + 1));
+                                
+                                // 使用智能等待：等待 dialog 容器出现（减少固定延迟）
+                                const dialogAppeared = await page.waitForSelector('mat-dialog-container.mat-dialog-container', { 
+                                    timeout: 3000,
+                                    visible: true 
+                                }).catch(() => null);
+                                
+                                // 如果 dialog 出现，额外等待一小段时间确保内容加载完成
+                                if (dialogAppeared) {
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                }
+                                
+                                if (dialogAppeared) {
+                                    // 爬取 dialog 内容
+                                    const dialogData = await page.evaluate(() => {
+                                        const dialog = document.querySelector('mat-dialog-container.mat-dialog-container');
+                                        if (!dialog) {
+                                            return { found: false, error: 'Dialog not found' };
+                                        }
+                                        
+                                        // 提取 dialog 中的所有内容
+                                        const dialogContent = {
+                                            title: '',
+                                            text: '',
+                                            html: '',
+                                            tables: [],
+                                            lists: []
+                                        };
+                                        
+                                        // 获取标题
+                                        const title = dialog.querySelector('h1, h2, h3, .mat-dialog-title, [class*="title"]');
+                                        if (title) {
+                                            dialogContent.title = (title.textContent || '').trim();
+                                        }
+                                        
+                                        // 获取所有文本
+                                        dialogContent.text = (dialog.textContent || '').trim();
+                                        
+                                        // 获取 HTML 内容
+                                        dialogContent.html = dialog.innerHTML;
+                                        
+                                        // 查找表格
+                                        const tables = dialog.querySelectorAll('table, mat-table');
+                                        tables.forEach((table) => {
+                                            const tableData = {
+                                                headers: [],
+                                                rows: []
+                                            };
+                                            
+                                            // 获取表头
+                                            const headerRow = table.querySelector('thead tr, mat-header-row');
+                                            if (headerRow) {
+                                                const headerCells = headerRow.querySelectorAll('th, mat-header-cell');
+                                                headerCells.forEach(cell => {
+                                                    const text = (cell.textContent || '').trim();
+                                                    if (text) {
+                                                        tableData.headers.push(text);
+                                                    }
+                                                });
+                                            }
+                                            
+                                            // 如果没有表头，尝试从第一行获取
+                                            if (tableData.headers.length === 0) {
+                                                const firstRow = table.querySelector('tbody tr:first-child, mat-row:first-child');
+                                                if (firstRow) {
+                                                    const cells = firstRow.querySelectorAll('td, mat-cell');
+                                                    cells.forEach((cell, index) => {
+                                                        const text = (cell.textContent || '').trim();
+                                                        if (text) {
+                                                            tableData.headers.push('column_' + index);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                            
+                                            // 获取数据行
+                                            const dataRows = table.querySelectorAll('tbody tr, mat-row');
+                                            dataRows.forEach((row) => {
+                                                const rowData = {};
+                                                const cells = row.querySelectorAll('td, mat-cell');
+                                                cells.forEach((cell, cellIndex) => {
+                                                    const text = (cell.textContent || '').trim();
+                                                    const header = tableData.headers[cellIndex] || ('column_' + cellIndex);
+                                                    rowData[header] = text;
+                                                });
+                                                if (Object.keys(rowData).length > 0) {
+                                                    tableData.rows.push(rowData);
+                                                }
+                                            });
+                                            
+                                            if (tableData.headers.length > 0 || tableData.rows.length > 0) {
+                                                dialogContent.tables.push(tableData);
+                                            }
+                                        });
+                                        
+                                        // 查找列表
+                                        const lists = dialog.querySelectorAll('ul, ol, mat-list');
+                                        lists.forEach((list) => {
+                                            const listItems = [];
+                                            const items = list.querySelectorAll('li, mat-list-item');
+                                            items.forEach((item) => {
+                                                const text = (item.textContent || '').trim();
+                                                if (text) {
+                                                    listItems.push(text);
+                                                }
+                                            });
+                                            if (listItems.length > 0) {
+                                                dialogContent.lists.push(listItems);
+                                            }
+                                        });
+                                        
+                                        return {
+                                            found: true,
+                                            content: dialogContent
+                                        };
+                                    });
+                                    
+                                    if (dialogData.found) {
+                                        // 将 dialog 数据添加到行数据中
+                                        tableData.rows[i].betInfoDialog = dialogData.content;
+                                        console.log('   ✅ Dialog data scraped for row ' + (i + 1));
+                                    } else {
+                                        console.log('   ⚠️  Dialog content not found for row ' + (i + 1));
+                                    }
+                                    
+                                    // 关闭 dialog（按 ESC 或点击关闭按钮）
+                                    const closeButton = await page.$('button[mat-dialog-close], button[aria-label*="close"], button[aria-label*="关闭"], .mat-dialog-close, button[class*="close"]').catch(() => null);
+                                    if (closeButton) {
+                                        await closeButton.click();
+                                    } else {
+                                        // 如果没有关闭按钮，按 ESC
+                                        await page.keyboard.press('Escape');
+                                    }
+                                    
+                                    // 等待 dialog 关闭（使用智能等待）
+                                    await page.waitForFunction(
+                                        () => !document.querySelector('mat-dialog-container.mat-dialog-container'),
+                                        { timeout: 2000 }
+                                    ).catch(() => {
+                                        // 如果超时，继续执行
+                                    });
+                                    
+                                    // 额外等待一小段时间确保 dialog 完全关闭
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                } else {
+                                    console.log('   ⚠️  Dialog did not appear for row ' + (i + 1));
+                                }
+                            } catch (e) {
+                                console.log('   ⚠️  Error processing row ' + (i + 1) + ': ' + e.message);
+                                // 尝试关闭可能打开的 dialog
+                                try {
+                                    await page.keyboard.press('Escape');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } catch (closeError) {
+                                    // 忽略关闭错误
+                                }
+                            }
+                        }
+                        
+                        console.log('✅ Bet information dialogs scraping completed');
+                    }
                     
                     // 返回結果
                     const result = {
