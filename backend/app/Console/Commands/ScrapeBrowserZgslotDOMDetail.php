@@ -744,9 +744,36 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     const resultPath = path.join(workingDir, 'scrape_result.json');
                     fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
                     
-                    // 保存表格數據為單獨的 JSON 文件
+                    // 保存表格數據為單獨的 JSON 文件（使用與 Splus 類似的結構）
+                    // 生成時間戳（格式：YYYY-MM-DD_HH-MM-SS）
+                    const now = new Date();
+                    const year = now.getFullYear();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    const hours = String(now.getHours()).padStart(2, '0');
+                    const minutes = String(now.getMinutes()).padStart(2, '0');
+                    const seconds = String(now.getSeconds()).padStart(2, '0');
+                    const timestamp = year + '-' + month + '-' + day + '_' + hours + '-' + minutes + '-' + seconds;
+                    
+                    const tableDataFile = {
+                        metadata: {
+                            timestamp: timestamp,
+                            url: page.url(),
+                            dateStart: startDate || null,
+                            dateEnd: endDate || null,
+                            totalPages: 1,
+                            totalRows: tableData.rowCount || 0,
+                            headers: tableData.headers || [],
+                            source: 'DOM'
+                        },
+                        headers: tableData.headers || [],
+                        totalPages: 1,
+                        totalRows: tableData.rowCount || 0,
+                        data: tableData.rows || []
+                    };
+                    
                     const tableDataPath = path.join(workingDir, 'table_data.json');
-                    fs.writeFileSync(tableDataPath, JSON.stringify(tableData, null, 2));
+                    fs.writeFileSync(tableDataPath, JSON.stringify(tableDataFile, null, 2));
                     console.log('💾 Table data saved to: ' + tableDataPath);
                     
                     console.log('');
@@ -962,23 +989,47 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                 mkdir($dataDir, 0755, true);
             }
             
+            // 讀取原始數據
+            $content = file_get_contents($tableDataFile);
+            $rawData = json_decode($content, true);
+            
+            // 重新組織數據結構（與 Splus 保持一致）
+            $processedData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $rawData['metadata']['url'] ?? '',
+                    'dateStart' => $rawData['metadata']['dateStart'] ?? null,
+                    'dateEnd' => $rawData['metadata']['dateEnd'] ?? null,
+                    'totalPages' => $rawData['totalPages'] ?? 1,
+                    'totalRows' => $rawData['totalRows'] ?? 0,
+                    'headers' => $rawData['headers'] ?? [],
+                    'source' => 'DOM'
+                ],
+                'headers' => $rawData['headers'] ?? [],
+                'totalPages' => $rawData['totalPages'] ?? 1,
+                'totalRows' => $rawData['totalRows'] ?? 0,
+                'data' => $rawData['data'] ?? []
+            ];
+            
+            // 保存處理後的數據
             $destFilename = "zgslot_manual_{$timestamp}_table_data.json";
             $destPath = $dataDir . '/' . $destFilename;
             
-            if (rename($tableDataFile, $destPath)) {
-                $this->info("✅ Table data saved to: {$destPath}");
-                
-                // 讀取並顯示表格數據摘要
-                $content = file_get_contents($destPath);
-                $tableData = json_decode($content, true);
-                if ($tableData && isset($tableData['rowCount'])) {
-                    $this->line("   📋 Rows: {$tableData['rowCount']}");
-                    if (isset($tableData['headers']) && count($tableData['headers']) > 0) {
-                        $this->line("   📑 Headers: " . implode(', ', array_slice($tableData['headers'], 0, 5)) . (count($tableData['headers']) > 5 ? '...' : ''));
+            file_put_contents($destPath, json_encode($processedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            
+            $this->info("✅ Table data saved to: {$destPath}");
+            
+            // 顯示表格數據摘要
+            if (isset($processedData['totalRows'])) {
+                $this->line("   📋 Total Rows: {$processedData['totalRows']}");
+                $this->line("   📄 Total Pages: {$processedData['totalPages']}");
+                if (isset($processedData['headers']) && count($processedData['headers']) > 0) {
+                    $headerPreview = implode(', ', array_slice($processedData['headers'], 0, 5));
+                    if (count($processedData['headers']) > 5) {
+                        $headerPreview .= '...';
                     }
+                    $this->line("   📑 Headers (" . count($processedData['headers']) . "): {$headerPreview}");
                 }
-            } else {
-                $this->warn('⚠️  Failed to move table data file');
             }
         } else {
             $this->warn('⚠️  Table data file not found');
