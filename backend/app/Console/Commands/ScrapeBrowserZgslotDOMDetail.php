@@ -15,10 +15,12 @@ class ScrapeBrowserZgslotDOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-zgslot-dom-detail {url}
+     * 執行方式：php artisan agent:scrape-zgslot-dom-detail {url} {start_date?} {end_date?}
      * {url} - 要爬取的目標網址（必需參數）
+     * {start_date?} - 開始日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
+     * {end_date?} - 結束日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
      */
-    protected $signature = 'agent:scrape-zgslot-dom-detail {url}';
+    protected $signature = 'agent:scrape-zgslot-dom-detail {url} {start_date?} {end_date?}';
 
     /**
      * 命令描述
@@ -34,9 +36,21 @@ class ScrapeBrowserZgslotDOMDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
+        $startDateRaw = $this->argument('start_date');
+        $endDateRaw = $this->argument('end_date');
+        
+        // 轉換日期格式（支持 YYYYMMDD 和 YYYY-MM-DD）
+        $startDate = $this->normalizeDate($startDateRaw);
+        $endDate = $this->normalizeDate($endDateRaw);
 
         $this->info('=== ZGSLOT DOM Data Scraper (Manual Input Mode) ===');
         $this->info("Target URL: {$url}");
+        if ($startDate) {
+            $this->info("Start Date: {$startDate}");
+        }
+        if ($endDate) {
+            $this->info("End Date: {$endDate}");
+        }
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -56,7 +70,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         $this->info("Login Domain: {$domain}");
 
         // 創建 Puppeteer 腳本（手動輸入模式）
-        $scriptPath = $this->createPuppeteerScript($domain, $url);
+        $scriptPath = $this->createPuppeteerScript($domain, $url, $startDate, $endDate);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -114,18 +128,48 @@ class ScrapeBrowserZgslotDOMDetail extends Command
     }
 
     /**
+     * 標準化日期格式
+     * 將 YYYYMMDD 轉換為 YYYY-MM-DD
+     * @param string|null $date 日期字符串
+     * @return string|null 標準化後的日期字符串
+     */
+    private function normalizeDate($date)
+    {
+        if (empty($date)) {
+            return null;
+        }
+        
+        // 如果已經是 YYYY-MM-DD 格式，直接返回
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return $date;
+        }
+        
+        // 如果是 YYYYMMDD 格式，轉換為 YYYY-MM-DD
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $date, $matches)) {
+            return $matches[1] . '-' . $matches[2] . '-' . $matches[3];
+        }
+        
+        // 如果格式不正確，返回原值（讓 JavaScript 端處理錯誤）
+        return $date;
+    }
+
+    /**
      * 創建 Puppeteer 自動化腳本（手動輸入模式）
      * @param string $domain 登入頁面網址
      * @param string $url 要爬取的目標網址
+     * @param string|null $startDate 開始日期（格式：YYYY-MM-DD）
+     * @param string|null $endDate 結束日期（格式：YYYY-MM-DD）
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $url)
+    private function createPuppeteerScript($domain, $url, $startDate = null, $endDate = null)
     {
         $this->info('2. Creating browser automation script (manual input mode)...');
 
         // 轉義 JavaScript 字符串
         $domainJs = json_encode($domain);
         $urlJs = json_encode($url);
+        $startDateJs = json_encode($startDate);
+        $endDateJs = json_encode($endDate);
         
         // 獲取工作目錄的絕對路徑
         $workingDir = storage_path('app/temp');
@@ -141,6 +185,86 @@ class ScrapeBrowserZgslotDOMDetail extends Command
             // 工作目錄（json_encode 已經生成了正確的 JavaScript 字符串）
             const workingDir = $workingDirJs;
             console.log('📁 Working directory: ' + workingDir);
+
+            /**
+             * 設置每頁筆數的輔助函數
+             */
+            async function setPageSize(page, size) {
+                try {
+                    console.log('📄 Setting page size to ' + size + '...');
+                    
+                    // 查找分頁器的每頁筆數選擇器
+                    const pageSizeSelect = await page.$('mat-select#mat-select-4, mat-select[aria-label*="每页笔数"], mat-select[aria-label*="每頁筆數"]').catch(() => null);
+                    
+                    if (!pageSizeSelect) {
+                        // 嘗試其他選擇器
+                        const selectors = [
+                            'mat-select.mat-paginator-page-size-select',
+                            'mat-select.mat-select',
+                            '.mat-paginator-page-size-select mat-select'
+                        ];
+                        
+                        for (const selector of selectors) {
+                            const select = await page.$(selector).catch(() => null);
+                            if (select) {
+                                await select.click();
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                // 等待下拉菜單出現
+                                const option = await page.waitForSelector('mat-option .mat-option-text', { timeout: 5000 }).catch(() => null);
+                                if (option) {
+                                    // 查找包含目標數字的選項
+                                    const targetOption = await page.evaluateHandle((targetSize) => {
+                                        const options = Array.from(document.querySelectorAll('mat-option'));
+                                        return options.find(opt => {
+                                            const text = opt.textContent || opt.innerText || '';
+                                            return text.includes(targetSize.toString());
+                                        });
+                                    }, size).catch(() => null);
+                                    
+                                    if (targetOption && targetOption.asElement()) {
+                                        await targetOption.asElement().click();
+                                        console.log('✅ Page size set to ' + size);
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        console.log('⚠️  Page size selector not found, trying alternative method...');
+                    } else {
+                        // 點擊選擇器打開下拉菜單
+                        await pageSizeSelect.click();
+                        console.log('✅ Page size selector clicked');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // 等待下拉菜單出現並選擇目標值
+                        const targetOption = await page.evaluateHandle((targetSize) => {
+                            const options = Array.from(document.querySelectorAll('mat-option'));
+                            return options.find(opt => {
+                                const text = (opt.textContent || opt.innerText || '').trim();
+                                return text === targetSize.toString() || text.includes(targetSize.toString());
+                            });
+                        }, size).catch(() => null);
+                        
+                        if (targetOption && targetOption.asElement()) {
+                            await targetOption.asElement().click();
+                            console.log('✅ Page size set to ' + size);
+                            
+                            // 等待數據重新載入
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        } else {
+                            console.log('⚠️  Option with value ' + size + ' not found');
+                            // 按 ESC 關閉下拉菜單
+                            await page.keyboard.press('Escape');
+                        }
+                    }
+                } catch (e) {
+                    console.log('⚠️  Error setting page size: ' + e.message);
+                    console.log('   Error stack: ' + e.stack);
+                }
+            }
 
             /**
              * ZGSLOT 手動登入流程
@@ -342,6 +466,151 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         targetUrlReached = true; // 沒有目標 URL，使用當前頁面
                     }
                     
+                    // 如果提供了開始日期和結束日期，填寫日期並點擊查詢按鈕
+                    const startDate = $startDateJs && $startDateJs !== 'null' ? $startDateJs.replace(/^"|"$/g, '') : null;
+                    const endDate = $endDateJs && $endDateJs !== 'null' ? $endDateJs.replace(/^"|"$/g, '') : null;
+                    
+                    if (startDate || endDate) {
+                        console.log('📅 Filling date range...');
+                        console.log('   Start Date: ' + (startDate || 'Not provided'));
+                        console.log('   End Date: ' + (endDate || 'Not provided'));
+                        
+                        try {
+                            // 等待頁面完全載入
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                            // 填寫開始日期
+                            if (startDate) {
+                                console.log('📝 Filling start date: ' + startDate);
+                                const startDateInput = await page.waitForSelector('input#mat-input-9, input[placeholder*="结算时间 开始"], input[placeholder*="結算時間 開始"]', { timeout: 10000 }).catch(() => null);
+                                
+                                if (startDateInput) {
+                                    // 點擊輸入框
+                                    await startDateInput.click();
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    
+                                    // 清空輸入框
+                                    await startDateInput.click({ clickCount: 3 });
+                                    await page.keyboard.press('Backspace');
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    
+                                    // 輸入日期
+                                    await startDateInput.type(startDate, { delay: 50 });
+                                    
+                                    // 觸發事件確保 Angular 檢測到變化
+                                    await page.evaluate(() => {
+                                        const input = document.querySelector('input#mat-input-9') || 
+                                                     document.querySelector('input[placeholder*="结算时间 开始"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 開始"]');
+                                        if (input) {
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                        }
+                                    });
+                                    
+                                    console.log('✅ Start date filled');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else {
+                                    console.log('⚠️  Start date input field not found');
+                                }
+                            }
+                            
+                            // 填寫結束日期
+                            if (endDate) {
+                                console.log('📝 Filling end date: ' + endDate);
+                                const endDateInput = await page.waitForSelector('input#mat-input-10, input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
+                                
+                                if (endDateInput) {
+                                    // 點擊輸入框
+                                    await endDateInput.click();
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    
+                                    // 清空輸入框
+                                    await endDateInput.click({ clickCount: 3 });
+                                    await page.keyboard.press('Backspace');
+                                    await new Promise(resolve => setTimeout(resolve, 200));
+                                    
+                                    // 輸入日期
+                                    await endDateInput.type(endDate, { delay: 50 });
+                                    
+                                    // 觸發事件確保 Angular 檢測到變化
+                                    await page.evaluate(() => {
+                                        const input = document.querySelector('input#mat-input-10') || 
+                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                        if (input) {
+                                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                        }
+                                    });
+                                    
+                                    console.log('✅ End date filled');
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else {
+                                    console.log('⚠️  End date input field not found');
+                                }
+                            }
+                            
+                            // 點擊查詢按鈕
+                            console.log('🔍 Clicking query button...');
+                            
+                            // 使用 evaluate 查找包含"查询"或"查詢"文字的按鈕
+                            const queryButtonFound = await page.evaluate(() => {
+                                const buttons = Array.from(document.querySelectorAll('button.mat-flat-button.mat-primary, button.mat-flat-button'));
+                                const button = buttons.find(btn => {
+                                    const text = (btn.textContent || btn.innerText || '').trim();
+                                    return text.includes('查询') || text.includes('查詢') || text === '查询' || text === '查詢';
+                                });
+                                
+                                if (button) {
+                                    // 標記按鈕以便後續選擇
+                                    button.setAttribute('data-query-button', 'true');
+                                    return true;
+                                }
+                                return false;
+                            });
+                            
+                            if (queryButtonFound) {
+                                // 使用標記選擇按鈕
+                                const queryButton = await page.$('button[data-query-button="true"]');
+                                if (queryButton) {
+                                    await queryButton.click();
+                                    console.log('✅ Query button clicked');
+                                    
+                                    // 等待查詢結果載入
+                                    console.log('⏳ Waiting for query results...');
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                    
+                                    // 設置每頁筆數為 10000
+                                    await setPageSize(page, 10000);
+                                } else {
+                                    console.log('⚠️  Query button element not found after marking');
+                                }
+                            } else {
+                                // 嘗試直接使用選擇器
+                                const queryButtonDirect = await page.$('button.mat-flat-button.mat-primary').catch(() => null);
+                                if (queryButtonDirect) {
+                                    await queryButtonDirect.click();
+                                    console.log('✅ Query button clicked (direct selector)');
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                    
+                                    // 設置每頁筆數為 10000
+                                    await setPageSize(page, 10000);
+                                } else {
+                                    console.log('⚠️  Query button not found');
+                                }
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error filling dates or clicking query button: ' + e.message);
+                            console.log('   Error stack: ' + e.stack);
+                        }
+                    } else {
+                        // 即使沒有填寫日期，也嘗試設置每頁筆數
+                        await setPageSize(page, 10000);
+                    }
+                    
                     // 無論是否跳轉成功，都要截圖當前頁面
                     console.log('📸 Taking screenshot of current page...');
                     console.log('   Current URL: ' + page.url());
@@ -388,11 +657,77 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         console.log('   Directory exists: ' + fs.existsSync(workingDir));
                     }
                             
-                    // 獲取頁面 HTML 內容
-                    const pageContent = await page.content();
-                    
                     // 獲取頁面標題
                     const pageTitle = await page.title();
+                    
+                    // 爬取 mat-table 表格數據
+                    console.log('📊 Scraping mat-table data...');
+                    const tableData = await page.evaluate(() => {
+                        const table = document.querySelector('mat-table.mat-table');
+                        if (!table) {
+                            return { error: 'Table not found', rows: [] };
+                        }
+                        
+                        // 獲取表頭
+                        const headers = [];
+                        const headerRow = table.querySelector('thead tr, mat-header-row');
+                        if (headerRow) {
+                            const headerCells = headerRow.querySelectorAll('mat-header-cell, th');
+                            headerCells.forEach(cell => {
+                                const text = (cell.textContent || '').trim();
+                                if (text) {
+                                    headers.push(text);
+                                }
+                            });
+                        }
+                        
+                        // 如果沒有找到表頭，嘗試從 mat-column 屬性獲取
+                        if (headers.length === 0) {
+                            const firstRow = table.querySelector('mat-row, tbody tr');
+                            if (firstRow) {
+                                const cells = firstRow.querySelectorAll('mat-cell, td');
+                                cells.forEach((cell, index) => {
+                                    const columnDef = cell.getAttribute('mat-column') || 
+                                                     cell.getAttribute('cdk-column') ||
+                                                     ('column_' + index);
+                                    headers.push(columnDef);
+                                });
+                            }
+                        }
+                        
+                        // 獲取表格行數據
+                        const rows = [];
+                        const dataRows = table.querySelectorAll('mat-row, tbody tr');
+                        
+                        dataRows.forEach((row, rowIndex) => {
+                            const rowData = {};
+                            const cells = row.querySelectorAll('mat-cell, td');
+                            
+                            cells.forEach((cell, cellIndex) => {
+                                const text = (cell.textContent || '').trim();
+                                const header = headers[cellIndex] || ('column_' + cellIndex);
+                                
+                                // 獲取更多信息（如果有）
+                                const columnDef = cell.getAttribute('mat-column') || 
+                                                 cell.getAttribute('cdk-column') || 
+                                                 header;
+                                
+                                rowData[columnDef] = text;
+                            });
+                            
+                            if (Object.keys(rowData).length > 0) {
+                                rows.push(rowData);
+                            }
+                        });
+                        
+                        return {
+                            headers: headers,
+                            rows: rows,
+                            rowCount: rows.length
+                        };
+                    });
+                    
+                    console.log('✅ Table data scraped: ' + tableData.rowCount + ' rows found');
                     
                     // 返回結果
                     const result = {
@@ -400,7 +735,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         url: page.url(),
                         title: pageTitle,
                         cookies: cookies,
-                        htmlLength: pageContent.length,
+                        tableData: tableData,
                         targetUrlReached: targetUrlReached,
                         message: targetUrlReached ? 'Login and navigation completed successfully' : 'Login completed, but navigation to target URL was skipped or failed'
                     };
@@ -409,17 +744,18 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     const resultPath = path.join(workingDir, 'scrape_result.json');
                     fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
                     
-                    // 保存 HTML 內容到文件
-                    const htmlPath = path.join(workingDir, 'scraped_page.html');
-                    fs.writeFileSync(htmlPath, pageContent);
-                    console.log('💾 Page HTML content saved to: ' + htmlPath);
+                    // 保存表格數據為單獨的 JSON 文件
+                    const tableDataPath = path.join(workingDir, 'table_data.json');
+                    fs.writeFileSync(tableDataPath, JSON.stringify(tableData, null, 2));
+                    console.log('💾 Table data saved to: ' + tableDataPath);
                     
                     console.log('');
                     console.log('═══════════════════════════════════════════════════════════');
                     console.log('✅ SCRAPING COMPLETED!');
                     console.log('   URL: ' + page.url());
                     console.log('   Title: ' + pageTitle);
-                    console.log('   HTML Length: ' + pageContent.length + ' characters');
+                    console.log('   Table Rows: ' + (tableData.rowCount || 0));
+                    console.log('   Table Headers: ' + (tableData.headers ? tableData.headers.length : 0));
                     console.log('   Cookies: ' + cookies.length + ' cookie(s)');
                     console.log('   Target URL Reached: ' + (targetUrlReached ? 'Yes' : 'No'));
                     console.log('═══════════════════════════════════════════════════════════');
@@ -531,14 +867,26 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         // 處理截圖文件
         $this->processScreenshots($workingDir, $timestamp);
         
-        // 處理 HTML 文件
-        $this->processHtmlFile($workingDir, $timestamp);
+        // 處理表格數據文件
+        $this->processTableData($workingDir, $timestamp);
 
         if (isset($result['success']) && $result['success']) {
             $this->info('✅ Scraping completed successfully!');
             $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
             $this->info('📄 Title: ' . ($result['title'] ?? 'N/A'));
-            $this->info('📊 HTML Length: ' . ($result['htmlLength'] ?? 0) . ' characters');
+            
+            // 顯示表格數據信息
+            if (isset($result['tableData'])) {
+                $tableData = $result['tableData'];
+                $this->info('📊 Table Rows: ' . ($tableData['rowCount'] ?? 0));
+                $this->info('📋 Table Headers: ' . (isset($tableData['headers']) ? count($tableData['headers']) : 0));
+                if (isset($tableData['error'])) {
+                    $this->warn('⚠️  Table Error: ' . $tableData['error']);
+                }
+            } else {
+                $this->warn('⚠️  No table data found');
+            }
+            
             $this->info('🍪 Cookies: ' . (count($result['cookies'] ?? []) . ' cookie(s)'));
             
             if (isset($result['error'])) {
@@ -599,31 +947,41 @@ class ScrapeBrowserZgslotDOMDetail extends Command
     }
 
     /**
-     * 處理 HTML 文件，將它從臨時目錄移動到永久儲存目錄
+     * 處理表格數據文件，將它從臨時目錄移動到永久儲存目錄
      * @param string $workingDir 工作目錄（臨時目錄）
      * @param string $timestamp 時間戳
      */
-    private function processHtmlFile($workingDir, $timestamp)
+    private function processTableData($workingDir, $timestamp)
     {
-        $this->info('📄 Processing HTML file...');
+        $this->info('📊 Processing table data...');
         
-        $htmlFile = $workingDir . '/scraped_page.html';
-        if (file_exists($htmlFile)) {
-            $htmlDir = storage_path('app/scraped_data');
-            if (!is_dir($htmlDir)) {
-                mkdir($htmlDir, 0755, true);
+        $tableDataFile = $workingDir . '/table_data.json';
+        if (file_exists($tableDataFile)) {
+            $dataDir = storage_path('app/scraped_data');
+            if (!is_dir($dataDir)) {
+                mkdir($dataDir, 0755, true);
             }
             
-            $destFilename = "zgslot_manual_{$timestamp}_scraped_page.html";
-            $destPath = $htmlDir . '/' . $destFilename;
+            $destFilename = "zgslot_manual_{$timestamp}_table_data.json";
+            $destPath = $dataDir . '/' . $destFilename;
             
-            if (rename($htmlFile, $destPath)) {
-                $this->info("✅ HTML file saved to: {$destPath}");
+            if (rename($tableDataFile, $destPath)) {
+                $this->info("✅ Table data saved to: {$destPath}");
+                
+                // 讀取並顯示表格數據摘要
+                $content = file_get_contents($destPath);
+                $tableData = json_decode($content, true);
+                if ($tableData && isset($tableData['rowCount'])) {
+                    $this->line("   📋 Rows: {$tableData['rowCount']}");
+                    if (isset($tableData['headers']) && count($tableData['headers']) > 0) {
+                        $this->line("   📑 Headers: " . implode(', ', array_slice($tableData['headers'], 0, 5)) . (count($tableData['headers']) > 5 ? '...' : ''));
+                    }
+                }
             } else {
-                $this->warn('⚠️  Failed to move HTML file');
+                $this->warn('⚠️  Failed to move table data file');
             }
         } else {
-            $this->warn('⚠️  HTML file not found');
+            $this->warn('⚠️  Table data file not found');
         }
     }
 }

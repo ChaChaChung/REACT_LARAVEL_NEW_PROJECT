@@ -17,10 +17,10 @@ class ScrapeBrowserZgslotDOMDetail2 extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-zgslot-dom-detail {url}
+     * 執行方式：php artisan agent:scrape-zgslot-dom-detail-auto {url}
      * {url} - 要爬取的目標網址（必需參數）
      */
-    protected $signature = 'agent:scrape-zgslot-dom-detail {url}';
+    protected $signature = 'agent:scrape-zgslot-dom-detail-auto {url}';
 
     /**
      * 命令描述
