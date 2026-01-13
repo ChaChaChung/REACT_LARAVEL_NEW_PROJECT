@@ -203,6 +203,93 @@ class ScrapeBrowserZgslotDOMDetail extends Command
             console.log('📁 Working directory: ' + workingDir);
 
             /**
+             * 打開 "All Columns" 開關的輔助函數
+             */
+            async function openAllColumnsToggle(page) {
+                try {
+                    console.log('🔘 Looking for "All Columns" toggle...');
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // 等待頁面穩定
+                    
+                    // 查找開關（通過多種方式：ID、文本內容等，兼容中英文）
+                    const toggleOpened = await page.evaluate(() => {
+                        // 方法1: 通過 ID 查找（支持多個可能的 ID）
+                        let toggleInput = document.querySelector('input#mat-slide-toggle-1-input') ||
+                                         document.querySelector('input#mat-slide-toggle-2-input');
+                        
+                        // 方法2: 如果沒找到，通過文本內容查找
+                        if (!toggleInput) {
+                            const labels = Array.from(document.querySelectorAll('label.mat-slide-toggle-label'));
+                            const label = labels.find(lbl => {
+                                const text = (lbl.textContent || lbl.innerText || '').trim();
+                                return text.includes('All Columns') || 
+                                       text.includes('所有列') ||
+                                       text.includes('全部欄位');
+                            });
+                            
+                            if (label) {
+                                toggleInput = label.querySelector('input[type="checkbox"]');
+                            }
+                        }
+                        
+                        // 方法3: 查找所有 mat-slide-toggle 的 input
+                        if (!toggleInput) {
+                            const toggles = Array.from(document.querySelectorAll('mat-slide-toggle input[type="checkbox"]'));
+                            for (const toggle of toggles) {
+                                const label = toggle.closest('label.mat-slide-toggle-label');
+                                if (label) {
+                                    const text = (label.textContent || label.innerText || '').trim();
+                                    if (text.includes('All Columns') || 
+                                        text.includes('所有列') ||
+                                        text.includes('全部欄位')) {
+                                        toggleInput = toggle;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (toggleInput) {
+                            // 檢查是否已打開
+                            if (toggleInput.checked) {
+                                return { found: true, alreadyOn: true };
+                            } else {
+                                // 點擊開關（點擊 label 或 input）
+                                const label = toggleInput.closest('label.mat-slide-toggle-label');
+                                if (label) {
+                                    label.click();
+                                } else {
+                                    toggleInput.click();
+                                }
+                                
+                                // 觸發事件確保 Angular 檢測到變化
+                                toggleInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                toggleInput.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }));
+                                
+                                return { found: true, alreadyOn: false, toggled: true };
+                            }
+                        }
+                        
+                        return { found: false };
+                    });
+                    
+                    if (toggleOpened.found) {
+                        if (toggleOpened.alreadyOn) {
+                            console.log('✅ "All Columns" toggle is already ON');
+                        } else {
+                            console.log('✅ "All Columns" toggle opened successfully');
+                            // 等待開關狀態更新
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    } else {
+                        console.log('⚠️  "All Columns" toggle not found (this is OK if it doesn\'t exist on this page)');
+                    }
+                } catch (e) {
+                    console.log('⚠️  Error opening "All Columns" toggle: ' + e.message);
+                    // 不阻止後續流程，繼續執行
+                }
+            }
+
+            /**
              * 設置每頁筆數的輔助函數
              */
             async function setPageSize(page, size) {
@@ -242,6 +329,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         await targetOption.asElement().click();
                                         console.log('✅ Page size set to ' + size);
                                         await new Promise(resolve => setTimeout(resolve, 3000));
+                                        // 設置每頁筆數後可能導致頁面閃爍，重新打開 "All Columns" 開關
+                                        await openAllColumnsToggle(page);
                                         return;
                                     }
                                 }
@@ -270,6 +359,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             
                             // 等待數據重新載入
                             await new Promise(resolve => setTimeout(resolve, 3000));
+                            
+                            // 設置每頁筆數後可能導致頁面閃爍，重新打開 "All Columns" 開關
+                            await openAllColumnsToggle(page);
                         } else {
                             console.log('⚠️  Option with value ' + size + ' not found');
                             // 按 ESC 關閉下拉菜單
@@ -336,6 +428,86 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     // 等待頁面載入
                     await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // 選擇語言為 English
+                    try {
+                        console.log('🌐 Selecting language: English...');
+                        await new Promise(resolve => setTimeout(resolve, 1000)); // 等待頁面穩定
+                        
+                        // 查找語言選擇器（通過多種方式）
+                        const languageSelectFound = await page.evaluate(() => {
+                            // 方法1: 查找包含"简体中文"或"繁體中文"的 mat-select-trigger
+                            const triggers = Array.from(document.querySelectorAll('div.mat-select-trigger'));
+                            for (const trigger of triggers) {
+                                const text = (trigger.textContent || trigger.innerText || '').trim();
+                                if (text.includes('简体中文') || 
+                                    text.includes('繁體中文') ||
+                                    text.includes('English')) {
+                                    // 找到 mat-select 元素
+                                    const select = trigger.closest('mat-select');
+                                    if (select) {
+                                        select.setAttribute('data-language-select', 'true');
+                                        return true;
+                                    }
+                                }
+                            }
+                            
+                            // 方法2: 查找所有 mat-select
+                            const selects = Array.from(document.querySelectorAll('mat-select'));
+                            for (const select of selects) {
+                                const trigger = select.querySelector('div.mat-select-trigger');
+                                if (trigger) {
+                                    const text = (trigger.textContent || trigger.innerText || '').trim();
+                                    if (text.includes('简体中文') || 
+                                        text.includes('繁體中文') ||
+                                        text.includes('English')) {
+                                        select.setAttribute('data-language-select', 'true');
+                                        return true;
+                                    }
+                                }
+                            }
+                            
+                            return false;
+                        });
+                        
+                        if (languageSelectFound) {
+                            // 點擊語言選擇器
+                            const languageSelect = await page.$('mat-select[data-language-select="true"]');
+                            if (languageSelect) {
+                                await languageSelect.click();
+                                console.log('   ✅ Language selector clicked');
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                // 等待下拉菜單出現並選擇 English
+                                const englishOption = await page.evaluateHandle(() => {
+                                    const options = Array.from(document.querySelectorAll('mat-option'));
+                                    return options.find(opt => {
+                                        const text = (opt.textContent || opt.innerText || '').trim();
+                                        return text === 'English' || 
+                                               text.toLowerCase() === 'english' ||
+                                               text.includes('English');
+                                    });
+                                }).catch(() => null);
+                                
+                                if (englishOption && englishOption.asElement()) {
+                                    await englishOption.asElement().click();
+                                    console.log('   ✅ Language set to English');
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                } else {
+                                    console.log('   ⚠️  English option not found in language dropdown');
+                                    // 按 ESC 關閉下拉菜單
+                                    await page.keyboard.press('Escape');
+                                }
+                            } else {
+                                console.log('   ⚠️  Language selector element not found after marking');
+                            }
+                        } else {
+                            console.log('   ⚠️  Language selector not found (this is OK if it doesn\'t exist on this page)');
+                        }
+                    } catch (e) {
+                        console.log('⚠️  Error selecting language: ' + e.message);
+                        // 不阻止後續流程，繼續執行
+                    }
                     
                     // 截圖：初始登入頁面
                     try {
@@ -568,13 +740,32 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         const currentUrl = page.url();
                         const targetUrl = $urlJs.replace(/^"|"$/g, ''); // 移除 JSON 編碼的引號
                         
-                        // 比較 URL（不包含協議和尾部斜線）
+                        console.log('🔍 Checking if navigation is needed...');
+                        console.log('   Current URL: ' + currentUrl);
+                        console.log('   Target URL: ' + targetUrl);
+                        
+                        // 比較 URL（更準確的比較：不包含協議、尾部斜線、查詢參數和 hash）
                         const normalizeUrl = (url) => {
-                            return url.replace(/^https?:\/\//, '').replace(/\/$/, '').toLowerCase();
+                            try {
+                                const urlObj = new URL(url);
+                                // 只比較協議、主機名和路徑，忽略查詢參數和 hash
+                                return (urlObj.protocol + '//' + urlObj.host + urlObj.pathname)
+                                    .replace(/\/$/, '')
+                                    .toLowerCase();
+                            } catch (e) {
+                                // 如果 URL 解析失敗，使用簡單的字符串比較
+                                return url.replace(/^https?:\/\//, '').replace(/\/$/, '').split('?')[0].split('#')[0].toLowerCase();
+                            }
                         };
                         
-                        if (normalizeUrl(currentUrl) !== normalizeUrl(targetUrl)) {
-                            console.log('🌐 Navigating to target URL:', targetUrl);
+                        const normalizedCurrent = normalizeUrl(currentUrl);
+                        const normalizedTarget = normalizeUrl(targetUrl);
+                        
+                        console.log('   Normalized Current: ' + normalizedCurrent);
+                        console.log('   Normalized Target: ' + normalizedTarget);
+                        
+                        if (normalizedCurrent !== normalizedTarget) {
+                            console.log('🌐 URLs are different, navigating to target URL...');
                             try {
                                 // 導航到目標 URL，等待網絡空閒（確保頁面完全載入）
                                 await page.goto(targetUrl, {
@@ -593,14 +784,17 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                 targetUrlReached = false;
                             }
                         } else {
-                            console.log('ℹ️  Target URL is same as current URL, skipping navigation');
-                            console.log('   Current URL: ' + page.url());
-                            targetUrlReached = true; // URL 相同也算成功
+                            console.log('✅ Already on target URL, skipping navigation to avoid page refresh');
+                            console.log('   Current URL: ' + currentUrl);
+                            targetUrlReached = true; // URL 相同也算成功，不執行導航避免刷新
                         }
                     } else {
                         console.log('ℹ️  No target URL provided, using current page');
                         targetUrlReached = true; // 沒有目標 URL，使用當前頁面
                     }
+                    
+                    // 打開 "All Columns" 開關（如果存在）
+                    await openAllColumnsToggle(page);
                     
                     // 如果提供了開始日期和結束日期，填寫日期並點擊查詢按鈕
                     const startDate = $startDateJs && $startDateJs !== 'null' ? $startDateJs.replace(/^"|"$/g, '') : null;
@@ -618,8 +812,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             // 填寫開始日期
                             if (startDate) {
                                 console.log('📝 Filling start date: ' + startDate);
-                                // 等待開始日期輸入框出現（優先使用特定的選擇器）
-                                const startDateInput = await page.waitForSelector('input[placeholder="结算时间 开始"], input#mat-input-9, input[placeholder*="结算时间 开始"], input[placeholder*="結算時間 開始"]', { timeout: 10000 }).catch(() => null);
+                                // 等待開始日期輸入框出現（優先使用特定的選擇器，兼容中英文）
+                                const startDateInput = await page.waitForSelector('input#mat-input-6, input[placeholder="Settle Time Start"], input[placeholder*="Settle Time Start"], input[placeholder="结算时间 开始"], input#mat-input-9, input[placeholder*="结算时间 开始"], input[placeholder*="結算時間 開始"]', { timeout: 10000 }).catch(() => null);
                                 
                                 if (startDateInput) {
                                     // 點擊輸入框
@@ -640,7 +834,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 使用 evaluate 直接設置值，然後觸發事件
                                     await page.evaluate((date) => {
-                                        const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                        const input = document.querySelector('input#mat-input-6') ||
+                                                     document.querySelector('input[placeholder="Settle Time Start"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time Start"]') ||
+                                                     document.querySelector('input[placeholder="结算时间 开始"]') ||
                                                      document.querySelector('input#mat-input-9') || 
                                                      document.querySelector('input[placeholder*="结算时间 开始"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 開始"]');
@@ -664,7 +861,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 驗證開始日期是否正確填入
                                     const startDateValue = await page.evaluate(() => {
-                                        const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                        const input = document.querySelector('input#mat-input-6') ||
+                                                     document.querySelector('input[placeholder="Settle Time Start"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time Start"]') ||
+                                                     document.querySelector('input[placeholder="结算时间 开始"]') ||
                                                      document.querySelector('input#mat-input-9') || 
                                                      document.querySelector('input[placeholder*="结算时间 开始"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 開始"]');
@@ -685,7 +885,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         await new Promise(resolve => setTimeout(resolve, 200));
                                         await startDateInput.type(startDate, { delay: 50 });
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input[placeholder="结算时间 开始"]') ||
+                                            const input = document.querySelector('input#mat-input-6') ||
+                                                         document.querySelector('input[placeholder="Settle Time Start"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time Start"]') ||
+                                                         document.querySelector('input[placeholder="结算时间 开始"]') ||
                                                          document.querySelector('input#mat-input-9') || 
                                                          document.querySelector('input[placeholder*="结算时间 开始"]') ||
                                                          document.querySelector('input[placeholder*="結算時間 開始"]');
@@ -708,8 +911,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             // 填寫結束日期（如果提供了，一定要填寫，覆蓋頁面自動設置的值）
                             if (endDate) {
                                 console.log('📝 Filling end date: ' + endDate);
-                                // 等待結束日期輸入框出現（優先使用特定的選擇器）
-                                const endDateInput = await page.waitForSelector('input#mat-input-7, input[placeholder="结算时间 结束"], input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
+                                // 等待結束日期輸入框出現（優先使用特定的選擇器，兼容中英文）
+                                const endDateInput = await page.waitForSelector('input#mat-input-27, input#mat-input-7, input[placeholder="Settle Time End"], input[placeholder*="Settle Time End"], input[placeholder="结算时间 结束"], input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
                                 
                                 if (endDateInput) {
                                     console.log('   🧹 Clearing end date input field first...');
@@ -727,7 +930,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         
                                         // 方法1: 直接設置 value 為空
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') || 
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                          document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -755,7 +961,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         
                                         // 驗證是否已清空
                                         const clearedValue = await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') || 
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                          document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -779,7 +988,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 再次驗證輸入框是否真的為空
                                     const finalCheck = await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-7') || 
+                                        const input = document.querySelector('input#mat-input-27') ||
+                                                     document.querySelector('input#mat-input-7') ||
+                                                     document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                      document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -790,7 +1002,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         console.log('   ⚠️  Input still has value: ' + finalCheck + ', forcing clear...');
                                         // 強制清空
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') || 
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                          document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -813,16 +1028,25 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     console.log('   ✅ Now filling end date...');
                                     
                                     // 確保輸入框是空的，然後使用 evaluate 直接設置值
+                                    // 先點擊輸入框確保焦點
+                                    await endDateInput.click();
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    
+                                    // 使用 evaluate 直接設置值，然後觸發事件
                                     await page.evaluate((date) => {
-                                        const input = document.querySelector('input#mat-input-7') || 
+                                        const input = document.querySelector('input#mat-input-27') ||
+                                                     document.querySelector('input#mat-input-7') ||
+                                                     document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                      document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 結束"]');
                                         if (input) {
-                                            // 先確保是空的
-                                            input.value = '';
-                                            // 等待一下（在 evaluate 中無法使用 await，所以直接設置）
-                                            // 直接設置新值
+                                            // 先 focus
+                                            input.focus();
+                                            // 選中所有內容
+                                            input.select();
+                                            // 直接設置值
                                             input.value = date;
                                             // 觸發多種事件確保 Angular 檢測到變化
                                             input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
@@ -830,15 +1054,24 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                             input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
                                             // 觸發 Angular 特定的變化事件
                                             input.dispatchEvent(new Event('ngModelChange', { bubbles: true }));
+                                            // 再次觸發 focus 和 blur 來確保驗證
+                                            input.focus();
+                                            input.blur();
                                         }
                                     }, endDate);
                                     
+                                    // 也使用 type 方法作為備選
+                                    await endDateInput.type(endDate, { delay: 30 });
+                                    
                                     // 等待一下確保值被設置
-                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    await new Promise(resolve => setTimeout(resolve, 500));
                                     
                                     // 驗證值是否正確設置
                                     const checkValue = await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-7') || 
+                                        const input = document.querySelector('input#mat-input-27') ||
+                                                     document.querySelector('input#mat-input-7') ||
+                                                     document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                      document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -846,23 +1079,46 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     });
                                     
                                     if (!checkValue || !checkValue.includes(endDate)) {
-                                        console.log('   ⚠️  Value not set correctly, using type method...');
-                                        // 如果 evaluate 方法失敗，使用 type 方法
+                                        console.log('   ⚠️  Value not set correctly, retrying with type method...');
+                                        // 如果 evaluate 方法失敗，使用 type 方法重試
                                         await endDateInput.click();
-                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await new Promise(resolve => setTimeout(resolve, 300));
                                         // 先清空
+                                        await endDateInput.click({ clickCount: 3 });
+                                        await page.keyboard.press('Backspace');
+                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        // 使用 Ctrl+A 清空
                                         await page.keyboard.down('Control');
                                         await page.keyboard.press('a');
                                         await page.keyboard.up('Control');
                                         await page.keyboard.press('Backspace');
                                         await new Promise(resolve => setTimeout(resolve, 200));
                                         // 再輸入
-                                        await endDateInput.type(endDate, { delay: 30 });
+                                        await endDateInput.type(endDate, { delay: 50 });
+                                        // 觸發事件
+                                        await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            if (input) {
+                                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                            }
+                                        });
+                                        await new Promise(resolve => setTimeout(resolve, 300));
                                     }
                                     
                                     // 驗證結束日期是否正確填入
                                     const endDateValue = await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-7') || 
+                                        const input = document.querySelector('input#mat-input-27') ||
+                                                     document.querySelector('input#mat-input-7') ||
+                                                     document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                      document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                      document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -873,17 +1129,45 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         console.log('✅ End date filled and verified: ' + endDateValue);
                                     } else {
                                         console.log('⚠️  End date may not be set correctly. Expected: ' + endDate + ', Got: ' + endDateValue);
-                                        // 重試一次
+                                        console.log('   🔄 Retrying end date fill...');
+                                        // 重試一次，使用更強的方法
                                         await endDateInput.click();
+                                        await new Promise(resolve => setTimeout(resolve, 300));
+                                        // 雙擊選中全部
+                                        await endDateInput.click({ clickCount: 3 });
+                                        await page.keyboard.press('Backspace');
                                         await new Promise(resolve => setTimeout(resolve, 200));
+                                        // 使用 Ctrl+A 清空
                                         await page.keyboard.down('Control');
                                         await page.keyboard.press('a');
                                         await page.keyboard.up('Control');
                                         await page.keyboard.press('Backspace');
-                                        await new Promise(resolve => setTimeout(resolve, 200));
+                                        await new Promise(resolve => setTimeout(resolve, 300));
+                                        // 先使用 evaluate 設置值
+                                        await page.evaluate((date) => {
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            if (input) {
+                                                input.value = date;
+                                                input.dispatchEvent(new Event('input', { bubbles: true }));
+                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                                input.dispatchEvent(new Event('ngModelChange', { bubbles: true }));
+                                            }
+                                        }, endDate);
+                                        // 再使用 type 方法
                                         await endDateInput.type(endDate, { delay: 50 });
+                                        // 觸發事件
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') || 
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
                                                          document.querySelector('input[placeholder="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="结算时间 结束"]') ||
                                                          document.querySelector('input[placeholder*="結算時間 結束"]');
@@ -893,7 +1177,25 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                                 input.dispatchEvent(new Event('blur', { bubbles: true }));
                                             }
                                         });
-                                        console.log('✅ End date retried');
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                        
+                                        // 再次驗證
+                                        const retryValue = await page.evaluate(() => {
+                                            const input = document.querySelector('input#mat-input-27') ||
+                                                         document.querySelector('input#mat-input-7') ||
+                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
+                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
+                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            return input ? input.value : null;
+                                        });
+                                        
+                                        if (retryValue && retryValue.includes(endDate)) {
+                                            console.log('✅ End date retried and verified: ' + retryValue);
+                                        } else {
+                                            console.log('⚠️  End date still may not be set correctly after retry. Expected: ' + endDate + ', Got: ' + retryValue);
+                                        }
                                     }
                                     
                                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -905,12 +1207,19 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             // 點擊查詢按鈕
                             console.log('🔍 Clicking query button...');
                             
-                            // 使用 evaluate 查找包含"查询"或"查詢"文字的按鈕
+                            // 使用 evaluate 查找包含"查询"、"查詢"、"Query"或"Search"文字的按鈕（兼容中英文）
                             const queryButtonFound = await page.evaluate(() => {
                                 const buttons = Array.from(document.querySelectorAll('button.mat-flat-button.mat-primary, button.mat-flat-button'));
                                 const button = buttons.find(btn => {
-                                    const text = (btn.textContent || btn.innerText || '').trim();
-                                    return text.includes('查询') || text.includes('查詢') || text === '查询' || text === '查詢';
+                                    const text = (btn.textContent || btn.innerText || '').trim().toLowerCase();
+                                    return text.includes('查询') || 
+                                           text.includes('查詢') || 
+                                           text === '查询' || 
+                                           text === '查詢' ||
+                                           text.includes('query') ||
+                                           text === 'query' ||
+                                           text.includes('search') ||
+                                           text === 'search';
                                 });
                                 
                                 if (button) {
@@ -932,6 +1241,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     console.log('⏳ Waiting for query results...');
                                     await new Promise(resolve => setTimeout(resolve, 5000));
                                     
+                                    // 頁面可能已刷新，重新打開 "All Columns" 開關
+                                    await openAllColumnsToggle(page);
+                                    
                                     // 設置每頁筆數為 10000
                                     await setPageSize(page, 10000);
                                 } else {
@@ -944,6 +1256,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     await queryButtonDirect.click();
                                     console.log('✅ Query button clicked (direct selector)');
                                     await new Promise(resolve => setTimeout(resolve, 5000));
+                                    
+                                    // 頁面可能已刷新，重新打開 "All Columns" 開關
+                                    await openAllColumnsToggle(page);
                                     
                                     // 設置每頁筆數為 10000
                                     await setPageSize(page, 10000);
@@ -967,10 +1282,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     try {
                         const screenshotPath = path.join(workingDir, '03_target_page.png');
-                        const screenshotViewportPath = path.join(workingDir, '03_target_page_viewport.png');
                         
                         console.log('   Full page screenshot path: ' + screenshotPath);
-                        console.log('   Viewport screenshot path: ' + screenshotViewportPath);
                         
                         // 確保目錄存在
                         if (!fs.existsSync(workingDir)) {
@@ -984,13 +1297,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             fullPage: true
                         });
                         console.log('✅ Screenshot 03: Current page saved (full page) at: ' + screenshotPath);
-                        
-                        // 也截取可見區域的截圖
-                        await page.screenshot({ 
-                            path: screenshotViewportPath, 
-                            fullPage: false
-                        });
-                        console.log('✅ Screenshot 03 (viewport): Current page viewport saved at: ' + screenshotViewportPath);
                         
                         // 驗證文件是否存在
                         if (fs.existsSync(screenshotPath)) {
@@ -1008,6 +1314,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             
                     // 獲取頁面標題
                     const pageTitle = await page.title();
+                    
+                    // 在爬取數據前，確保 "All Columns" 開關是打開的（防止頁面閃爍導致關閉）
+                    await openAllColumnsToggle(page);
                     
                     // 爬取 mat-table 表格數據
                     console.log('📊 Scraping mat-table data...');
@@ -1079,7 +1388,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     console.log('✅ Table data scraped: ' + tableData.rowCount + ' rows found');
                     
                     // 爬取每行的投注信息 dialog（串行處理）
-                    if (tableData.rows && tableData.rows.length > 0) {
+                    // 暫時跳過投注信息爬取
+                    const skipBetInfoDialog = true;
+                    
+                    if (!skipBetInfoDialog && tableData.rows && tableData.rows.length > 0) {
                         console.log('📋 Scraping bet information dialogs...');
                         
                         // 首先标记所有"投注信息"按钮
@@ -1295,6 +1607,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         }
                         
                         console.log('✅ Bet information dialogs scraping completed');
+                    } else if (skipBetInfoDialog) {
+                        console.log('⏭️  Skipping bet information dialog scraping');
                     }
                     
                     // 返回結果
@@ -1323,16 +1637,40 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     const seconds = String(now.getSeconds()).padStart(2, '0');
                     const timestamp = year + '-' + month + '-' + day + '_' + hours + '-' + minutes + '-' + seconds;
                     
+                    // 提取 URL 的查詢參數
+                    const currentUrl = page.url();
+                    const queryParams = {};
+                    try {
+                        const urlObj = new URL(currentUrl);
+                        urlObj.searchParams.forEach((value, key) => {
+                            queryParams[key] = value;
+                        });
+                    } catch (e) {
+                        // 如果 URL 解析失敗，嘗試手動解析
+                        const queryString = currentUrl.split('?')[1];
+                        if (queryString) {
+                            queryString.split('&').forEach(param => {
+                                const [key, value] = param.split('=');
+                                if (key) {
+                                    queryParams[decodeURIComponent(key)] = value ? decodeURIComponent(value) : '';
+                                }
+                            });
+                        }
+                    }
+                    
+                    // 添加 dateStart 和 dateEnd 到 queryParams
+                    if (startDate) {
+                        queryParams.dateStart = startDate;
+                    }
+                    if (endDate) {
+                        queryParams.dateEnd = endDate;
+                    }
+                    
                     const tableDataFile = {
                         metadata: {
                             timestamp: timestamp,
-                            url: page.url(),
-                            dateStart: startDate || null,
-                            dateEnd: endDate || null,
-                            totalPages: 1,
-                            totalRows: tableData.rowCount || 0,
-                            headers: tableData.headers || [],
-                            source: 'DOM'
+                            url: currentUrl,
+                            queryParams: queryParams
                         },
                         headers: tableData.headers || [],
                         totalPages: 1,
@@ -1509,7 +1847,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
             '01_initial_login_page.png',
             '02_after_login.png',
             '03_target_page.png',
-            '03_target_page_viewport.png',
         ];
         
         // 截圖直接保存在 scraped_data 資料夾
@@ -1566,12 +1903,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                 'metadata' => [
                     'timestamp' => $timestamp,
                     'url' => $rawData['metadata']['url'] ?? '',
-                    'dateStart' => $rawData['metadata']['dateStart'] ?? null,
-                    'dateEnd' => $rawData['metadata']['dateEnd'] ?? null,
-                    'totalPages' => $rawData['totalPages'] ?? 1,
-                    'totalRows' => $rawData['totalRows'] ?? 0,
-                    'headers' => $rawData['headers'] ?? [],
-                    'source' => 'DOM'
+                    'queryParams' => $rawData['metadata']['queryParams'] ?? []
                 ],
                 'headers' => $rawData['headers'] ?? [],
                 'totalPages' => $rawData['totalPages'] ?? 1,
