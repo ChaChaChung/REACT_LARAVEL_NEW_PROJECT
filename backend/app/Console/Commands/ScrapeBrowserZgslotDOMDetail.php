@@ -72,14 +72,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         $account = env('ZGSLOT_AGENT_ACCOUNT', '');
         $password = env('ZGSLOT_AGENT_PASSWORD', '');
         
-        if (empty($account) || empty($password)) {
-            $this->warn('⚠️  ZGSLOT_AGENT_ACCOUNT or ZGSLOT_AGENT_PASSWORD not set, will require manual input');
-        } else {
-            $this->info("Account: {$account}");
-            $this->info("Password: " . str_repeat('*', strlen($password)));
-        }
-        
-        $this->info("Login Domain: {$domain}");
 
         // 創建 Puppeteer 腳本（手動輸入模式）
         $scriptPath = $this->createPuppeteerScript($domain, $url, $startDate, $endDate, $account, $password);
@@ -177,7 +169,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
      */
     private function createPuppeteerScript($domain, $url, $startDate = null, $endDate = null, $account = null, $password = null)
     {
-        $this->info('2. Creating browser automation script (manual input mode)...');
+        $this->info('2. Creating browser automation script...');
 
         // 轉義 JavaScript 字符串
         $domainJs = json_encode($domain);
@@ -200,14 +192,12 @@ class ScrapeBrowserZgslotDOMDetail extends Command
             
             // 工作目錄（json_encode 已經生成了正確的 JavaScript 字符串）
             const workingDir = $workingDirJs;
-            console.log('📁 Working directory: ' + workingDir);
 
             /**
              * 打開 "All Columns" 開關的輔助函數
              */
             async function openAllColumnsToggle(page) {
                 try {
-                    console.log('🔘 Looking for "All Columns" toggle...');
                     await new Promise(resolve => setTimeout(resolve, 1000)); // 等待頁面穩定
                     
                     // 查找開關（通過多種方式：ID、文本內容等，兼容中英文）
@@ -221,9 +211,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             const labels = Array.from(document.querySelectorAll('label.mat-slide-toggle-label'));
                             const label = labels.find(lbl => {
                                 const text = (lbl.textContent || lbl.innerText || '').trim();
-                                return text.includes('All Columns') || 
-                                       text.includes('所有列') ||
-                                       text.includes('全部欄位');
+                                return text.includes('All Columns');
                             });
                             
                             if (label) {
@@ -238,9 +226,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                 const label = toggle.closest('label.mat-slide-toggle-label');
                                 if (label) {
                                     const text = (label.textContent || label.innerText || '').trim();
-                                    if (text.includes('All Columns') || 
-                                        text.includes('所有列') ||
-                                        text.includes('全部欄位')) {
+                                    if (text.includes('All Columns')) {
                                         toggleInput = toggle;
                                         break;
                                     }
@@ -272,16 +258,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         return { found: false };
                     });
                     
-                    if (toggleOpened.found) {
-                        if (toggleOpened.alreadyOn) {
-                            console.log('✅ "All Columns" toggle is already ON');
-                        } else {
-                            console.log('✅ "All Columns" toggle opened successfully');
-                            // 等待開關狀態更新
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    } else {
-                        console.log('⚠️  "All Columns" toggle not found (this is OK if it doesn\'t exist on this page)');
+                    if (toggleOpened.found && !toggleOpened.alreadyOn) {
+                        // 等待開關狀態更新
+                        await new Promise(resolve => setTimeout(resolve, 500));
                     }
                 } catch (e) {
                     console.log('⚠️  Error opening "All Columns" toggle: ' + e.message);
@@ -417,8 +396,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
                     console.log('🔐 Starting ZGSLOT manual login process...');
-                    console.log('📝 Please manually enter your account, password, and verification code in the browser window.');
-                    console.log('⏳ Waiting for you to complete the login...');
                     
                     // 導航到登入頁面
                     await page.goto($domainJs, {
@@ -431,7 +408,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     // 選擇語言為 English
                     try {
-                        console.log('🌐 Selecting language: English...');
                         await new Promise(resolve => setTimeout(resolve, 1000)); // 等待頁面穩定
                         
                         // 查找語言選擇器（通過多種方式）
@@ -440,9 +416,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             const triggers = Array.from(document.querySelectorAll('div.mat-select-trigger'));
                             for (const trigger of triggers) {
                                 const text = (trigger.textContent || trigger.innerText || '').trim();
-                                if (text.includes('简体中文') || 
-                                    text.includes('繁體中文') ||
-                                    text.includes('English')) {
+                                if (text.includes('简体中文') || text.includes('English')) {
                                     // 找到 mat-select 元素
                                     const select = trigger.closest('mat-select');
                                     if (select) {
@@ -458,9 +432,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                 const trigger = select.querySelector('div.mat-select-trigger');
                                 if (trigger) {
                                     const text = (trigger.textContent || trigger.innerText || '').trim();
-                                    if (text.includes('简体中文') || 
-                                        text.includes('繁體中文') ||
-                                        text.includes('English')) {
+                                    if (text.includes('简体中文') || text.includes('English')) {
                                         select.setAttribute('data-language-select', 'true');
                                         return true;
                                     }
@@ -475,7 +447,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             const languageSelect = await page.$('mat-select[data-language-select="true"]');
                             if (languageSelect) {
                                 await languageSelect.click();
-                                console.log('   ✅ Language selector clicked');
                                 await new Promise(resolve => setTimeout(resolve, 1000));
                                 
                                 // 等待下拉菜單出現並選擇 English
@@ -489,14 +460,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     });
                                 }).catch(() => null);
                                 
+                                // 點擊 English 選項
                                 if (englishOption && englishOption.asElement()) {
                                     await englishOption.asElement().click();
-                                    console.log('   ✅ Language set to English');
                                     await new Promise(resolve => setTimeout(resolve, 1000));
-                                } else {
-                                    console.log('   ⚠️  English option not found in language dropdown');
-                                    // 按 ESC 關閉下拉菜單
-                                    await page.keyboard.press('Escape');
                                 }
                             } else {
                                 console.log('   ⚠️  Language selector element not found after marking');
@@ -509,16 +476,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                         // 不阻止後續流程，繼續執行
                     }
                     
-                    // 截圖：初始登入頁面
-                    try {
-                        const screenshotPath1 = path.join(workingDir, '01_initial_login_page.png');
-                        await page.screenshot({ path: screenshotPath1, fullPage: true });
-                        console.log('📸 Screenshot 01: Initial login page saved at: ' + screenshotPath1);
-                    } catch (e) {
-                        console.log('⚠️  Error taking screenshot: ' + e.message);
-                    }
-                    
-                    // 自動填入帳號和密碼（如果提供了）
+                    // 自動填入帳號和密碼
                     const account = $accountJs && $accountJs !== 'null' ? $accountJs.replace(/^"|"$/g, '') : null;
                     const password = $passwordJs && $passwordJs !== 'null' ? $passwordJs.replace(/^"|"$/g, '') : null;
                     
@@ -550,7 +508,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             for (const selector of accountSelectors) {
                                 accountInput = await page.$(selector).catch(() => null);
                                 if (accountInput) {
-                                    console.log('   ✅ Found account input: ' + selector);
                                     break;
                                 }
                             }
@@ -572,10 +529,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         input.dispatchEvent(new Event('blur', { bubbles: true }));
                                     }
                                 });
-                                
-                                console.log('   ✅ Account filled');
-                            } else {
-                                console.log('   ⚠️  Account input not found, please enter manually');
                             }
                             
                             // 查找密碼輸入框（優先使用特定的選擇器）
@@ -595,7 +548,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             for (const selector of passwordSelectors) {
                                 passwordInput = await page.$(selector).catch(() => null);
                                 if (passwordInput) {
-                                    console.log('   ✅ Found password input: ' + selector);
                                     break;
                                 }
                             }
@@ -617,35 +569,15 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         input.dispatchEvent(new Event('blur', { bubbles: true }));
                                     }
                                 });
-                                
-                                console.log('   ✅ Password filled');
-                            } else {
-                                console.log('   ⚠️  Password input not found, please enter manually');
                             }
                             
                             console.log('✅ Account and password auto-filled successfully');
                         } catch (e) {
                             console.log('⚠️  Error auto-filling account/password: ' + e.message);
-                            console.log('   Please enter manually if needed');
                         }
                     } else {
                         console.log('⚠️  Account or password not provided in environment variables');
-                        console.log('   Please enter account and password manually');
                     }
-                    
-                    // 提示使用者輸入驗證碼
-                    console.log('');
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log('👤 LOGIN INSTRUCTIONS:');
-                    if (!account || !password) {
-                        console.log('   1. Please enter your account in the browser window');
-                        console.log('   2. Please enter your password in the browser window');
-                    }
-                    console.log('   3. Please enter the verification code in the browser window');
-                    console.log('   4. Click the login button');
-                    console.log('   5. Wait for the login to complete');
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log('');
                     
                     // 等待使用者完成登入
                     // 我們會監聽 URL 變化或等待特定元素出現來判斷登入是否完成
@@ -657,9 +589,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     while (!loginCompleted && checkAttempts < maxCheckAttempts) {
                         checkAttempts++;
-                        
-                        // 檢查當前 URL 是否改變（表示可能已登入並跳轉）
-                        const currentUrl = page.url();
                         
                         // 檢查是否出現登入成功的標誌（例如：URL 改變、特定元素出現等）
                         const loginSuccess = await page.evaluate(() => {
@@ -688,110 +617,25 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                             break;
                         }
                         
-                        // 每 10 秒輸出一次提示
-                        if (checkAttempts % 10 === 0) {
-                            console.log('⏳ Still waiting... (checked ' + checkAttempts + ' times, max ' + maxCheckAttempts + ')');
-                        }
-                        
                         // 等待 1 秒後再次檢查
                         await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                     
-                    if (!loginCompleted) {
-                        console.log('⚠️  Login completion not detected automatically.');
-                        console.log('   Please press Enter in the terminal when you have completed the login...');
-                        
-                        // 使用 readline 等待使用者按 Enter
-                        const rl = readline.createInterface({
-                            input: process.stdin,
-                            output: process.stdout
-                        });
-                        
-                        await new Promise((resolve) => {
-                            rl.question('Press Enter after you have completed the login: ', () => {
-                                rl.close();
-                                resolve();
-                            });
-                        });
-                    }
-                    
                     // 等待頁面穩定
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                    // 截圖：登入完成後的頁面
-                    try {
-                        const screenshotPath2 = path.join(workingDir, '02_after_login.png');
-                        await page.screenshot({ path: screenshotPath2, fullPage: true });
-                        console.log('📸 Screenshot 02: After login saved at: ' + screenshotPath2);
-                    } catch (e) {
-                        console.log('⚠️  Error taking screenshot: ' + e.message);
-                    }
-                    
-                    // 獲取登入後的 Cookies
-                    const cookies = await page.cookies();
-                    console.log('✅ Login completed, obtained ' + cookies.length + ' cookie(s)');
-                    
-                    // 保存 cookies 以便併發爬取時使用
-                    const savedCookies = cookies;
 
-                    // 如果提供了目標 URL，導航到目標 URL
-                    let targetUrlReached = false;
-                    if ($urlJs && $urlJs !== '') {
-                        const currentUrl = page.url();
-                        const targetUrl = $urlJs.replace(/^"|"$/g, ''); // 移除 JSON 編碼的引號
-                        
-                        console.log('🔍 Checking if navigation is needed...');
-                        console.log('   Current URL: ' + currentUrl);
-                        console.log('   Target URL: ' + targetUrl);
-                        
-                        // 比較 URL（更準確的比較：不包含協議、尾部斜線、查詢參數和 hash）
-                        const normalizeUrl = (url) => {
-                            try {
-                                const urlObj = new URL(url);
-                                // 只比較協議、主機名和路徑，忽略查詢參數和 hash
-                                return (urlObj.protocol + '//' + urlObj.host + urlObj.pathname)
-                                    .replace(/\/$/, '')
-                                    .toLowerCase();
-                            } catch (e) {
-                                // 如果 URL 解析失敗，使用簡單的字符串比較
-                                return url.replace(/^https?:\/\//, '').replace(/\/$/, '').split('?')[0].split('#')[0].toLowerCase();
-                            }
-                        };
-                        
-                        const normalizedCurrent = normalizeUrl(currentUrl);
-                        const normalizedTarget = normalizeUrl(targetUrl);
-                        
-                        console.log('   Normalized Current: ' + normalizedCurrent);
-                        console.log('   Normalized Target: ' + normalizedTarget);
-                        
-                        if (normalizedCurrent !== normalizedTarget) {
-                            console.log('🌐 URLs are different, navigating to target URL...');
-                            try {
-                                // 導航到目標 URL，等待網絡空閒（確保頁面完全載入）
-                                await page.goto(targetUrl, {
-                                    waitUntil: 'networkidle2', // 等待網絡空閒，確保頁面完全載入
-                                    timeout: 60000
-                                });
-                                console.log('✅ Successfully navigated to target URL');
-                                targetUrlReached = true;
-                                
-                                // 額外等待頁面完全渲染（動態內容可能需要時間）
-                                console.log('⏳ Waiting for page to fully render...');
-                                await new Promise(resolve => setTimeout(resolve, 5000));
-                            } catch (e) {
-                                console.log('⚠️  Error navigating to target URL: ' + e.message);
-                                console.log('   Current URL: ' + page.url());
-                                targetUrlReached = false;
-                            }
-                        } else {
-                            console.log('✅ Already on target URL, skipping navigation to avoid page refresh');
-                            console.log('   Current URL: ' + currentUrl);
-                            targetUrlReached = true; // URL 相同也算成功，不執行導航避免刷新
-                        }
-                    } else {
-                        console.log('ℹ️  No target URL provided, using current page');
-                        targetUrlReached = true; // 沒有目標 URL，使用當前頁面
-                    }
+                    // 移除 JSON 編碼的引號
+                    const targetUrl = $urlJs.replace(/^"|"$/g, '');
+                    
+                    // 導航到目標 URL，等待網絡空閒（確保頁面完全載入）
+                    await page.goto(targetUrl, {
+                        waitUntil: 'networkidle2', // 等待網絡空閒，確保頁面完全載入
+                        timeout: 60000
+                    });
+                    console.log('✅ Successfully navigated to target URL');
+                    
+                    // 額外等待頁面完全渲染（動態內容可能需要時間）
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                     
                     // 打開 "All Columns" 開關（如果存在）
                     await openAllColumnsToggle(page);
@@ -802,8 +646,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     if (startDate || endDate) {
                         console.log('📅 Filling date range...');
-                        console.log('   Start Date: ' + (startDate || 'Not provided'));
-                        console.log('   End Date: ' + (endDate || 'Not provided'));
                         
                         try {
                             // 等待頁面完全載入
@@ -903,12 +745,10 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                 const endDateInput = await page.waitForSelector('input#mat-input-27, input#mat-input-7, input[placeholder="Settle Time End"], input[placeholder*="Settle Time End"], input[placeholder="结算时间 结束"], input[placeholder*="结算时间 结束"], input[placeholder*="結算時間 結束"]', { timeout: 10000 }).catch(() => null);
                                 
                                 if (endDateInput) {
-                                    console.log('   🧹 Clearing end date input field first...');
-                                    
                                     // 先點擊輸入框使其獲得焦點
                                     await endDateInput.click();
                                     await new Promise(resolve => setTimeout(resolve, 300));
-                                    
+
                                     // 強制清空
                                     await page.evaluate(() => {
                                         const input = document.querySelector('input#mat-input-7') ||
@@ -928,8 +768,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         }
                                     });
                                     await new Promise(resolve => setTimeout(resolve, 300));
-                                    
-                                    console.log('   ✅ Now filling end date...');
                                     
                                     // 確保輸入框是空的，然後使用 evaluate 直接設置值
                                     // 先點擊輸入框確保焦點
@@ -1150,7 +988,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                 const queryButtonDirect = await page.$('button.mat-flat-button.mat-primary').catch(() => null);
                                 if (queryButtonDirect) {
                                     await queryButtonDirect.click();
-                                    console.log('✅ Query button clicked (direct selector)');
+                                    console.log('✅ Query button clicked');
                                     await new Promise(resolve => setTimeout(resolve, 5000));
                                     
                                     // 頁面可能已刷新，重新打開 "All Columns" 開關
@@ -1169,43 +1007,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     } else {
                         // 即使沒有填寫日期，也嘗試設置每頁筆數
                         await setPageSize(page, 10000);
-                    }
-                    
-                    // 無論是否跳轉成功，都要截圖當前頁面
-                    console.log('📸 Taking screenshot of current page...');
-                    console.log('   Current URL: ' + page.url());
-                    console.log('   Working directory: ' + workingDir);
-                    
-                    try {
-                        const screenshotPath = path.join(workingDir, '03_target_page.png');
-                        
-                        console.log('   Full page screenshot path: ' + screenshotPath);
-                        
-                        // 確保目錄存在
-                        if (!fs.existsSync(workingDir)) {
-                            fs.mkdirSync(workingDir, { recursive: true });
-                            console.log('   Created working directory: ' + workingDir);
-                        }
-                        
-                        // 截取完整頁面（PNG 不支持 quality 參數，只有 JPEG 支持）
-                        await page.screenshot({ 
-                            path: screenshotPath, 
-                            fullPage: true
-                        });
-                        console.log('✅ Screenshot 03: Current page saved (full page) at: ' + screenshotPath);
-                        
-                        // 驗證文件是否存在
-                        if (fs.existsSync(screenshotPath)) {
-                            const stats = fs.statSync(screenshotPath);
-                            console.log('   ✅ Screenshot file exists, size: ' + stats.size + ' bytes');
-                        } else {
-                            console.log('   ⚠️  Screenshot file not found after saving!');
-                        }
-                    } catch (e) {
-                        console.log('⚠️  Error taking screenshot: ' + e.message);
-                        console.log('   Error stack: ' + e.stack);
-                        console.log('   Working directory: ' + workingDir);
-                        console.log('   Directory exists: ' + fs.existsSync(workingDir));
                     }
                             
                     // 獲取頁面標題
@@ -1283,239 +1084,12 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     
                     console.log('✅ Table data scraped: ' + tableData.rowCount + ' rows found');
                     
-                    // 爬取每行的投注信息 dialog（串行處理）
-                    // 暫時跳過投注信息爬取
-                    const skipBetInfoDialog = true;
-                    
-                    if (!skipBetInfoDialog && tableData.rows && tableData.rows.length > 0) {
-                        console.log('📋 Scraping bet information dialogs...');
-                        
-                        // 首先标记所有"投注信息"按钮
-                        const buttonInfo = await page.evaluate(() => {
-                            const buttons = Array.from(document.querySelectorAll('button.mat-button'));
-                            const betInfoButtons = [];
-                            
-                            buttons.forEach((button, index) => {
-                                const text = (button.textContent || button.innerText || '').trim();
-                                if (text.includes('投注信息') || text.includes('投注資訊')) {
-                                    // 找到按钮所在的行
-                                    let row = button.closest('mat-row') || button.closest('tr');
-                                    if (!row) {
-                                        let parent = button.parentElement;
-                                        let depth = 0;
-                                        while (parent && depth < 5) {
-                                            if (parent.tagName === 'MAT-ROW' || parent.tagName === 'TR') {
-                                                row = parent;
-                                                break;
-                                            }
-                                            parent = parent.parentElement;
-                                            depth++;
-                                        }
-                                    }
-                                    
-                                    if (row) {
-                                        const buttonId = 'bet-info-btn-' + index;
-                                        button.setAttribute('data-bet-info-button', buttonId);
-                                        betInfoButtons.push({
-                                            buttonId: buttonId,
-                                            index: index
-                                        });
-                                    }
-                                }
-                            });
-                            
-                            return betInfoButtons;
-                        });
-                        
-                        console.log('   Found ' + buttonInfo.length + ' bet info buttons');
-                        
-                        // 确定要爬取的数量（全部）
-                        const totalRows = Math.min(tableData.rows.length, buttonInfo.length);
-                        
-                        // 遍历每一行，点击对应的按钮并爬取 dialog
-                        for (let i = 0; i < totalRows; i++) {
-                            try {
-                                console.log('   Processing row ' + (i + 1) + '/' + totalRows + '...');
-                                
-                                const buttonId = buttonInfo[i].buttonId;
-                                const buttonSelector = 'button[data-bet-info-button="' + buttonId + '"]';
-                                
-                                // 点击按钮
-                                await page.click(buttonSelector).catch(() => {});
-                                console.log('   ✅ Clicked bet info button for row ' + (i + 1));
-                                
-                                // 使用智能等待：等待 dialog 容器出现（减少固定延迟）
-                                const dialogAppeared = await page.waitForSelector('mat-dialog-container.mat-dialog-container', { 
-                                    timeout: 3000,
-                                    visible: true 
-                                }).catch(() => null);
-                                
-                                // 如果 dialog 出现，额外等待一小段时间确保内容加载完成
-                                if (dialogAppeared) {
-                                    await new Promise(resolve => setTimeout(resolve, 300));
-                                }
-                                
-                                if (dialogAppeared) {
-                                    // 爬取 dialog 内容
-                                    const dialogData = await page.evaluate(() => {
-                                        const dialog = document.querySelector('mat-dialog-container.mat-dialog-container');
-                                        if (!dialog) {
-                                            return { found: false, error: 'Dialog not found' };
-                                        }
-                                        
-                                        // 提取 dialog 中的所有内容
-                                        const dialogContent = {
-                                            title: '',
-                                            text: '',
-                                            html: '',
-                                            tables: [],
-                                            lists: []
-                                        };
-                                        
-                                        // 获取标题
-                                        const title = dialog.querySelector('h1, h2, h3, .mat-dialog-title, [class*="title"]');
-                                        if (title) {
-                                            dialogContent.title = (title.textContent || '').trim();
-                                        }
-                                        
-                                        // 获取所有文本
-                                        dialogContent.text = (dialog.textContent || '').trim();
-                                        
-                                        // 获取 HTML 内容
-                                        dialogContent.html = dialog.innerHTML;
-                                        
-                                        // 查找表格
-                                        const tables = dialog.querySelectorAll('table, mat-table');
-                                        tables.forEach((table) => {
-                                            const tableData = {
-                                                headers: [],
-                                                rows: []
-                                            };
-                                            
-                                            // 获取表头
-                                            const headerRow = table.querySelector('thead tr, mat-header-row');
-                                            if (headerRow) {
-                                                const headerCells = headerRow.querySelectorAll('th, mat-header-cell');
-                                                headerCells.forEach(cell => {
-                                                    const text = (cell.textContent || '').trim();
-                                                    if (text) {
-                                                        tableData.headers.push(text);
-                                                    }
-                                                });
-                                            }
-                                            
-                                            // 如果没有表头，尝试从第一行获取
-                                            if (tableData.headers.length === 0) {
-                                                const firstRow = table.querySelector('tbody tr:first-child, mat-row:first-child');
-                                                if (firstRow) {
-                                                    const cells = firstRow.querySelectorAll('td, mat-cell');
-                                                    cells.forEach((cell, index) => {
-                                                        const text = (cell.textContent || '').trim();
-                                                        if (text) {
-                                                            tableData.headers.push('column_' + index);
-                                                        }
-                                                    });
-                                                }
-                                            }
-                                            
-                                            // 获取数据行
-                                            const dataRows = table.querySelectorAll('tbody tr, mat-row');
-                                            dataRows.forEach((row) => {
-                                                const rowData = {};
-                                                const cells = row.querySelectorAll('td, mat-cell');
-                                                cells.forEach((cell, cellIndex) => {
-                                                    const text = (cell.textContent || '').trim();
-                                                    const header = tableData.headers[cellIndex] || ('column_' + cellIndex);
-                                                    rowData[header] = text;
-                                                });
-                                                if (Object.keys(rowData).length > 0) {
-                                                    tableData.rows.push(rowData);
-                                                }
-                                            });
-                                            
-                                            if (tableData.headers.length > 0 || tableData.rows.length > 0) {
-                                                dialogContent.tables.push(tableData);
-                                            }
-                                        });
-                                        
-                                        // 查找列表
-                                        const lists = dialog.querySelectorAll('ul, ol, mat-list');
-                                        lists.forEach((list) => {
-                                            const listItems = [];
-                                            const items = list.querySelectorAll('li, mat-list-item');
-                                            items.forEach((item) => {
-                                                const text = (item.textContent || '').trim();
-                                                if (text) {
-                                                    listItems.push(text);
-                                                }
-                                            });
-                                            if (listItems.length > 0) {
-                                                dialogContent.lists.push(listItems);
-                                            }
-                                        });
-                                        
-                                        return {
-                                            found: true,
-                                            content: dialogContent
-                                        };
-                                    });
-                                    
-                                    if (dialogData.found) {
-                                        // 将 dialog 数据添加到行数据中
-                                        tableData.rows[i].betInfoDialog = dialogData.content;
-                                        console.log('   ✅ Dialog data scraped for row ' + (i + 1));
-                                    } else {
-                                        console.log('   ⚠️  Dialog content not found for row ' + (i + 1));
-                                    }
-                                    
-                                    // 关闭 dialog（按 ESC 或点击关闭按钮）
-                                    const closeButton = await page.$('button[mat-dialog-close], button[aria-label*="close"], button[aria-label*="关闭"], .mat-dialog-close, button[class*="close"]').catch(() => null);
-                                    if (closeButton) {
-                                        await closeButton.click();
-                                    } else {
-                                        // 如果没有关闭按钮，按 ESC
-                                        await page.keyboard.press('Escape');
-                                    }
-                                    
-                                    // 等待 dialog 关闭（使用智能等待）
-                                    await page.waitForFunction(
-                                        () => !document.querySelector('mat-dialog-container.mat-dialog-container'),
-                                        { timeout: 2000 }
-                                    ).catch(() => {
-                                        // 如果超时，继续执行
-                                    });
-                                    
-                                    // 额外等待一小段时间确保 dialog 完全关闭
-                                    await new Promise(resolve => setTimeout(resolve, 200));
-                                } else {
-                                    console.log('   ⚠️  Dialog did not appear for row ' + (i + 1));
-                                }
-                            } catch (e) {
-                                console.log('   ⚠️  Error processing row ' + (i + 1) + ': ' + e.message);
-                                // 尝试关闭可能打开的 dialog
-                                try {
-                                    await page.keyboard.press('Escape');
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                } catch (closeError) {
-                                    // 忽略关闭错误
-                                }
-                            }
-                        }
-                        
-                        console.log('✅ Bet information dialogs scraping completed');
-                    } else if (skipBetInfoDialog) {
-                        console.log('⏭️  Skipping bet information dialog scraping');
-                    }
-                    
                     // 返回結果
                     const result = {
                         success: true,
                         url: page.url(),
                         title: pageTitle,
-                        cookies: cookies,
-                        tableData: tableData,
-                        targetUrlReached: targetUrlReached,
-                        message: targetUrlReached ? 'Login and navigation completed successfully' : 'Login completed, but navigation to target URL was skipped or failed'
+                        tableData: tableData
                     };
                     
                     // 保存結果
@@ -1577,18 +1151,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                     const tableDataPath = path.join(workingDir, 'table_data.json');
                     fs.writeFileSync(tableDataPath, JSON.stringify(tableDataFile, null, 2));
                     console.log('💾 Table data saved to: ' + tableDataPath);
-                    
-                    console.log('');
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log('✅ SCRAPING COMPLETED!');
-                    console.log('   URL: ' + page.url());
-                    console.log('   Title: ' + pageTitle);
-                    console.log('   Table Rows: ' + (tableData.rowCount || 0));
-                    console.log('   Table Headers: ' + (tableData.headers ? tableData.headers.length : 0));
-                    console.log('   Cookies: ' + cookies.length + ' cookie(s)');
-                    console.log('   Target URL Reached: ' + (targetUrlReached ? 'Yes' : 'No'));
-                    console.log('═══════════════════════════════════════════════════════════');
-                    console.log('');
                     console.log('⏳ Browser will close in 5 seconds...');
                     
                     // 等待 5 秒讓使用者查看結果
@@ -1639,11 +1201,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
     private function runPuppeteerScript($scriptPath)
     {
         $this->info('3. Running browser automation script...');
-        $this->info('   A browser window will open. Please complete the login manually.');
         
         $workingDir = dirname($scriptPath);
-        // 增加超時時間到 10 分鐘（600秒），因為使用者可能需要時間手動輸入
-        $this->info('⏳ Script timeout set to 10 minutes (you may need time to enter login info)...');
         
         // 使用 Process 執行腳本，並實時輸出日誌
         $process = Process::path($workingDir)
@@ -1693,9 +1252,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         $timestamp = date('Y-m-d_H-i-s');
         $workingDir = storage_path('app/temp');
         
-        // 處理截圖文件
-        $this->processScreenshots($workingDir, $timestamp);
-        
         // 處理表格數據文件
         $this->processTableData($workingDir, $timestamp);
 
@@ -1716,8 +1272,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                 $this->warn('⚠️  No table data found');
             }
             
-            $this->info('🍪 Cookies: ' . (count($result['cookies'] ?? []) . ' cookie(s)'));
-            
             if (isset($result['error'])) {
                 $this->warn('⚠️  Warning: ' . $result['error']);
             }
@@ -1727,51 +1281,6 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         
         $this->info('');
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
-    }
-
-    /**
-     * 處理截圖文件，將它們從臨時目錄移動到永久儲存目錄
-     * @param string $workingDir 工作目錄（臨時目錄）
-     * @param string $timestamp 時間戳
-     */
-    private function processScreenshots($workingDir, $timestamp)
-    {
-        $this->info('📸 Processing screenshots...');
-        
-        // 截圖文件名模式
-        $screenshotPatterns = [
-            '01_initial_login_page.png',
-            '02_after_login.png',
-            '03_target_page.png',
-        ];
-        
-        // 截圖直接保存在 scraped_data 資料夾
-        $screenshotsDir = storage_path('app/scraped_data');
-        if (!is_dir($screenshotsDir)) {
-            mkdir($screenshotsDir, 0755, true);
-        }
-        
-        $screenshotCount = 0;
-        
-        // 處理所有截圖文件
-        foreach ($screenshotPatterns as $pattern) {
-            $srcPath = $workingDir . '/' . $pattern;
-            if (file_exists($srcPath)) {
-                // 添加時間戳前綴以避免文件名衝突
-                $destFilename = "zgslot_manual_{$timestamp}_{$pattern}";
-                $destPath = $screenshotsDir . '/' . $destFilename;
-                if (rename($srcPath, $destPath)) {
-                    $screenshotCount++;
-                    $this->line("   ✅ {$destFilename}");
-                }
-            }
-        }
-        
-        if ($screenshotCount > 0) {
-            $this->info("✅ {$screenshotCount} screenshot(s) saved to: {$screenshotsDir}");
-        } else {
-            $this->warn('⚠️  No screenshots found');
-        }
     }
 
     /**
@@ -1832,4 +1341,3 @@ class ScrapeBrowserZgslotDOMDetail extends Command
         }
     }
 }
-
