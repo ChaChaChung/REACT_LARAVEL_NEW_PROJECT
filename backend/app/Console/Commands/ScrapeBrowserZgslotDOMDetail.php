@@ -835,12 +835,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     // 使用 evaluate 直接設置值，然後觸發事件
                                     await page.evaluate((date) => {
                                         const input = document.querySelector('input#mat-input-6') ||
-                                                     document.querySelector('input[placeholder="Settle Time Start"]') ||
-                                                     document.querySelector('input[placeholder*="Settle Time Start"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 开始"]') ||
-                                                     document.querySelector('input#mat-input-9') || 
-                                                     document.querySelector('input[placeholder*="结算时间 开始"]') ||
-                                                     document.querySelector('input[placeholder*="結算時間 開始"]');
+                                                        document.querySelector('input[placeholder="Settle Time Start"]') ||
+                                                        document.querySelector('input[placeholder="结算时间 开始"]');
                                         if (input) {
                                             // 直接設置值
                                             input.value = date;
@@ -862,12 +858,8 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     // 驗證開始日期是否正確填入
                                     const startDateValue = await page.evaluate(() => {
                                         const input = document.querySelector('input#mat-input-6') ||
-                                                     document.querySelector('input[placeholder="Settle Time Start"]') ||
-                                                     document.querySelector('input[placeholder*="Settle Time Start"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 开始"]') ||
-                                                     document.querySelector('input#mat-input-9') || 
-                                                     document.querySelector('input[placeholder*="结算时间 开始"]') ||
-                                                     document.querySelector('input[placeholder*="結算時間 開始"]');
+                                                        document.querySelector('input[placeholder="Settle Time Start"]') ||
+                                                        document.querySelector('input[placeholder="结算时间 开始"]');
                                         return input ? input.value : null;
                                     });
                                     
@@ -887,11 +879,7 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         await page.evaluate(() => {
                                             const input = document.querySelector('input#mat-input-6') ||
                                                          document.querySelector('input[placeholder="Settle Time Start"]') ||
-                                                         document.querySelector('input[placeholder*="Settle Time Start"]') ||
-                                                         document.querySelector('input[placeholder="结算时间 开始"]') ||
-                                                         document.querySelector('input#mat-input-9') || 
-                                                         document.querySelector('input[placeholder*="结算时间 开始"]') ||
-                                                         document.querySelector('input[placeholder*="結算時間 開始"]');
+                                                         document.querySelector('input[placeholder="结算时间 开始"]');
                                             if (input) {
                                                 input.dispatchEvent(new Event('input', { bubbles: true }));
                                                 input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -930,13 +918,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         
                                         // 方法1: 直接設置 value 為空
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-27') ||
-                                                         document.querySelector('input#mat-input-7') ||
-                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            const input = document.querySelector('input#mat-input-7') ||
+                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                        document.querySelector('input[placeholder="结算时间 结束"]');
                                             if (input) {
                                                 input.value = '';
                                                 input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
@@ -961,13 +945,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         
                                         // 驗證是否已清空
                                         const clearedValue = await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-27') ||
-                                                         document.querySelector('input#mat-input-7') ||
-                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            const input = document.querySelector('input#mat-input-7') ||
+                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                        document.querySelector('input[placeholder="结算时间 结束"]');
                                             return input ? input.value : null;
                                         });
                                         
@@ -988,13 +968,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 再次驗證輸入框是否真的為空
                                     const finalCheck = await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-27') ||
-                                                     document.querySelector('input#mat-input-7') ||
+                                        const input = document.querySelector('input#mat-input-7') ||
                                                      document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                                     document.querySelector('input[placeholder="结算时间 结束"]');
                                         return input ? input.value : null;
                                     });
                                     
@@ -1002,13 +978,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                         console.log('   ⚠️  Input still has value: ' + finalCheck + ', forcing clear...');
                                         // 強制清空
                                         await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-27') ||
-                                                         document.querySelector('input#mat-input-7') ||
-                                                         document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                         document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                         document.querySelector('input[placeholder*="結算時間 結束"]');
+                                            const input = document.querySelector('input#mat-input-7') ||
+                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                        document.querySelector('input[placeholder="结算时间 结束"]');
                                             if (input) {
                                                 // 先 focus
                                                 input.focus();
@@ -1034,13 +1006,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 使用 evaluate 直接設置值，然後觸發事件
                                     await page.evaluate((date) => {
-                                        const input = document.querySelector('input#mat-input-27') ||
-                                                     document.querySelector('input#mat-input-7') ||
+                                        const input = document.querySelector('input#mat-input-7') ||
                                                      document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                                     document.querySelector('input[placeholder="结算时间 结束"]');
                                         if (input) {
                                             // 先 focus
                                             input.focus();
@@ -1068,13 +1036,9 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     
                                     // 驗證值是否正確設置
                                     const checkValue = await page.evaluate(() => {
-                                        const input = document.querySelector('input#mat-input-27') ||
-                                                     document.querySelector('input#mat-input-7') ||
+                                        const input = document.querySelector('input#mat-input-7') ||
                                                      document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder*="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="结算时间 结束"]') ||
-                                                     document.querySelector('input[placeholder*="結算時間 結束"]');
+                                                     document.querySelector('input[placeholder="结算时间 结束"]');
                                         return input ? input.value : null;
                                     });
                                     
