@@ -909,93 +909,25 @@ class ScrapeBrowserZgslotDOMDetail extends Command
                                     await endDateInput.click();
                                     await new Promise(resolve => setTimeout(resolve, 300));
                                     
-                                    // 使用 evaluate 徹底清空輸入框的值（多次嘗試確保清空）
-                                    let clearAttempts = 0;
-                                    let isCleared = false;
-                                    
-                                    while (!isCleared && clearAttempts < 5) {
-                                        clearAttempts++;
-                                        
-                                        // 方法1: 直接設置 value 為空
-                                        await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') ||
-                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                        document.querySelector('input[placeholder="结算时间 结束"]');
-                                            if (input) {
-                                                input.value = '';
-                                                input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-                                                input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-                                                input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
-                                            }
-                                        });
-                                        
-                                        await new Promise(resolve => setTimeout(resolve, 200));
-                                        
-                                        // 方法2: 使用鍵盤清空
-                                        await page.keyboard.down('Control');
-                                        await page.keyboard.press('a');
-                                        await page.keyboard.up('Control');
-                                        await page.keyboard.press('Backspace');
-                                        await new Promise(resolve => setTimeout(resolve, 200));
-                                        
-                                        // 方法3: 雙擊選中全部後刪除
-                                        await endDateInput.click({ clickCount: 3 });
-                                        await page.keyboard.press('Backspace');
-                                        await new Promise(resolve => setTimeout(resolve, 200));
-                                        
-                                        // 驗證是否已清空
-                                        const clearedValue = await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') ||
-                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                        document.querySelector('input[placeholder="结算时间 结束"]');
-                                            return input ? input.value : null;
-                                        });
-                                        
-                                        if (!clearedValue || clearedValue.trim() === '') {
-                                            isCleared = true;
-                                            console.log('   ✅ End date input cleared successfully');
-                                        } else {
-                                            console.log('   ⚠️  End date input still has value: ' + clearedValue + ', retrying... (attempt ' + clearAttempts + '/5)');
-                                        }
-                                    }
-                                    
-                                    if (!isCleared) {
-                                        console.log('   ⚠️  Warning: Could not completely clear end date input, but will proceed to fill...');
-                                    }
-                                    
-                                    // 等待一下確保清空操作完成
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                    
-                                    // 再次驗證輸入框是否真的為空
-                                    const finalCheck = await page.evaluate(() => {
+                                    // 強制清空
+                                    await page.evaluate(() => {
                                         const input = document.querySelector('input#mat-input-7') ||
-                                                     document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                     document.querySelector('input[placeholder="结算时间 结束"]');
-                                        return input ? input.value : null;
+                                                    document.querySelector('input[placeholder="Settle Time End"]') ||
+                                                    document.querySelector('input[placeholder="结算时间 结束"]');
+                                        if (input) {
+                                            // 先 focus
+                                            input.focus();
+                                            // 選中所有內容
+                                            input.select();
+                                            // 設置為空
+                                            input.value = '';
+                                            // 觸發事件
+                                            input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+                                            input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+                                        }
                                     });
-                                    
-                                    if (finalCheck && finalCheck.trim() !== '') {
-                                        console.log('   ⚠️  Input still has value: ' + finalCheck + ', forcing clear...');
-                                        // 強制清空
-                                        await page.evaluate(() => {
-                                            const input = document.querySelector('input#mat-input-7') ||
-                                                        document.querySelector('input[placeholder="Settle Time End"]') ||
-                                                        document.querySelector('input[placeholder="结算时间 结束"]');
-                                            if (input) {
-                                                // 先 focus
-                                                input.focus();
-                                                // 選中所有內容
-                                                input.select();
-                                                // 設置為空
-                                                input.value = '';
-                                                // 觸發事件
-                                                input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-                                                input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-                                                input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
-                                            }
-                                        });
-                                        await new Promise(resolve => setTimeout(resolve, 300));
-                                    }
+                                    await new Promise(resolve => setTimeout(resolve, 300));
                                     
                                     console.log('   ✅ Now filling end date...');
                                     
