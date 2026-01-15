@@ -91,7 +91,7 @@ class ScrapeBrowserWowDomDetail extends Command
 
         // 如果執行成功，處理截圖和數據
         if ($result) {
-            $this->processScreenshot($result);
+            $this->processScrapedData($result);
             return 0;
         }
 
@@ -1157,97 +1157,119 @@ class ScrapeBrowserWowDomDetail extends Command
     }
 
     /**
-     * 處理和保存截圖及數據
+     * 處理爬取的數據
      * @param array $result 爬取的結果資料
      */
-    private function processScreenshot($result)
+    private function processScrapedData($result)
     {
         $this->info('');
-        $this->info('4. Processing screenshot...');
+        $this->info('4. Processing scraped data...');
 
         $timestamp = date('Y-m-d_H-i-s');
         $workingDir = storage_path('app/temp');
-        
+
+        // 處理表格數據文件
+        $this->processTableData($workingDir, $timestamp);
+
         if (isset($result['success']) && $result['success']) {
             $this->info('✅ Scraping completed successfully!');
             $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
             $this->info('📄 Title: ' . ($result['title'] ?? 'N/A'));
-            
-            // 處理截圖
-            $screenshotsDir = storage_path('app/scraped_data');
-            if (!is_dir($screenshotsDir)) {
-                mkdir($screenshotsDir, 0755, true);
-            }
-            
-            // 處理所有步驟截圖
-            $screenshotFile = 'wow_screenshot.png';
-            
-            $screenshotSrc = $workingDir . '/' . $screenshotFile;
-            if (file_exists($screenshotSrc)) {
-                $screenshotDst = $screenshotsDir . '/wow_' . $timestamp . '_' . $screenshotFile;
-                rename($screenshotSrc, $screenshotDst);
-                $this->info("📸 Screenshot saved: {$screenshotDst}");
-            }
-            
-            // 處理表格數據
-            if (isset($result['tableDataPath']) && file_exists($result['tableDataPath'])) {
-                $this->info('');
-                $this->info('📊 Processing table data...');
-                
-                $tableDataFile = $result['tableDataPath'];
-                $content = file_get_contents($tableDataFile);
-                $rawData = json_decode($content, true);
-                
-                if ($rawData) {
-                    // 重新組織數據結構
-                    $processedData = [
-                        'metadata' => [
-                            'timestamp' => $timestamp,
-                            'url' => $rawData['metadata']['url'] ?? '',
-                            'queryParams' => $rawData['metadata']['queryParams'] ?? []
-                        ],
-                        'headers' => $rawData['headers'] ?? [],
-                        'totalRows' => $rawData['totalRows'] ?? 0,
-                        'data' => $rawData['data'] ?? []
-                    ];
-                    
-                    // 保存處理後的數據
-                    $dataDir = storage_path('app/scraped_data');
-                    if (!is_dir($dataDir)) {
-                        mkdir($dataDir, 0755, true);
-                    }
-                    
-                    $destFilename = "wow_table_data_{$timestamp}.json";
-                    $destPath = $dataDir . '/' . $destFilename;
-                    
-                    file_put_contents($destPath, json_encode($processedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-                    
-                    $this->info("✅ Table data saved to: {$destPath}");
-                    
-                    // 顯示表格數據摘要
-                    if (isset($processedData['totalRows'])) {
-                        if (isset($processedData['headers']) && count($processedData['headers']) > 0) {
-                            $headerPreview = implode(', ', array_slice($processedData['headers'], 0, 5));
-                            if (count($processedData['headers']) > 5) {
-                                $headerPreview .= '...';
-                            }
-                        }
-                    }
+
+            // 顯示表格數據信息
+            if (isset($result['tableData'])) {
+                $tableData = $result['tableData'];
+                $this->info('📊 Table Rows: ' . ($tableData['rowCount'] ?? 0));
+                $this->info('📋 Table Headers: ' . (isset($tableData['headers']) ? count($tableData['headers']) : 0));
+                if (isset($tableData['error'])) {
+                    $this->warn('⚠️  Table Error: ' . $tableData['error']);
                 }
             } else {
-                if (isset($result['tableData']) && isset($result['tableData']['found']) && !$result['tableData']['found']) {
-                    $this->warn('⚠️  Table not found on page');
-                }
+                $this->warn('⚠️  No table data found');
             }
-            
+
             if (isset($result['error'])) {
                 $this->warn('⚠️  Warning: ' . $result['error']);
             }
         } else {
             $this->error('❌ Scraping failed: ' . ($result['error'] ?? 'Unknown error'));
         }
-        
+
         $this->info('');
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+    }
+
+    /**
+     * 處理表格數據文件，將它從臨時目錄移動到永久儲存目錄
+     * @param string $workingDir 工作目錄（臨時目錄）
+     * @param string $timestamp 時間戳
+     */
+    private function processTableData($workingDir, $timestamp)
+    {
+        $this->info('📊 Processing table data...');
+
+        // 處理截圖
+        $screenshotsDir = storage_path('app/scraped_data');
+        if (!is_dir($screenshotsDir)) {
+            mkdir($screenshotsDir, 0755, true);
+        }
+
+        // 處理截圖文件
+        $screenshotFile = 'wow_screenshot.png';
+        $screenshotSrc = $workingDir . '/' . $screenshotFile;
+        if (file_exists($screenshotSrc)) {
+            $screenshotDst = $screenshotsDir . '/wow_' . $timestamp . '_' . $screenshotFile;
+            rename($screenshotSrc, $screenshotDst);
+            $this->info("📸 Screenshot saved: {$screenshotDst}");
+        }
+
+        // 處理表格數據文件
+        $tableDataFile = $workingDir . '/table_data.json';
+        if (file_exists($tableDataFile)) {
+            $dataDir = storage_path('app/scraped_data');
+            if (!is_dir($dataDir)) {
+                mkdir($dataDir, 0755, true);
+            }
+
+            // 讀取原始數據
+            $content = file_get_contents($tableDataFile);
+            $rawData = json_decode($content, true);
+
+            // 重新組織數據結構（與 ZGSLOT 保持一致）
+            $processedData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $rawData['metadata']['url'] ?? '',
+                    'queryParams' => $rawData['metadata']['queryParams'] ?? []
+                ],
+                'headers' => $rawData['headers'] ?? [],
+                'totalPages' => $rawData['totalPages'] ?? 1,
+                'totalRows' => $rawData['totalRows'] ?? 0,
+                'data' => $rawData['data'] ?? []
+            ];
+
+            // 保存處理後的數據
+            $destFilename = "wow_table_data_{$timestamp}.json";
+            $destPath = $dataDir . '/' . $destFilename;
+
+            file_put_contents($destPath, json_encode($processedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+            $this->info("✅ Table data saved to: {$destPath}");
+
+            // 顯示表格數據摘要
+            if (isset($processedData['totalRows'])) {
+                $this->line("   📋 Total Rows: {$processedData['totalRows']}");
+                $this->line("   📄 Total Pages: {$processedData['totalPages']}");
+                if (isset($processedData['headers']) && count($processedData['headers']) > 0) {
+                    $headerPreview = implode(', ', array_slice($processedData['headers'], 0, 5));
+                    if (count($processedData['headers']) > 5) {
+                        $headerPreview .= '...';
+                    }
+                    $this->line("   📑 Headers (" . count($processedData['headers']) . "): {$headerPreview}");
+                }
+            }
+        } else {
+            $this->warn('⚠️  Table data file not found');
+        }
     }
 }
