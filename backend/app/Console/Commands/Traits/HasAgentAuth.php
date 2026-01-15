@@ -461,32 +461,23 @@ trait HasAgentAuth
     }
 
     /**
-     * 生成 ZGSLOT Puppeteer 使用 sessionStorage 直接登入的程式碼片段
+     * 生成 WOW Puppeteer 使用 sessionStorage 直接登入的程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
-     * @param string $sessionStorageJson sessionStorage 的 JSON 字符串
+     * @param string $token Token 值
+     * @param string|null $lang 語言設定
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateZgslotPuppeteerSessionStorageCode(string $pageVar = 'page', string $sessionStorageJson = ''): string
+    protected function generateWowPuppeteerLoginInfoCode(string $pageVar = 'page', string $token = '', ?string $lang = null): string
     {
-        $domain = env('ZGSLOT_AGENT_DOMAIN', '');
+        $domain = env('WOW_AGENT_DOMAIN', '');
         $domainJs = json_encode($domain);
+        $tokenJs = json_encode($token);
+        $langJs = json_encode($lang);
         
-        // 驗證並轉義 sessionStorage JSON
-        $sessionStorage = json_decode($sessionStorageJson, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            // 如果 JSON 無效，返回錯誤
-            return <<<JS
-                console.error('❌ Invalid sessionStorage JSON format');
-                throw new Error('Invalid sessionStorage JSON format');
-            JS;
-        }
-        
-        $sessionStorageJs = json_encode($sessionStorage, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
         return <<<JS
-            console.log('🔐 Setting sessionStorage to skip login process...');
+            console.log('🔐 Setting WOW sessionStorage to skip login process...');
             
-            // 導航到登入頁面（或直接導航到目標頁面）
+            // 導航到登入頁面
             await {$pageVar}.goto($domainJs, {
                 waitUntil: 'load',
                 timeout: 60000
@@ -495,36 +486,20 @@ trait HasAgentAuth
             // 等待頁面載入
             await new Promise(resolve => setTimeout(resolve, 2000));
             
-            // 將 sessionStorage 數據設置到頁面
-            console.log('💾 Setting sessionStorage data...');
-            await {$pageVar}.evaluate((sessionData) => {
+            // 設置 sessionStorage 中的 dashboardToken
+            console.log('💾 Setting sessionStorage[dashboardToken]...');
+            await {$pageVar}.evaluate((token) => {
                 try {
-                    // 清空現有的 sessionStorage（可選）
-                    // sessionStorage.clear();
+                    sessionStorage.setItem('dashboardToken', token);
+                    console.log('✅ Set sessionStorage[dashboardToken]');
                     
-                    // 設置所有 sessionStorage 鍵值對
-                    for (const key in sessionData) {
-                        if (sessionData.hasOwnProperty(key)) {
-                            const value = sessionData[key];
-                            // 如果值是對象或數組，轉換為 JSON 字符串
-                            if (typeof value === 'object' && value !== null) {
-                                sessionStorage.setItem(key, JSON.stringify(value));
-                            } else {
-                                sessionStorage.setItem(key, value);
-                            }
-                            console.log('✅ Set sessionStorage[' + key + ']');
-                        }
-                    }
-                    
-                    // 觸發 storage 事件，讓應用知道 sessionStorage 已更新
                     window.dispatchEvent(new StorageEvent('storage', {
-                        key: null,
-                        newValue: null,
+                        key: 'dashboardToken',
+                        newValue: token,
                         oldValue: null,
                         storageArea: sessionStorage
                     }));
                     
-                    // 如果頁面有監聽器，可能需要觸發自定義事件
                     window.dispatchEvent(new Event('sessionStorageUpdated'));
                     
                     return true;
@@ -532,15 +507,36 @@ trait HasAgentAuth
                     console.error('❌ Error setting sessionStorage:', e.message);
                     return false;
                 }
-            }, $sessionStorageJs);
+            }, $tokenJs);
+            
+            // 設置 cookie 中的 site_lang（如果提供了語言設定）
+            const siteLang = $langJs && $langJs !== 'null' ? $langJs.replace(/^"|"\$/g, '') : null;
+            if (siteLang && siteLang !== '') {
+                console.log('🌐 Setting cookie[site_lang] = ' + siteLang);
+                try {
+                    const currentUrl = {$pageVar}.url();
+                    const urlObj = new URL(currentUrl);
+                    const domain = urlObj.hostname;
+                    
+                    await {$pageVar}.setCookie({
+                        name: 'site_lang',
+                        value: siteLang,
+                        domain: domain,
+                        path: '/'
+                    });
+                    console.log('✅ Cookie[site_lang] set successfully');
+                } catch (e) {
+                    console.log('⚠️  Error setting cookie: ' + e.message);
+                }
+            }
             
             // 等待一下讓頁面處理 sessionStorage 更新
             await new Promise(resolve => setTimeout(resolve, 1000));
             
-            // 刷新頁面或導航到目標頁面，讓應用讀取新的 sessionStorage
-            console.log('🔄 Reloading page to apply sessionStorage...');
+            // 刷新頁面讓應用讀取新的 sessionStorage 和 cookie
+            console.log('🔄 Reloading page to apply sessionStorage and cookie...');
             await {$pageVar}.reload({
-                waitUntil: 'load',
+                waitUntil: 'networkidle2',
                 timeout: 60000
             });
             
@@ -549,19 +545,17 @@ trait HasAgentAuth
             
             // 驗證 sessionStorage 是否已設置
             const sessionStorageSet = await {$pageVar}.evaluate(() => {
-                // 檢查關鍵的 sessionStorage 項目是否存在
-                const isLoggedin = sessionStorage.getItem('isLoggedin');
-                const grpcSession = sessionStorage.getItem('grpc-session');
-                return isLoggedin === 'true' && grpcSession !== null && grpcSession !== '';
+                const token = sessionStorage.getItem('dashboardToken');
+                return token !== null && token !== '';
             });
             
             if (sessionStorageSet) {
-                console.log('✅ sessionStorage successfully set and page reloaded');
+                console.log('✅ sessionStorage[dashboardToken] successfully set and page reloaded');
             } else {
-                console.log('⚠️  sessionStorage may not be set correctly');
+                console.log('⚠️  sessionStorage[dashboardToken] may not be set correctly');
             }
             
-            console.log('✅ Login process completed using sessionStorage');
+            console.log('✅ WOW login process completed using sessionStorage');
         JS;
     }
 }
