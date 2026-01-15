@@ -17,12 +17,13 @@ class ScrapeBrowserWowDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-wow-dom-detail {url} {date_start?} {date_end?}
+     * 執行方式：php artisan agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {account_number?}
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 開始日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
      * {date_end?} - 結束日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
+     * {account_number?} - 玩家帳號（可選）
      */
-    protected $signature = 'agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -40,6 +41,7 @@ class ScrapeBrowserWowDomDetail extends Command
         $url = $this->argument('url');
         $dateStartRaw = $this->argument('date_start');
         $dateEndRaw = $this->argument('date_end');
+        $accountNumber = $this->argument('account_number');
         $concurrency = $this->option('concurrency');
         
         // 轉換日期格式（支持 YYYYMMDD 和 YYYY-MM-DD）
@@ -53,6 +55,9 @@ class ScrapeBrowserWowDomDetail extends Command
         }
         if ($dateEnd) {
             $this->info("End Date: {$dateEnd}");
+        }
+        if ($accountNumber) {
+            $this->info("Account Number: {$accountNumber}");
         }
         $this->info("Concurrency: {$concurrency}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
@@ -84,7 +89,7 @@ class ScrapeBrowserWowDomDetail extends Command
         $lang = env('WOW_AGENT_LANG', '');
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $url, $token, $dateStart, $dateEnd, $lang, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($domain, $url, $token, $dateStart, $dateEnd, $lang, $concurrency, $accountNumber);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -176,9 +181,10 @@ class ScrapeBrowserWowDomDetail extends Command
      * @param string|null $dateEnd 結束日期（格式：YYYY-MM-DD）
      * @param string|null $lang 語言設定
      * @param int $concurrency 併發數量
+     * @param string|null $accountNumber 玩家帳號
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $url, $token, $dateStart = null, $dateEnd = null, $lang = null, $concurrency = 4)
+    private function createPuppeteerScript($domain, $url, $token, $dateStart = null, $dateEnd = null, $lang = null, $concurrency = 4, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -188,6 +194,7 @@ class ScrapeBrowserWowDomDetail extends Command
         // 將 date 轉換為 JavaScript 可用的格式（與 GLC 一致）
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
+        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
         
         // 獲取 WOW sessionStorage 登入程式碼片段（主頁面用）
         $wowLoginCode = $this->generateWowPuppeteerLoginInfoCode('page', $token, $lang);
@@ -322,6 +329,16 @@ class ScrapeBrowserWowDomDetail extends Command
                     } catch (e) {
                         dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs.replace(/^"|"\$/g, '') : null;
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs.replace(/^"|"\$/g, '') : null;
+                    }
+                    
+                    // 解析帳號參數
+                    let accountNumberParsed = null;
+                    try {
+                        if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                            accountNumberParsed = JSON.parse($accountNumberJs);
+                        }
+                    } catch (e) {
+                        accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs.replace(/^"|"\$/g, '') : null;
                     }
                     
                     // 如果提供了 date_start 或 date_end，點擊日期選擇器打開
@@ -491,11 +508,61 @@ class ScrapeBrowserWowDomDetail extends Command
                         }
                     }
 
-                    // 如果至少填入了其中一個日期，嘗試點擊搜尋按鈕
-                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
-                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                    // 如果提供了帳號，填入 Player Account
+                    if (accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '') {
                         try {
-                            // 等待一下讓日期輸入完成
+                            console.log('👤 Filling Player Account: ' + accountNumberParsed);
+                            
+                            // 等待 Player Account input 出現
+                            await page.waitForSelector('input.el-input__inner[placeholder="Player Account"]', { timeout: 5000 }).catch(() => {
+                                console.log('⚠️  Player Account input not found');
+                            });
+                            
+                            // 填入帳號
+                            await page.evaluate((accountValue) => {
+                                const accountInput = document.querySelector('input.el-input__inner[placeholder="Player Account"]');
+                                
+                                if (accountInput) {
+                                    accountInput.value = '';
+                                    accountInput.value = accountValue;
+                                    accountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    
+                                    // 觸發 focus 和 blur 來確保驗證
+                                    accountInput.focus();
+                                    accountInput.blur();
+                                } else {
+                                    console.error('❌ Player Account input not found in DOM');
+                                }
+                            }, accountNumberParsed);
+                            
+                            // 驗證帳號是否正確填入
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            const accountValue = await page.evaluate(() => {
+                                const input = document.querySelector('input.el-input__inner[placeholder="Player Account"]');
+                                return input ? input.value : null;
+                            });
+                            
+                            if (accountValue && accountValue === accountNumberParsed) {
+                                console.log('✅ Player Account filled successfully: ' + accountValue);
+                            } else {
+                                console.log('⚠️  Player Account may not be set correctly. Expected: ' + accountNumberParsed + ', Got: ' + accountValue);
+                            }
+                            
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } catch (e) {
+                            console.log('⚠️  Error filling account: ' + e.message);
+                            console.error(e);
+                        }
+                    }
+
+                    // 如果至少填入了其中一個日期或帳號，嘗試點擊搜尋按鈕
+                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
+                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') ||
+                        (accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '')) {
+                        try {
+                            // 等待一下讓輸入完成
                             await new Promise(resolve => setTimeout(resolve, 1000));
 
                             // 查找並點擊搜尋按鈕
@@ -757,6 +824,17 @@ class ScrapeBrowserWowDomDetail extends Command
                     console.log('✅ First page data scraped: ' + firstPageData.rowCount + ' rows found');
                     
                     // 等待分頁組件載入
+                    console.log('⏳ Waiting for pagination component (ul.el-pager)...');
+                    try {
+                        await page.waitForSelector('ul.el-pager', { timeout: 10000 });
+                        console.log('✅ ul.el-pager found');
+                    } catch (e) {
+                        console.log('⚠️  ul.el-pager not found, trying .el-pagination...');
+                        await page.waitForSelector('.el-pagination', { timeout: 10000 }).catch(() => {
+                            console.log('⚠️  .el-pagination also not found');
+                        });
+                    }
+                    
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
                     // 滾動到頁面底部，確保分頁組件可見
@@ -766,45 +844,101 @@ class ScrapeBrowserWowDomDetail extends Command
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
                     // 獲取所有分頁資訊
+                    console.log('🔍 Extracting pagination info...');
                     const paginationInfo = await page.evaluate(() => {
                         let totalPages = 1;
                         
-                        // 優先方式：查找總頁數顯示（Element UI 分頁組件）
-                        const elPagination = document.querySelector('.el-pagination');
-                        if (elPagination) {
-                            const paginationText = elPagination.textContent || elPagination.innerText || '';
+                        // 優先方式：查找 ul.el-pager 中最後一個 li.number 的值
+                        const elPager = document.querySelector('ul.el-pager');
+                        if (elPager) {
+                            // 獲取所有 li.number 元素
+                            const pageButtons = elPager.querySelectorAll('li.number');
                             
-                            // 查找 "1 / 2" 格式
-                            const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
-                            if (slashMatch && slashMatch[2]) {
-                                totalPages = parseInt(slashMatch[2]);
-                            } else {
-                                // 查找 "共 2 頁" 或 "total 2 pages" 格式
-                                const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
-                                if (totalMatch && totalMatch[1]) {
-                                    totalPages = parseInt(totalMatch[1]);
-                                }
-                            }
+                            console.log('🔍 Found ul.el-pager with ' + pageButtons.length + ' li.number elements');
                             
-                            // 如果還是沒找到，嘗試查找分頁按鈕中的最大數字
-                            if (totalPages === 1) {
-                                const numberButtons = elPagination.querySelectorAll('.number');
-                                let maxPageNum = 1;
-                                numberButtons.forEach(btn => {
-                                    const text = btn.textContent.trim();
-                                    const pageNum = parseInt(text);
-                                    if (!isNaN(pageNum) && pageNum > 0 && pageNum < 1000) {
-                                        if (pageNum > maxPageNum) {
-                                            maxPageNum = pageNum;
+                            if (pageButtons.length > 0) {
+                                // 獲取最後一個 li.number 元素
+                                const lastButton = pageButtons[pageButtons.length - 1];
+                                const lastPageText = lastButton.textContent.trim();
+                                const lastPageNum = parseInt(lastPageText);
+                                
+                                console.log('🔍 Last li.number: text="' + lastPageText + '", parsed=' + lastPageNum);
+                                
+                                if (!isNaN(lastPageNum) && lastPageNum > 0 && lastPageNum < 100000) {
+                                    totalPages = lastPageNum;
+                                    console.log('✅ Using last li.number value as totalPages: ' + totalPages);
+                                } else {
+                                    console.log('⚠️  Last li.number value is invalid, trying max value...');
+                                    
+                                    // 如果最後一個不是有效的數字，嘗試查找所有 number 中的最大值
+                                    let maxPageNum = 1;
+                                    pageButtons.forEach((btn, index) => {
+                                        const text = btn.textContent.trim();
+                                        const pageNum = parseInt(text);
+                                        if (index < 10) { // 只打印前10個，避免太多日誌
+                                            console.log('  - li.number[' + index + ']: text="' + text + '", parsed=' + pageNum);
                                         }
+                                        if (!isNaN(pageNum) && pageNum > 0 && pageNum < 100000) {
+                                            if (pageNum > maxPageNum) {
+                                                maxPageNum = pageNum;
+                                            }
+                                        }
+                                    });
+                                    
+                                    if (maxPageNum > 1) {
+                                        totalPages = maxPageNum;
+                                        console.log('✅ Using max value from all li.number: ' + totalPages);
+                                    } else {
+                                        console.log('⚠️  No valid page numbers found in li.number elements');
                                     }
-                                });
-                                if (maxPageNum > 1) {
-                                    totalPages = maxPageNum;
+                                }
+                            } else {
+                                console.log('⚠️  No li.number elements found in ul.el-pager');
+                                // 打印 ul.el-pager 的 HTML 以便調試
+                                console.log('🔍 ul.el-pager HTML: ' + elPager.innerHTML.substring(0, 500));
+                            }
+                        } else {
+                            console.log('⚠️  ul.el-pager not found in DOM');
+                        }
+                        
+                        // 如果 ul.el-pager 沒找到或沒有有效值，嘗試其他方式
+                        if (totalPages === 1) {
+                            const elPagination = document.querySelector('.el-pagination');
+                            if (elPagination) {
+                                const paginationText = elPagination.textContent || elPagination.innerText || '';
+                                
+                                // 查找 "1 / 2" 格式
+                                const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
+                                if (slashMatch && slashMatch[2]) {
+                                    totalPages = parseInt(slashMatch[2]);
+                                } else {
+                                    // 查找 "共 2 頁" 或 "total 2 pages" 格式
+                                    const totalMatch = paginationText.match(/(?:共|總|total|of)\s*(\d+)\s*(?:頁|page|pages)/i);
+                                    if (totalMatch && totalMatch[1]) {
+                                        totalPages = parseInt(totalMatch[1]);
+                                    }
+                                }
+
+                                // 如果還是沒找到，嘗試查找所有分頁按鈕中的最大數字
+                                if (totalPages === 1) {
+                                    const numberButtons = elPagination.querySelectorAll('.number');
+                                    let maxPageNum = 1;
+                                    numberButtons.forEach(btn => {
+                                        const text = btn.textContent.trim();
+                                        const pageNum = parseInt(text);
+                                        if (!isNaN(pageNum) && pageNum > 0 && pageNum < 100000) {
+                                            if (pageNum > maxPageNum) {
+                                                maxPageNum = pageNum;
+                                            }
+                                        }
+                                    });
+                                    if (maxPageNum > 1) {
+                                        totalPages = maxPageNum;
+                                    }
                                 }
                             }
                         }
-                        
+
                         // 方式2：檢查是否有「下一頁」按鈕
                         if (totalPages === 1) {
                             const nextLink = document.querySelector('a[rel="next"], .btn-next:not(.disabled), button.el-pagination__next:not(.disabled)');
@@ -812,12 +946,12 @@ class ScrapeBrowserWowDomDetail extends Command
                                 totalPages = 2;
                             }
                         }
-                        
+
                         // 確保至少有 1 頁
                         if (totalPages < 1) {
                             totalPages = 1;
                         }
-                        
+
                         return {
                             totalPages: totalPages,
                             currentUrl: window.location.href,
@@ -825,19 +959,152 @@ class ScrapeBrowserWowDomDetail extends Command
                         };
                     });
                     
-                    console.log('📄 Total pages found: ' + paginationInfo.totalPages);
+                    // 如果從 DOM 無法獲取準確的總頁數，嘗試通過點擊「最後一頁」或「跳轉到最後」按鈕來獲取
+                    if (paginationInfo.totalPages === 1 || paginationInfo.totalPages < 10) {
+                        // 嘗試查找並點擊「最後一頁」按鈕來獲取真實總頁數
+                        const lastPageInfo = await page.evaluate(() => {
+                            const elPagination = document.querySelector('.el-pagination');
+                            if (elPagination) {
+                                // 查找「最後一頁」按鈕（可能是 .el-pagination__jump 或包含「最後」文本的按鈕）
+                                const lastPageBtn = elPagination.querySelector('button.el-pagination__jump, button[class*="last"], .btn-last');
+                                if (lastPageBtn && !lastPageBtn.disabled && lastPageBtn.offsetParent !== null) {
+                                    // 嘗試從按鈕的 data 屬性或文本中獲取總頁數
+                                    const btnText = lastPageBtn.textContent || lastPageBtn.innerText || '';
+                                    const pageNumMatch = btnText.match(/(\d+)/);
+                                    if (pageNumMatch) {
+                                        return { hasLastPageBtn: true, possibleTotalPages: parseInt(pageNumMatch[1]) };
+                                    }
+                                    return { hasLastPageBtn: true, possibleTotalPages: null };
+                                }
+                                
+                                // 查找「跳轉到」輸入框
+                                const jumpInput = elPagination.querySelector('input.el-pagination__editor, input[class*="jump"], input[class*="goto"]');
+                                if (jumpInput) {
+                                    // 檢查是否有最大值屬性
+                                    const maxAttr = jumpInput.getAttribute('max') || jumpInput.getAttribute('data-max');
+                                    if (maxAttr) {
+                                        return { hasJumpInput: true, possibleTotalPages: parseInt(maxAttr) };
+                                    }
+                                }
+                            }
+                            return { hasLastPageBtn: false, hasJumpInput: false, possibleTotalPages: null };
+                        });
+                        
+                        if (lastPageInfo.possibleTotalPages && lastPageInfo.possibleTotalPages > paginationInfo.totalPages) {
+                            paginationInfo.totalPages = lastPageInfo.possibleTotalPages;
+                            console.log('📄 Updated total pages from jump input/last page button: ' + paginationInfo.totalPages);
+                        }
+                    }
                     
-                    // 如果總頁數為1，但第一頁有數據，檢查是否有下一頁按鈕
+                    console.log('📄 Total pages found (initial): ' + paginationInfo.totalPages);
+                    
+                    // 如果無法從 DOM 獲取準確的總頁數，嘗試通過動態點擊「下一頁」來計算
                     if (paginationInfo.totalPages === 1 && firstPageData.rowCount > 0) {
+                        console.log('🔍 Attempting to calculate total pages by clicking next button...');
+                        
+                        let currentPage = 1;
+                        let hasNextPage = true;
+                        let maxPagesFound = 1;
+                        
+                        // 最多嘗試 500 頁（避免無限循環）
+                        while (hasNextPage && currentPage < 500) {
+                            // 檢查是否有下一頁按鈕
+                            hasNextPage = await page.evaluate(() => {
+                                const nextLink = document.querySelector('button.el-pagination__next:not(.disabled), button.el-pagination__next');
+                                if (nextLink) {
+                                    // 檢查按鈕是否被禁用
+                                    const isDisabled = nextLink.classList.contains('disabled') || 
+                                                       nextLink.getAttribute('disabled') !== null ||
+                                                       nextLink.offsetParent === null;
+                                    return !isDisabled;
+                                }
+                                return false;
+                            });
+                            
+                            if (hasNextPage) {
+                                // 點擊下一頁按鈕
+                                await page.evaluate(() => {
+                                    const nextLink = document.querySelector('button.el-pagination__next:not(.disabled), button.el-pagination__next');
+                                    if (nextLink) {
+                                        nextLink.click();
+                                    }
+                                });
+                                
+                                // 等待頁面切換
+                                await new Promise(resolve => setTimeout(resolve, 1500));
+                                
+                                // 獲取當前頁碼
+                                const currentPageNum = await page.evaluate(() => {
+                                    const elPagination = document.querySelector('.el-pagination');
+                                    if (elPagination) {
+                                        // 查找當前激活的頁碼按鈕
+                                        const activeBtn = elPagination.querySelector('.number.active, .number.current, .el-pager li.active');
+                                        if (activeBtn) {
+                                            const pageNum = parseInt(activeBtn.textContent.trim());
+                                            if (!isNaN(pageNum)) {
+                                                return pageNum;
+                                            }
+                                        }
+                                        
+                                        // 如果找不到激活按鈕，嘗試從文本中解析
+                                        const paginationText = elPagination.textContent || '';
+                                        const slashMatch = paginationText.match(/(\d+)\s*\/\s*(\d+)/);
+                                        if (slashMatch && slashMatch[1]) {
+                                            return parseInt(slashMatch[1]);
+                                        }
+                                    }
+                                    return null;
+                                });
+                                
+                                if (currentPageNum && currentPageNum > currentPage) {
+                                    currentPage = currentPageNum;
+                                    maxPagesFound = Math.max(maxPagesFound, currentPage);
+                                    console.log('📄 Current page: ' + currentPage);
+                                } else {
+                                    // 如果無法獲取頁碼，但仍有下一頁按鈕，繼續嘗試
+                                    currentPage++;
+                                    maxPagesFound = currentPage;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        // 如果找到了更多頁面，更新總頁數
+                        if (maxPagesFound > paginationInfo.totalPages) {
+                            paginationInfo.totalPages = maxPagesFound;
+                            console.log('📄 Updated total pages to: ' + paginationInfo.totalPages + ' (calculated by clicking next)');
+                            
+                            // 返回第一頁
+                            console.log('🔄 Returning to first page...');
+                            await page.evaluate(() => {
+                                const elPagination = document.querySelector('.el-pagination');
+                                if (elPagination) {
+                                    const firstPageBtn = elPagination.querySelector('.number');
+                                    if (firstPageBtn) {
+                                        firstPageBtn.click();
+                                    }
+                                }
+                            });
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } else if (hasNextPage) {
+                            // 如果還有下一頁但達到上限，至少設置為當前頁數
+                            paginationInfo.totalPages = Math.max(paginationInfo.totalPages, maxPagesFound);
+                            console.log('⚠️  Reached page limit (500), total pages may be more than ' + paginationInfo.totalPages);
+                        }
+                    } else if (paginationInfo.totalPages === 1 && firstPageData.rowCount > 0) {
+                        // 簡單檢查：如果有下一頁按鈕，至少設置為 2
                         const hasNextPage = await page.evaluate(() => {
-                            const nextLink = document.querySelector('a[rel="next"], .btn-next:not(.disabled), button.el-pagination__next:not(.disabled)');
-                            return nextLink && nextLink.offsetParent !== null;
+                            const nextLink = document.querySelector('button.el-pagination__next:not(.disabled), button.el-pagination__next');
+                            return nextLink && nextLink.offsetParent !== null && !nextLink.classList.contains('disabled');
                         });
                         if (hasNextPage) {
                             paginationInfo.totalPages = 2;
                             console.log('📄 Updated total pages to 2 (found next button)');
                         }
                     }
+                    
+                    console.log('📄 Final total pages: ' + paginationInfo.totalPages);
                     
                     // ========== 步驟 2：順序爬取所有頁面（在同一頁面上點擊分頁按鈕，維持日期條件）==========
                     console.log('🚀 Step 2: Starting sequential scraping for all pages...');
@@ -1013,16 +1280,20 @@ class ScrapeBrowserWowDomDetail extends Command
                     const headers = firstPageData.headers || [];
                     
                     // 構建最終的表格數據
+                    // 使用從分頁組件獲取的真實總頁數，而不是實際爬取的頁數
+                    // 如果無法從 DOM 獲取，則使用實際爬取的頁數作為後備
+                    const actualTotalPages = paginationInfo.totalPages || allPagesData.length;
+                    
                     const mergedTableData = {
                         found: true,
                         headers: headers,
                         headerCount: headers.length,
                         rowCount: allDataRows.length,
-                        totalPages: allPagesData.length,
+                        totalPages: actualTotalPages,
                         data: allDataRows
                     };
                     
-                    console.log('📊 Merged table data: ' + mergedTableData.rowCount + ' total rows from ' + mergedTableData.totalPages + ' pages');
+                    console.log('📊 Merged table data: ' + mergedTableData.rowCount + ' total rows from ' + mergedTableData.totalPages + ' pages (scraped ' + allPagesData.length + ' pages)');
                     
                     // 截圖
                     console.log('📸 Taking screenshot...');
@@ -1243,7 +1514,7 @@ class ScrapeBrowserWowDomDetail extends Command
                     'queryParams' => $rawData['metadata']['queryParams'] ?? []
                 ],
                 'headers' => $rawData['headers'] ?? [],
-                'totalPages' => $rawData['totalPages'] ?? 1,
+                'totalPages' => $rawData['metadata']['totalPages'] ?? $rawData['totalPages'] ?? 1,
                 'totalRows' => $rawData['totalRows'] ?? 0,
                 'data' => $rawData['data'] ?? []
             ];
