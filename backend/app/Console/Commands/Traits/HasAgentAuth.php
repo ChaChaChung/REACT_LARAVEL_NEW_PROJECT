@@ -475,8 +475,6 @@ trait HasAgentAuth
         $langJs = json_encode($lang);
         
         return <<<JS
-            console.log('🔐 Setting WOW sessionStorage to skip login process...');
-            
             // 導航到登入頁面
             await {$pageVar}.goto($domainJs, {
                 waitUntil: 'load',
@@ -487,11 +485,10 @@ trait HasAgentAuth
             await new Promise(resolve => setTimeout(resolve, 2000));
             
             // 設置 sessionStorage 中的 dashboardToken
-            console.log('💾 Setting sessionStorage[dashboardToken]...');
             await {$pageVar}.evaluate((token) => {
+                console.log('💾 Setting dashboardToken to sessionStorage...');
                 try {
                     sessionStorage.setItem('dashboardToken', token);
-                    console.log('✅ Set sessionStorage[dashboardToken]');
                     
                     window.dispatchEvent(new StorageEvent('storage', {
                         key: 'dashboardToken',
@@ -512,7 +509,6 @@ trait HasAgentAuth
             // 設置 cookie 中的 site_lang（如果提供了語言設定）
             const siteLang = $langJs && $langJs !== 'null' ? $langJs.replace(/^"|"\$/g, '') : null;
             if (siteLang && siteLang !== '') {
-                console.log('🌐 Setting cookie[site_lang] = ' + siteLang);
                 try {
                     const currentUrl = {$pageVar}.url();
                     const urlObj = new URL(currentUrl);
@@ -524,7 +520,6 @@ trait HasAgentAuth
                         domain: domain,
                         path: '/'
                     });
-                    console.log('✅ Cookie[site_lang] set successfully');
                 } catch (e) {
                     console.log('⚠️  Error setting cookie: ' + e.message);
                 }
@@ -534,7 +529,6 @@ trait HasAgentAuth
             await new Promise(resolve => setTimeout(resolve, 1000));
             
             // 刷新頁面讓應用讀取新的 sessionStorage 和 cookie
-            console.log('🔄 Reloading page to apply sessionStorage and cookie...');
             await {$pageVar}.reload({
                 waitUntil: 'networkidle2',
                 timeout: 60000
@@ -549,13 +543,7 @@ trait HasAgentAuth
                 return token !== null && token !== '';
             });
             
-            if (sessionStorageSet) {
-                console.log('✅ sessionStorage[dashboardToken] successfully set and page reloaded');
-            } else {
-                console.log('⚠️  sessionStorage[dashboardToken] may not be set correctly');
-            }
-            
-            console.log('✅ WOW login process completed using sessionStorage');
+            console.log('✅ WOW login process completed using sessionStorage and cookies');
         JS;
     }
 }

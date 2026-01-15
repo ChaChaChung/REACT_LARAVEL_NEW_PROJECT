@@ -335,15 +335,6 @@ class ScrapeBrowserWowDomDetail extends Command
                                 console.log('⚠️  Date picker element not found');
                             });
                             
-                            // 截圖：點擊日期選擇器之前
-                            try {
-                                const screenshotBeforeClick = path.join(workingDir, '01_before_click_date_picker.png');
-                                await page.screenshot({ path: screenshotBeforeClick, fullPage: true });
-                                console.log('📸 Screenshot 01: Before clicking date picker saved');
-                            } catch (e) {
-                                console.log('⚠️  Error taking screenshot 01: ' + e.message);
-                            }
-                            
                             // 點擊日期選擇器來打開日期選擇面板
                             const datePickerClicked = await page.evaluate(() => {
                                 // 優先查找完整選擇器
@@ -364,21 +355,10 @@ class ScrapeBrowserWowDomDetail extends Command
                                 await page.click('div.el-date-editor.el-range-editor.el-input__inner.filter-item.date-picker.el-date-editor--datetimerange, div.el-date-editor.el-range-editor, div.date-picker.el-range-editor', { timeout: 5000 }).catch(() => {
                                     console.log('⚠️  Could not click date picker');
                                 });
-                            } else {
-                                console.log('✅ Date picker clicked');
                             }
                             
                             // 等待日期選擇器出現（增加等待時間確保完全打開）
                             await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 截圖：點擊日期選擇器之後（日期選擇面板應該已打開）
-                            try {
-                                const screenshotAfterClick = path.join(workingDir, '02_after_click_date_picker.png');
-                                await page.screenshot({ path: screenshotAfterClick, fullPage: true });
-                                console.log('📸 Screenshot 02: After clicking date picker saved');
-                            } catch (e) {
-                                console.log('⚠️  Error taking screenshot 02: ' + e.message);
-                            }
                             
                             // 驗證日期選擇器是否已打開
                             const datePickerOpened = await page.evaluate(() => {
@@ -388,10 +368,7 @@ class ScrapeBrowserWowDomDetail extends Command
                             });
                             
                             if (!datePickerOpened) {
-                                console.log('⚠️  Date picker may not be fully opened, waiting more...');
                                 await new Promise(resolve => setTimeout(resolve, 2000));
-                            } else {
-                                console.log('✅ Date picker opened successfully');
                             }
                             
                             // 如果提供了 date_start，填入 Start Date
@@ -428,36 +405,6 @@ class ScrapeBrowserWowDomDetail extends Command
                                     const input = document.querySelector('input.el-input__inner[placeholder="开始日期"], input.el-input__inner[placeholder="Start Date"]');
                                     return input ? input.value : null;
                                 });
-                                
-                                if (startDateValue && startDateValue.includes(dateStartParsed)) {
-                                    console.log('✅ Start date filled and verified: ' + startDateValue);
-                                } else {
-                                    console.log('⚠️  Start date may not be set correctly. Expected: ' + dateStartParsed + ', Got: ' + startDateValue);
-                                    // 重試一次
-                                    await page.evaluate((dateStartValue) => {
-                                        const input = document.querySelector('input.el-input__inner[placeholder="开始日期"], input.el-input__inner[placeholder="Start Date"]');
-                                        if (input) {
-                                            input.focus();
-                                            input.select();
-                                            input.value = dateStartValue;
-                                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
-                                        }
-                                    }, dateStartParsed);
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                }
-                                
-                                await new Promise(resolve => setTimeout(resolve, 500));
-                                
-                                // 截圖：填入開始日期後
-                                try {
-                                    const screenshotAfterStartDate = path.join(workingDir, '03_after_fill_start_date.png');
-                                    await page.screenshot({ path: screenshotAfterStartDate, fullPage: true });
-                                    console.log('📸 Screenshot 03: After filling start date saved');
-                                } catch (e) {
-                                    console.log('⚠️  Error taking screenshot 03: ' + e.message);
-                                }
                             }
                             
                             // 如果提供了 date_end，填入 End Date
@@ -495,40 +442,9 @@ class ScrapeBrowserWowDomDetail extends Command
                                     return input ? input.value : null;
                                 });
                                 
-                                if (endDateValue && endDateValue.includes(dateEndParsed)) {
-                                    console.log('✅ End date filled and verified: ' + endDateValue);
-                                } else {
-                                    console.log('⚠️  End date may not be set correctly. Expected: ' + dateEndParsed + ', Got: ' + endDateValue);
-                                    // 重試一次
-                                    await page.evaluate((dateEndValue) => {
-                                        const input = document.querySelector('input.el-input__inner[placeholder="结束日期"], input.el-input__inner[placeholder="End Date"]');
-                                        if (input) {
-                                            input.focus();
-                                            input.select();
-                                            input.value = dateEndValue;
-                                            input.dispatchEvent(new Event('input', { bubbles: true }));
-                                            input.dispatchEvent(new Event('change', { bubbles: true }));
-                                            input.dispatchEvent(new Event('blur', { bubbles: true }));
-                                        }
-                                    }, dateEndParsed);
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                }
-                                
                                 await new Promise(resolve => setTimeout(resolve, 500));
-                                
-                                // 截圖：填入結束日期後
-                                try {
-                                    const screenshotAfterEndDate = path.join(workingDir, '04_after_fill_end_date.png');
-                                    await page.screenshot({ path: screenshotAfterEndDate, fullPage: true });
-                                    console.log('📸 Screenshot 04: After filling end date saved');
-                                } catch (e) {
-                                    console.log('⚠️  Error taking screenshot 04: ' + e.message);
-                                }
                             }
-                            
-                            // 點擊 OK 按鈕確認日期選擇
-                            console.log('🔘 Looking for OK button...');
-                            
+
                             // 等待 OK 按鈕出現
                             await page.waitForSelector('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain', { timeout: 5000 }).catch(() => {
                                 console.log('⚠️  OK button not found by selector');
@@ -568,15 +484,6 @@ class ScrapeBrowserWowDomDetail extends Command
                             // 等待日期選擇器關閉
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             
-                            // 截圖：點擊 OK 按鈕後（日期選擇器應該已關閉）
-                            try {
-                                const screenshotAfterOK = path.join(workingDir, '05_after_click_ok.png');
-                                await page.screenshot({ path: screenshotAfterOK, fullPage: true });
-                                console.log('📸 Screenshot 05: After clicking OK button saved');
-                            } catch (e) {
-                                console.log('⚠️  Error taking screenshot 05: ' + e.message);
-                            }
-                            
                             console.log('✅ Date range set successfully');
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
@@ -615,70 +522,10 @@ class ScrapeBrowserWowDomDetail extends Command
                                     // 點擊按鈕
                                     await searchButton.click();
                                     buttonClicked = true;
-                                    console.log('✅ Search button clicked (method 1)');
+                                    console.log('✅ Search button clicked');
                                 }
                             } catch (e) {
                                 console.log('⚠️  Method 1 failed: ' + e.message);
-                            }
-                            
-                            // 方式2：通過文本內容查找包含 "Search" 的按鈕
-                            if (!buttonClicked) {
-                                try {
-                                    const buttonHandle = await page.evaluateHandle(() => {
-                                        const buttons = Array.from(document.querySelectorAll('button.el-button'));
-                                        for (let btn of buttons) {
-                                            const text = btn.textContent.trim();
-                                            if (text.includes('Search') || text === 'Search') {
-                                                return btn;
-                                            }
-                                        }
-                                        return null;
-                                    });
-                                    
-                                    if (buttonHandle && buttonHandle.asElement()) {
-                                        await buttonHandle.asElement().scrollIntoView();
-                                        await new Promise(resolve => setTimeout(resolve, 300));
-                                        await buttonHandle.asElement().click();
-                                        await buttonHandle.dispose();
-                                        
-                                        buttonClicked = true;
-                                        console.log('✅ Search button clicked (method 2)');
-                                    } else {
-                                        if (buttonHandle) await buttonHandle.dispose();
-                                    }
-                                } catch (e) {
-                                    console.log('⚠️  Method 2 failed: ' + e.message);
-                                }
-                            }
-                            
-                            // 方式3：查找任何包含 "Search" 文本的按鈕
-                            if (!buttonClicked) {
-                                try {
-                                    const buttonHandle = await page.evaluateHandle(() => {
-                                        const buttons = Array.from(document.querySelectorAll('button'));
-                                        for (let btn of buttons) {
-                                            const text = btn.textContent.trim();
-                                            if (text.includes('Search') || text === 'Search') {
-                                                return btn;
-                                            }
-                                        }
-                                        return null;
-                                    });
-                                    
-                                    if (buttonHandle && buttonHandle.asElement()) {
-                                        await buttonHandle.asElement().scrollIntoView();
-                                        await new Promise(resolve => setTimeout(resolve, 300));
-                                        await buttonHandle.asElement().click();
-                                        await buttonHandle.dispose();
-                                        
-                                        buttonClicked = true;
-                                        console.log('✅ Search button clicked (method 3)');
-                                    } else {
-                                        if (buttonHandle) await buttonHandle.dispose();
-                                    }
-                                } catch (e) {
-                                    console.log('⚠️  Method 3 failed: ' + e.message);
-                                }
                             }
                             
                             if (buttonClicked) {
@@ -1006,8 +853,6 @@ class ScrapeBrowserWowDomDetail extends Command
                         const startTime = Date.now();
                         
                         try {
-                            console.log('📄 Scraping page ' + pageInfo.pageNumber + '...');
-                            
                             // 查找並點擊對應頁碼的分頁按鈕
                             const buttonClicked = await page.evaluate((targetPageNumber) => {
                                 // 查找 Element UI 的分頁按鈕
@@ -1086,7 +931,6 @@ class ScrapeBrowserWowDomDetail extends Command
                             const tableData = await extractTableData(page);
                             
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                            console.log('✅ Page ' + pageInfo.pageNumber + ' scraped in ' + elapsed + 's: ' + (tableData.rowCount || 0) + ' rows');
                             
                             return {
                                 pageNumber: pageInfo.pageNumber,
@@ -1336,41 +1180,13 @@ class ScrapeBrowserWowDomDetail extends Command
             }
             
             // 處理所有步驟截圖
-            $screenshotFiles = [
-                '01_before_click_date_picker.png',
-                '02_after_click_date_picker.png',
-                '03_after_fill_start_date.png',
-                '04_after_fill_end_date.png',
-                '05_after_click_ok.png',
-                'wow_screenshot.png'
-            ];
+            $screenshotFile = 'wow_screenshot.png';
             
-            $screenshotCount = 0;
-            foreach ($screenshotFiles as $screenshotFile) {
-                $screenshotSrc = $workingDir . '/' . $screenshotFile;
-                if (file_exists($screenshotSrc)) {
-                    $screenshotDst = $screenshotsDir . '/wow_' . $timestamp . '_' . $screenshotFile;
-                    rename($screenshotSrc, $screenshotDst);
-                    $this->info("📸 Screenshot saved: {$screenshotDst}");
-                    $screenshotCount++;
-                }
-            }
-            
-            // 處理主截圖（如果存在）
-            if (isset($result['screenshot'])) {
-                $screenshotSrc = $result['screenshot'];
-                if (file_exists($screenshotSrc) && !in_array(basename($screenshotSrc), $screenshotFiles)) {
-                    $screenshotDst = $screenshotsDir . '/wow_screenshot_' . $timestamp . '.png';
-                    rename($screenshotSrc, $screenshotDst);
-                    $this->info("📸 Main screenshot saved to: {$screenshotDst}");
-                    $screenshotCount++;
-                }
-            }
-            
-            if ($screenshotCount === 0) {
-                $this->warn('⚠️  No screenshots found');
-            } else {
-                $this->info("✅ Total {$screenshotCount} screenshot(s) saved");
+            $screenshotSrc = $workingDir . '/' . $screenshotFile;
+            if (file_exists($screenshotSrc)) {
+                $screenshotDst = $screenshotsDir . '/wow_' . $timestamp . '_' . $screenshotFile;
+                rename($screenshotSrc, $screenshotDst);
+                $this->info("📸 Screenshot saved: {$screenshotDst}");
             }
             
             // 處理表格數據
@@ -1410,13 +1226,11 @@ class ScrapeBrowserWowDomDetail extends Command
                     
                     // 顯示表格數據摘要
                     if (isset($processedData['totalRows'])) {
-                        $this->line("   📋 Total Rows: {$processedData['totalRows']}");
                         if (isset($processedData['headers']) && count($processedData['headers']) > 0) {
                             $headerPreview = implode(', ', array_slice($processedData['headers'], 0, 5));
                             if (count($processedData['headers']) > 5) {
                                 $headerPreview .= '...';
                             }
-                            $this->line("   📑 Headers (" . count($processedData['headers']) . "): {$headerPreview}");
                         }
                     }
                 }
