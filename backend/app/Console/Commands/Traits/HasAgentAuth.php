@@ -552,11 +552,13 @@ trait HasAgentAuth
     }
 
     /**
-     * 生成 1BET Puppeteer 登入流程程式碼片段
+     * 生成 1BET Puppeteer 登入流程程式碼片段（包含截圖和重定向）
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @param string $workingDirJs 工作目錄的 JSON 編碼（用於截圖路徑）
+     * @param string $redirectUrlJs 重定向 URL 的 JSON 編碼
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generate1BetPuppeteerLoginCode(string $pageVar = 'page'): string
+    protected function generate1BetPuppeteerLoginCode(string $pageVar = 'page', string $workingDirJs = 'null', string $redirectUrlJs = 'null'): string
     {
         $account = env('1BET_AGENT_ACCOUNT', '');
         $password = env('1BET_AGENT_PASSWORD', '');
@@ -617,6 +619,17 @@ trait HasAgentAuth
             
             // 等待一下讓輸入完成
             await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 截圖 2: 填入帳號後
+            if ($workingDirJs && $workingDirJs !== 'null') {
+                console.log('📸 Step 1: Taking screenshot after account filled...');
+                const screenshot1Path = path.join($workingDirJs, '1bet_step1_account_filled.png');
+                await {$pageVar}.screenshot({
+                    path: screenshot1Path,
+                    fullPage: true
+                });
+                console.log('✅ Screenshot saved: ' + screenshot1Path);
+            }
             
             // 解析密碼參數
             let passwordParsed = null;
@@ -703,72 +716,44 @@ trait HasAgentAuth
                 }
             }
             
+            // 截圖 3: 標記並填入密碼後
+            if ($workingDirJs && $workingDirJs !== 'null') {
+                console.log('📸 Step 2: Taking screenshot after password filled and marked...');
+                const screenshot2Path = path.join($workingDirJs, '1bet_step2_password_filled.png');
+                await {$pageVar}.screenshot({
+                    path: screenshot2Path,
+                    fullPage: true
+                });
+                console.log('✅ Screenshot saved: ' + screenshot2Path);
+            }
+            
             // 步驟 3: 點擊登錄按鈕
             console.log('🔍 Step 3: Looking for login button...');
             
-            // 先檢查頁面狀態
-            const pageStatus = await {$pageVar}.evaluate(() => {
-                return {
-                    url: window.location.href,
-                    readyState: document.readyState,
-                    hasBody: !!document.body,
-                    bodyTextLength: document.body ? document.body.innerText.length : 0,
-                    buttonCount: document.querySelectorAll('button').length,
-                    allElementsCount: document.querySelectorAll('*').length
-                };
+            // 先等待一下讓按鈕完全渲染
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 獲取頁面上所有按鈕的調試信息
+            const buttonDebugInfo = await {$pageVar}.evaluate(() => {
+                const allButtons = Array.from(document.querySelectorAll('button'));
+                return allButtons.map(btn => ({
+                    text: btn.textContent.trim(),
+                    className: btn.className,
+                    type: btn.type,
+                    id: btn.id,
+                    visible: window.getComputedStyle(btn).display !== 'none' && btn.offsetParent !== null,
+                    hasSpan: !!btn.querySelector('span'),
+                    spanText: btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : ''
+                }));
             });
-            console.log('   Page status:');
-            console.log('     URL: ' + pageStatus.url);
-            console.log('     Ready state: ' + pageStatus.readyState);
-            console.log('     Has body: ' + pageStatus.hasBody);
-            console.log('     Body text length: ' + pageStatus.bodyTextLength);
-            console.log('     Button count: ' + pageStatus.buttonCount);
-            console.log('     Total elements: ' + pageStatus.allElementsCount);
             
-            // 如果頁面沒有按鈕，等待更長時間讓頁面完全渲染
-            if (pageStatus.buttonCount === 0) {
-                console.log('   No buttons found, waiting for page to fully render...');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                // 再次檢查
-                const retryStatus = await {$pageVar}.evaluate(() => {
-                    return {
-                        buttonCount: document.querySelectorAll('button').length,
-                        readyState: document.readyState
-                    };
-                });
-                console.log('   After waiting - Button count: ' + retryStatus.buttonCount + ', Ready state: ' + retryStatus.readyState);
-            }
-            
-            // 先等待按鈕出現（多種選擇器）
-            const selectors = [
-                'button.btn-login',
-                'button.el-button.btn-login',
-                'button.el-button.btn-login.el-button--primary',
-                'button[class*="btn-login"]'
-            ];
-            
-            let buttonFoundBySelector = false;
-            for (const selector of selectors) {
-                try {
-                    await {$pageVar}.waitForSelector(selector, { 
-                        timeout: 5000,
-                        visible: true 
-                    });
-                    console.log('   ✅ Button found by selector: ' + selector);
-                    buttonFoundBySelector = true;
-                    break;
-                } catch (e) {
-                    // 繼續嘗試下一個選擇器
+            console.log('   Found ' + buttonDebugInfo.length + ' button(s) on page:');
+            buttonDebugInfo.forEach((btn, index) => {
+                console.log('     ' + (index + 1) + '. Text: "' + btn.text + '", Class: "' + btn.className + '", Visible: ' + btn.visible);
+                if (btn.hasSpan) {
+                    console.log('        Span text: "' + btn.spanText + '"');
                 }
-            }
-            
-            if (!buttonFoundBySelector) {
-                console.log('   ⚠️  Button not found by any selector, trying alternative methods...');
-            }
-            
-            // 等待一下讓按鈕完全渲染
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            });
             
             const loginButtonClicked = await {$pageVar}.evaluate(() => {
                 // 方法 1: 優先查找完整選擇器
@@ -787,7 +772,7 @@ trait HasAgentAuth
                     }
                 }
                 
-                // 方法 4: 通過文本查找 "登录"
+                // 方法 4: 通過文本查找 "登录"（檢查按鈕文本和 span 文本）
                 if (!button) {
                     const allButtons = Array.from(document.querySelectorAll('button.el-button, button[type="button"]'));
                     button = allButtons.find(btn => {
@@ -803,8 +788,18 @@ trait HasAgentAuth
                     const allButtons = Array.from(document.querySelectorAll('button'));
                     button = allButtons.find(btn => {
                         const text = btn.textContent.trim();
-                        return text.includes('登录') || text.includes('登入') || text.includes('Login');
+                        const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
+                        return text.includes('登录') || text.includes('登入') || text.includes('Login') ||
+                               spanText.includes('登录') || spanText.includes('登入') || spanText.includes('Login');
                     });
+                }
+                
+                // 方法 6: 查找 primary 類型的按鈕（通常是登錄按鈕）
+                if (!button) {
+                    const primaryButtons = Array.from(document.querySelectorAll('button.el-button--primary'));
+                    if (primaryButtons.length > 0) {
+                        button = primaryButtons[0];
+                    }
                 }
                 
                 if (button) {
@@ -817,7 +812,7 @@ trait HasAgentAuth
                     
                     if (!isVisible) {
                         console.log('   Button found but not visible');
-                        return { clicked: false, reason: 'not_visible' };
+                        return { clicked: false, reason: 'not_visible', buttonText: button.textContent.trim() };
                     }
                     
                     // 滾動到按鈕位置
@@ -830,110 +825,445 @@ trait HasAgentAuth
                         clicked: true,
                         text: button.textContent.trim(),
                         className: button.className,
-                        type: button.type
+                        spanText: button.querySelector('span') ? button.querySelector('span').textContent.trim() : ''
                     };
                 }
                 
-                // 調試信息：列出所有按鈕和相關元素
-                const allButtons = Array.from(document.querySelectorAll('button'));
-                const allClickable = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"]'));
-                const allElementsWithLogin = Array.from(document.querySelectorAll('*')).filter(el => {
-                    const text = el.textContent.trim().toLowerCase();
-                    return text.includes('登录') || text.includes('登入') || text.includes('login');
-                });
-                
-                const buttonInfo = allButtons.map(btn => ({
-                    text: btn.textContent.trim(),
-                    className: btn.className,
-                    type: btn.type,
-                    id: btn.id,
-                    visible: window.getComputedStyle(btn).display !== 'none'
-                }));
-                
-                const clickableInfo = allClickable.slice(0, 10).map(el => ({
-                    tag: el.tagName,
-                    text: el.textContent.trim().substring(0, 50),
-                    className: el.className,
-                    id: el.id
-                }));
-                
-                const loginElementsInfo = allElementsWithLogin.slice(0, 5).map(el => ({
-                    tag: el.tagName,
-                    text: el.textContent.trim().substring(0, 50),
-                    className: el.className
-                }));
-                
-                return { 
-                    clicked: false, 
-                    reason: 'not_found',
-                    availableButtons: buttonInfo,
-                    clickableElements: clickableInfo,
-                    loginRelatedElements: loginElementsInfo,
-                    totalButtons: allButtons.length,
-                    totalClickable: allClickable.length
-                };
+                return { clicked: false, reason: 'not_found' };
             });
             
             if (loginButtonClicked.clicked) {
                 console.log('✅ Login button clicked!');
                 console.log('   Button text: ' + loginButtonClicked.text);
                 console.log('   Button class: ' + loginButtonClicked.className);
-                console.log('   Button type: ' + loginButtonClicked.type);
                 
-                // 等待登錄處理
-                console.log('⏳ Waiting for login to process...');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // 等待一下讓點擊生效
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
-                // 嘗試等待頁面導航或變化
+                // 截圖 4: 點擊登錄按鈕後（登錄處理前）
+                if ($workingDirJs && $workingDirJs !== 'null') {
+                    console.log('📸 Step 3: Taking screenshot after login button clicked...');
+                    const screenshot3Path = path.join($workingDirJs, '1bet_step3_login_clicked.png');
+                    await {$pageVar}.screenshot({
+                        path: screenshot3Path,
+                        fullPage: true
+                    });
+                    console.log('✅ Screenshot saved: ' + screenshot3Path);
+                }
+                
+                // 記錄點擊前的 URL
+                const urlBeforeLogin = {$pageVar}.url();
+                console.log('   URL before login: ' + urlBeforeLogin);
+                
+                // 等待頁面響應（登錄後可能會有頁面跳轉或載入）
+                console.log('⏳ Waiting for login response and page navigation...');
+                
                 try {
+                    // 等待頁面導航完成（最多等待 10 秒）
                     await {$pageVar}.waitForNavigation({
                         waitUntil: 'networkidle2',
                         timeout: 10000
                     }).catch(() => {
-                        console.log('   No navigation detected, continuing...');
+                        console.log('   Navigation wait timeout, continuing...');
                     });
+                    
+                    // 檢查 URL 是否變化
+                    const urlAfterLogin = {$pageVar}.url();
+                    console.log('   URL after login: ' + urlAfterLogin);
+                    
+                    if (urlAfterLogin !== urlBeforeLogin) {
+                        console.log('✅ Page navigated after login');
+                    }
                 } catch (e) {
-                    console.log('   Navigation wait timeout, continuing...');
+                    console.log('⚠️  Navigation error: ' + e.message);
                 }
                 
-                // 再等待一下讓頁面完全載入
+                // 等待頁面完全載入（即使沒有導航，也等待內容更新）
+                console.log('⏳ Waiting for page content to load...');
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // 再次等待確保頁面完全渲染
                 await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // 檢查頁面是否有內容
+                const pageContent = await {$pageVar}.evaluate(() => {
+                    const bodyText = document.body ? document.body.innerText : '';
+                    return {
+                        url: window.location.href,
+                        title: document.title,
+                        bodyText: bodyText,
+                        bodyTextLength: bodyText.length,
+                        hasContent: document.body && bodyText.length > 0,
+                        hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                        bodyText.includes('security check') ||
+                                        document.title.includes('What Are You Looking For')
+                    };
+                });
+                
+                console.log('   Page title: ' + pageContent.title);
+                console.log('   Body text length: ' + pageContent.bodyTextLength);
+                console.log('   Has content: ' + pageContent.hasContent);
+                console.log('   Has security check: ' + pageContent.hasSecurityCheck);
+                
+                // 檢查是否為安全驗證頁面
+                if (pageContent.hasSecurityCheck) {
+                    console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                    console.log('   Waiting for security check to complete...');
+                    
+                    // 等待安全驗證完成（最多等待 10 秒）
+                    let securityCheckPassed = false;
+                    for (let i = 0; i < 10; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        const checkStatus = await {$pageVar}.evaluate(() => {
+                            const bodyText = document.body ? document.body.innerText : '';
+                            return {
+                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                 document.title.includes('What Are You Looking For'),
+                                url: window.location.href
+                            };
+                        });
+                        
+                        if (!checkStatus.hasSecurityCheck) {
+                            securityCheckPassed = true;
+                            console.log('✅ Security check passed, URL: ' + checkStatus.url);
+                            break;
+                        }
+                        
+                        console.log('   Still on security check page, waiting... (' + (i + 1) + '/10)');
+                    }
+                    
+                    if (!securityCheckPassed) {
+                        console.log('⚠️  Security check did not complete automatically');
+                    }
+                }
+                
+                // 檢查是否為黑畫面（內容很少或沒有內容）
+                const isBlackScreen = !pageContent.hasContent || pageContent.bodyTextLength < 100;
+                
+                if (isBlackScreen) {
+                    console.log('⚠️  Detected black screen or empty page after login');
+                }
+                
+                // 如果提供了重定向 URL，則跳轉
+                let redirectUrlParsed = null;
+                try {
+                    if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                        redirectUrlParsed = JSON.parse($redirectUrlJs);
+                    }
+                } catch (e) {
+                    redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                }
+                
+                // 如果檢測到安全驗證頁面或黑畫面，且有重定向 URL，直接跳轉
+                if ((pageContent.hasSecurityCheck || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                    console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                    console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
+                }
+                
+                if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                    try {
+                        console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
+                        
+                        // 使用 JavaScript 直接修改 window.location，避免被檢測為自動化工具
+                        await {$pageVar}.evaluate((targetUrl) => {
+                            window.location.href = targetUrl;
+                        }, redirectUrlParsed);
+                        
+                        // 等待頁面導航
+                        console.log('⏳ Waiting for page navigation...');
+                        await {$pageVar}.waitForNavigation({
+                            waitUntil: 'networkidle2',
+                            timeout: 30000
+                        }).catch(() => {
+                            console.log('   Navigation wait timeout, but continuing...');
+                        });
+                        
+                        // 等待頁面完全載入
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        
+                        // 檢查新頁面狀態
+                        const redirectPageContent = await {$pageVar}.evaluate(() => {
+                            return {
+                                url: window.location.href,
+                                title: document.title,
+                                bodyText: document.body ? document.body.innerText.length : 0,
+                                hasContent: document.body && document.body.innerText.length > 0
+                            };
+                        });
+                        
+                        console.log('   Redirected URL: ' + redirectPageContent.url);
+                        console.log('   Redirected page title: ' + redirectPageContent.title);
+                        console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
+                        console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
+                        
+                        // 檢查是否被重定向到反開發者工具頁面
+                        if (redirectPageContent.url.includes('disable-devtool') || 
+                            redirectPageContent.url.includes('theajack.github.io') ||
+                            redirectPageContent.title.includes('Not allowed')) {
+                            console.log('⚠️  Detected anti-devtool page, trying alternative navigation method...');
+                            
+                            // 嘗試使用 window.location.replace
+                            await {$pageVar}.evaluate((targetUrl) => {
+                                window.location.replace(targetUrl);
+                            }, redirectUrlParsed);
+                            
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            
+                            // 再次檢查
+                            const retryPageContent = await {$pageVar}.evaluate(() => {
+                                return {
+                                    url: window.location.href,
+                                    title: document.title
+                                };
+                            });
+                            
+                            console.log('   Retry URL: ' + retryPageContent.url);
+                            console.log('   Retry title: ' + retryPageContent.title);
+                        }
+                    } catch (e) {
+                        console.log('⚠️  Redirect navigation failed: ' + e.message);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                } else if (isBlackScreen) {
+                    console.log('⚠️  Black screen detected but no redirect URL configured');
+                }
+                
+                // 截圖 5: 登錄完成後（或重定向後）
+                if ($workingDirJs && $workingDirJs !== 'null') {
+                    console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
+                    const screenshot4Path = path.join($workingDirJs, '1bet_step4_login_completed.png');
+                    await {$pageVar}.screenshot({
+                        path: screenshot4Path,
+                        fullPage: true
+                    });
+                    console.log('✅ Screenshot saved: ' + screenshot4Path);
+                }
             } else {
                 console.log('⚠️  Login button not found');
                 if (loginButtonClicked.reason) {
                     console.log('   Reason: ' + loginButtonClicked.reason);
+                    if (loginButtonClicked.buttonText) {
+                        console.log('   Button text found: ' + loginButtonClicked.buttonText);
+                    }
                 }
                 
-                console.log('   Total buttons on page: ' + (loginButtonClicked.totalButtons || 0));
-                console.log('   Total clickable elements: ' + (loginButtonClicked.totalClickable || 0));
-                
-                // 顯示可用的按鈕信息
-                if (loginButtonClicked.availableButtons && loginButtonClicked.availableButtons.length > 0) {
-                    console.log('   Available buttons on page:');
-                    loginButtonClicked.availableButtons.forEach((btn, index) => {
-                        console.log('     ' + (index + 1) + '. Text: "' + btn.text + '", Class: "' + btn.className + '", Type: "' + btn.type + '", Visible: ' + btn.visible);
-                    });
-                }
-                
-                // 顯示可點擊的元素
-                if (loginButtonClicked.clickableElements && loginButtonClicked.clickableElements.length > 0) {
-                    console.log('   Clickable elements on page:');
-                    loginButtonClicked.clickableElements.forEach((el, index) => {
-                        console.log('     ' + (index + 1) + '. Tag: ' + el.tag + ', Text: "' + el.text + '", Class: "' + el.className + '"');
-                    });
-                }
-                
-                // 顯示包含 "登录" 的元素
-                if (loginButtonClicked.loginRelatedElements && loginButtonClicked.loginRelatedElements.length > 0) {
-                    console.log('   Elements containing "登录" text:');
-                    loginButtonClicked.loginRelatedElements.forEach((el, index) => {
-                        console.log('     ' + (index + 1) + '. Tag: ' + el.tag + ', Text: "' + el.text + '", Class: "' + el.className + '"');
-                    });
-                }
-                
-                if (loginButtonClicked.totalButtons === 0) {
-                    console.log('   ⚠️  No buttons found at all - page may not be fully loaded');
-                    console.log('   💡 Suggestion: Check if page needs more time to render or if there are iframes');
+                // 嘗試使用 Puppeteer 的 click 方法
+                console.log('   Trying Puppeteer click method...');
+                try {
+                    const selectors = [
+                        'button.el-button.btn-login.el-button--primary.el-button--small',
+                        'button.btn-login',
+                        'button[class*="btn-login"]',
+                        'button.el-button--primary'
+                    ];
+                    
+                    let clicked = false;
+                    for (const selector of selectors) {
+                        try {
+                            const button = await {$pageVar}.$(selector);
+                            if (button) {
+                                const isVisible = await button.isIntersectingViewport();
+                                if (isVisible) {
+                                    await button.scrollIntoView();
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                    await button.click();
+                                    console.log('   ✅ Button clicked using selector: ' + selector);
+                                    clicked = true;
+                                    break;
+                                }
+                            }
+                        } catch (e) {
+                            // 繼續嘗試下一個選擇器
+                        }
+                    }
+                    
+                    if (clicked) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        if ($workingDirJs && $workingDirJs !== 'null') {
+                            console.log('📸 Step 3: Taking screenshot after login button clicked...');
+                            const screenshot3Path = path.join($workingDirJs, '1bet_step3_login_clicked.png');
+                            await {$pageVar}.screenshot({
+                                path: screenshot3Path,
+                                fullPage: true
+                            });
+                            console.log('✅ Screenshot saved: ' + screenshot3Path);
+                        }
+                        
+                        const urlBeforeLogin = {$pageVar}.url();
+                        console.log('   URL before login: ' + urlBeforeLogin);
+                        
+                        console.log('⏳ Waiting for login response and page navigation...');
+                        
+                        try {
+                            await {$pageVar}.waitForNavigation({
+                                waitUntil: 'networkidle2',
+                                timeout: 10000
+                            }).catch(() => {
+                                console.log('   Navigation wait timeout, continuing...');
+                            });
+                            
+                            const urlAfterLogin = {$pageVar}.url();
+                            console.log('   URL after login: ' + urlAfterLogin);
+                            
+                            if (urlAfterLogin !== urlBeforeLogin) {
+                                console.log('✅ Page navigated after login');
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Navigation error: ' + e.message);
+                        }
+                        
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        const pageContent = await {$pageVar}.evaluate(() => {
+                            const bodyText = document.body ? document.body.innerText : '';
+                            return {
+                                url: window.location.href,
+                                title: document.title,
+                                bodyText: bodyText,
+                                bodyTextLength: bodyText.length,
+                                hasContent: document.body && bodyText.length > 0,
+                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                bodyText.includes('security check') ||
+                                                document.title.includes('What Are You Looking For')
+                            };
+                        });
+                        
+                        console.log('   Page title: ' + pageContent.title);
+                        console.log('   Body text length: ' + pageContent.bodyTextLength);
+                        console.log('   Has content: ' + pageContent.hasContent);
+                        console.log('   Has security check: ' + pageContent.hasSecurityCheck);
+                        
+                        if (pageContent.hasSecurityCheck) {
+                            console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                            console.log('   Waiting for security check to complete...');
+                            
+                            let securityCheckPassed = false;
+                            for (let i = 0; i < 10; i++) {
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                const checkStatus = await {$pageVar}.evaluate(() => {
+                                    const bodyText = document.body ? document.body.innerText : '';
+                                    return {
+                                        hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                         document.title.includes('What Are You Looking For'),
+                                        url: window.location.href
+                                    };
+                                });
+                                
+                                if (!checkStatus.hasSecurityCheck) {
+                                    securityCheckPassed = true;
+                                    console.log('✅ Security check passed, URL: ' + checkStatus.url);
+                                    break;
+                                }
+                                
+                                console.log('   Still on security check page, waiting... (' + (i + 1) + '/10)');
+                            }
+                            
+                            if (!securityCheckPassed) {
+                                console.log('⚠️  Security check did not complete automatically');
+                            }
+                        }
+                        
+                        const isBlackScreen = !pageContent.hasContent || pageContent.bodyTextLength < 100;
+                        
+                        if (isBlackScreen) {
+                            console.log('⚠️  Detected black screen or empty page after login');
+                        }
+                        
+                        let redirectUrlParsed = null;
+                        try {
+                            if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                                redirectUrlParsed = JSON.parse($redirectUrlJs);
+                            }
+                        } catch (e) {
+                            redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                        }
+                        
+                        if ((pageContent.hasSecurityCheck || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                        } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
+                        }
+                        
+                        if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            try {
+                                console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
+                                
+                                await {$pageVar}.evaluate((targetUrl) => {
+                                    window.location.href = targetUrl;
+                                }, redirectUrlParsed);
+                                
+                                console.log('⏳ Waiting for page navigation...');
+                                await {$pageVar}.waitForNavigation({
+                                    waitUntil: 'networkidle2',
+                                    timeout: 30000
+                                }).catch(() => {
+                                    console.log('   Navigation wait timeout, but continuing...');
+                                });
+                                
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                
+                                const redirectPageContent = await {$pageVar}.evaluate(() => {
+                                    return {
+                                        url: window.location.href,
+                                        title: document.title,
+                                        bodyText: document.body ? document.body.innerText.length : 0,
+                                        hasContent: document.body && document.body.innerText.length > 0
+                                    };
+                                });
+                                
+                                console.log('   Redirected URL: ' + redirectPageContent.url);
+                                console.log('   Redirected page title: ' + redirectPageContent.title);
+                                console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
+                                console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
+                                
+                                if (redirectPageContent.url.includes('disable-devtool') || 
+                                    redirectPageContent.url.includes('theajack.github.io') ||
+                                    redirectPageContent.title.includes('Not allowed')) {
+                                    console.log('⚠️  Detected anti-devtool page, trying alternative navigation method...');
+                                    
+                                    await {$pageVar}.evaluate((targetUrl) => {
+                                        window.location.replace(targetUrl);
+                                    }, redirectUrlParsed);
+                                    
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    const retryPageContent = await {$pageVar}.evaluate(() => {
+                                        return {
+                                            url: window.location.href,
+                                            title: document.title
+                                        };
+                                    });
+                                    
+                                    console.log('   Retry URL: ' + retryPageContent.url);
+                                    console.log('   Retry title: ' + retryPageContent.title);
+                                }
+                            } catch (e) {
+                                console.log('⚠️  Redirect navigation failed: ' + e.message);
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                            }
+                        } else if (isBlackScreen) {
+                            console.log('⚠️  Black screen detected but no redirect URL configured');
+                        }
+                        
+                        if ($workingDirJs && $workingDirJs !== 'null') {
+                            console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
+                            const screenshot4Path = path.join($workingDirJs, '1bet_step4_login_completed.png');
+                            await {$pageVar}.screenshot({
+                                path: screenshot4Path,
+                                fullPage: true
+                            });
+                            console.log('✅ Screenshot saved: ' + screenshot4Path);
+                        }
+                    } else {
+                        console.log('   ⚠️  Could not click button using Puppeteer methods');
+                    }
+                } catch (e) {
+                    console.log('⚠️  Error trying Puppeteer click: ' + e.message);
                 }
             }
             
