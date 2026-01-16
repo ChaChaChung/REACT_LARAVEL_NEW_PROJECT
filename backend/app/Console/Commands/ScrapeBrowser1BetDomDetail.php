@@ -211,6 +211,37 @@ class ScrapeBrowser1BetDomDetail extends Command
 
                     // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                    
+                    // 隱藏自動化特徵（反檢測）
+                    await page.evaluateOnNewDocument(() => {
+                        // 隱藏 webdriver 屬性
+                        Object.defineProperty(navigator, 'webdriver', {
+                            get: () => undefined
+                        });
+                        
+                        // 偽造 plugins
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: () => [1, 2, 3, 4, 5]
+                        });
+                        
+                        // 偽造 languages
+                        Object.defineProperty(navigator, 'languages', {
+                            get: () => ['en-US', 'en', 'zh-CN', 'zh']
+                        });
+                        
+                        // 偽造 permissions
+                        const originalQuery = window.navigator.permissions.query;
+                        window.navigator.permissions.query = (parameters) => (
+                            parameters.name === 'notifications' ?
+                                Promise.resolve({ state: Notification.permission }) :
+                                originalQuery(parameters)
+                        );
+                        
+                        // 偽造 chrome 對象
+                        window.chrome = {
+                            runtime: {}
+                        };
+                    });
 
                     // 移除 JSON 編碼的引號
                     const targetUrl = $domainJs.replace(/^"|"\$/g, '');
@@ -735,12 +766,21 @@ class ScrapeBrowser1BetDomDetail extends Command
                         if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
                             
                             try {
-                                // 導航到指定的 URL
-                                await page.goto(redirectUrlParsed, {
+                                console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
+                                
+                                // 使用 JavaScript 直接修改 window.location，避免被檢測為自動化工具
+                                await page.evaluate((targetUrl) => {
+                                    window.location.href = targetUrl;
+                                }, redirectUrlParsed);
+                                
+                                // 等待頁面導航
+                                console.log('⏳ Waiting for page navigation...');
+                                await page.waitForNavigation({
                                     waitUntil: 'networkidle2',
                                     timeout: 30000
+                                }).catch(() => {
+                                    console.log('   Navigation wait timeout, but continuing...');
                                 });
-                                console.log('✅ Navigation to redirect URL completed');
                                 
                                 // 等待頁面完全載入
                                 await new Promise(resolve => setTimeout(resolve, 3000));
@@ -759,6 +799,31 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 console.log('   Redirected page title: ' + redirectPageContent.title);
                                 console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
                                 console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
+                                
+                                // 檢查是否被重定向到反開發者工具頁面
+                                if (redirectPageContent.url.includes('disable-devtool') || 
+                                    redirectPageContent.url.includes('theajack.github.io') ||
+                                    redirectPageContent.title.includes('Not allowed')) {
+                                    console.log('⚠️  Detected anti-devtool page, trying alternative navigation method...');
+                                    
+                                    // 嘗試使用 window.location.replace
+                                    await page.evaluate((targetUrl) => {
+                                        window.location.replace(targetUrl);
+                                    }, redirectUrlParsed);
+                                    
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    // 再次檢查
+                                    const retryPageContent = await page.evaluate(() => {
+                                        return {
+                                            url: window.location.href,
+                                            title: document.title
+                                        };
+                                    });
+                                    
+                                    console.log('   Retry URL: ' + retryPageContent.url);
+                                    console.log('   Retry title: ' + retryPageContent.title);
+                                }
                             } catch (e) {
                                 console.log('⚠️  Redirect navigation failed: ' + e.message);
                                 // 即使失敗也繼續，可能頁面已經載入
