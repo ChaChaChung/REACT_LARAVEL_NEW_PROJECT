@@ -17,7 +17,7 @@ class ScrapeBrowserGlcDOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-glc-dom-detail {url}
+     * 執行方式：php artisan agent:scrape-glc-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）

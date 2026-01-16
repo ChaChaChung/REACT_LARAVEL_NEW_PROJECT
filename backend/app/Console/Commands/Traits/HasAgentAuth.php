@@ -467,9 +467,13 @@ trait HasAgentAuth
      * @param string|null $lang 語言設定
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateWowPuppeteerLoginInfoCode(string $pageVar = 'page', string $token = '', ?string $lang = null): string
+    protected function generateWowPuppeteerLoginInfoCode(string $pageVar = 'page'): string
     {
         $domain = env('WOW_AGENT_DOMAIN', '');
+        $token = env('WOW_AGENT_TOKEN', '');
+        $lang = env('WOW_AGENT_LANG', 'zh-TW');
+        
+        // 轉義 JavaScript 字符串，避免注入問題
         $domainJs = json_encode($domain);
         $tokenJs = json_encode($token);
         $langJs = json_encode($lang);

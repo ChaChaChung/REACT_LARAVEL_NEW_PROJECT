@@ -5,23 +5,23 @@ namespace App\Console\Commands;
 use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
-use Illuminate\Support\Facades\Storage;
 
 /**
- * 瀏覽器 DOM 內容爬蟲命令 - WOW (使用 sessionStorage 登入)
- * 此命令會使用 sessionStorage 中的 dashboardToken 進行登入，然後截圖
+ * 瀏覽器 DOM 內容爬蟲命令
  */
 class ScrapeBrowserWowDomDetail extends Command
 {
     use HasAgentAuth;
+
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {account_number?}
+     * 執行方式：php artisan agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}
      * {url} - 要爬取的目標網址（必需參數）
-     * {date_start?} - 開始日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
-     * {date_end?} - 結束日期（格式：YYYYMMDD 或 YYYY-MM-DD，可選）
+     * {date_start?} - 開始日期（可選參數）
+     * {date_end?} - 結束日期（可選參數）
      * {account_number?} - 玩家帳號（可選）
+     * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
     protected $signature = 'agent:scrape-wow-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
 
@@ -29,7 +29,7 @@ class ScrapeBrowserWowDomDetail extends Command
      * 命令描述
      * @var string
      */
-    protected $description = 'Scrape content from WOW DOM elements using browser automation with sessionStorage login';
+    protected $description = 'Scrape content from WOW DOM elements using browser automation with detailed information';
 
     /**
      * 執行命令的主要處理方法
@@ -39,27 +39,18 @@ class ScrapeBrowserWowDomDetail extends Command
     {
         // 獲取命令參數
         $url = $this->argument('url');
-        $dateStartRaw = $this->argument('date_start');
-        $dateEndRaw = $this->argument('date_end');
-        $accountNumber = $this->argument('account_number');
+        $date_start = $this->argument('date_start');
+        $date_end = $this->argument('date_end');
+        $account_number = $this->argument('account_number');
         $concurrency = $this->option('concurrency');
         
-        // 轉換日期格式（支持 YYYYMMDD 和 YYYY-MM-DD）
-        $dateStart = $this->normalizeDate($dateStartRaw);
-        $dateEnd = $this->normalizeDate($dateEndRaw);
-
         $this->info('=== WOW DOM Data Scraper (SessionStorage Login) ===');
         $this->info("Target URL: {$url}");
-        if ($dateStart) {
-            $this->info("Start Date: {$dateStart}");
-        }
-        if ($dateEnd) {
-            $this->info("End Date: {$dateEnd}");
-        }
-        if ($accountNumber) {
-            $this->info("Account Number: {$accountNumber}");
-        }
+        $this->info("Start Date: {$date_start}");
+        $this->info("End Date: {$date_end}");
+        $this->info("Account Number: {$account_number}");
         $this->info("Concurrency: {$concurrency}");
+        
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -67,29 +58,8 @@ class ScrapeBrowserWowDomDetail extends Command
             return 1;
         }
 
-        // 從環境變數獲取登入域名
-        $domain = env('WOW_AGENT_DOMAIN', '');
-        
-        if (empty($domain)) {
-            $this->error('❌ WOW_AGENT_DOMAIN environment variable is not set');
-            $this->line('Please set WOW_AGENT_DOMAIN in your .env file');
-            return 1;
-        }
-
-        // 從環境變數獲取登入 Token
-        $token = env('WOW_AGENT_TOKEN', '');
-        
-        if (empty($token)) {
-            $this->error('❌ WOW_AGENT_TOKEN environment variable is not set');
-            $this->line('Please set WOW_AGENT_TOKEN in your .env file');
-            return 1;
-        }
-
-        // 從環境變數獲取語言設定
-        $lang = env('WOW_AGENT_LANG', '');
-
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $url, $token, $dateStart, $dateEnd, $lang, $concurrency, $accountNumber);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency, $account_number);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -147,34 +117,7 @@ class ScrapeBrowserWowDomDetail extends Command
     }
 
     /**
-     * 標準化日期格式
-     * 將 YYYYMMDD 轉換為 YYYY-MM-DD
-     * @param string|null $date 日期字符串
-     * @return string|null 標準化後的日期字符串
-     */
-    private function normalizeDate($date)
-    {
-        if (empty($date)) {
-            return null;
-        }
-        
-        // 如果已經是 YYYY-MM-DD 格式，直接返回
-        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            return $date;
-        }
-        
-        // 如果是 YYYYMMDD 格式，轉換為 YYYY-MM-DD
-        if (preg_match('/^(\d{4})(\d{2})(\d{2})$/', $date, $matches)) {
-            return $matches[1] . '-' . $matches[2] . '-' . $matches[3];
-        }
-        
-        // 如果格式不正確，返回原值（讓 JavaScript 端處理錯誤）
-        return $date;
-    }
-
-    /**
      * 創建 Puppeteer 自動化腳本（使用 sessionStorage 登入）
-     * @param string $domain 登入頁面網址
      * @param string $url 要爬取的目標網址
      * @param string $token 登入 Token
      * @param string|null $dateStart 開始日期（格式：YYYY-MM-DD）
@@ -184,22 +127,20 @@ class ScrapeBrowserWowDomDetail extends Command
      * @param string|null $accountNumber 玩家帳號
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $url, $token, $dateStart = null, $dateEnd = null, $lang = null, $concurrency = 4, $accountNumber = null)
+    private function createPuppeteerScript($url, $dateStart = null, $dateEnd = null, $concurrency = 4, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
 
+        // 獲取 WOW sessionStorage 登入程式碼片段（主頁面用）
+        $wowLoginCode = $this->generateWowPuppeteerLoginInfoCode('page');
+        // 獲取 WOW sessionStorage 登入程式碼片段（併發頁面用）
+        $wowLoginCodeForNewPage = $this->generateWowPuppeteerLoginInfoCode('newPage');
+        
         // 轉義 JavaScript 字符串
-        $domainJs = json_encode($domain);
         $urlJs = json_encode($url);
-        // 將 date 轉換為 JavaScript 可用的格式（與 GLC 一致）
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
-        
-        // 獲取 WOW sessionStorage 登入程式碼片段（主頁面用）
-        $wowLoginCode = $this->generateWowPuppeteerLoginInfoCode('page', $token, $lang);
-        // 獲取 WOW sessionStorage 登入程式碼片段（併發頁面用）
-        $wowLoginCodeForNewPage = $this->generateWowPuppeteerLoginInfoCode('newPage', $token, $lang);
         
         // 獲取工作目錄的絕對路徑
         $workingDir = storage_path('app/temp');
@@ -222,34 +163,48 @@ class ScrapeBrowserWowDomDetail extends Command
              * @return {Promise<Array>} 返回所有執行結果的陣列
              */
             async function promiseAllWithLimit(items, limit, fn) {
-                const results = [];
-                const executing = [];
-                let completedCount = 0;
-                const totalItems = items.length;
+                // 創建兩個陣列來追蹤任務狀態
+                const results = [];   // 儲存所有任務的 Promise（包含已完成和未完成的）
+                const executing = []; // 儲存「正在執行中」的任務 Promise
                 
+                // 所有要處理的項目執行迴圈
                 for (const [index, item] of items.entries()) {
-                    const promise = Promise.resolve().then(() => fn(item, index))
-                        .then((result) => {
-                            completedCount++;
-                            return result;
-                        });
+                    // 為每個項目創建一個 Promise
+                    // Promise.resolve().then() 確保函數是異步執行的
+                    const promise = Promise.resolve().then(() => fn(item, index));
                     
+                    // 將這個 Promise 加入結果陣列
+                    // 注意：這裡只是「記錄」這個 Promise，任務可能還沒開始執行
                     results.push(promise);
                     
+                    // 併發控制邏輯（核心部分）
                     if (limit <= items.length) {
+                        // 創建一個「可追蹤」的 Promise
+                        // 當原始 Promise 完成時，自動從 executing 陣列中移除自己
                         const executing_promise = promise.then(() => 
                             executing.splice(executing.indexOf(executing_promise), 1)
                         );
                         
+                        // 將這個任務加入「執行中」的任務池
                         executing.push(executing_promise);
                         
+                        // 如果執行中的任務數量達到上限
                         if (executing.length >= limit) {
+                            // 使用 Promise.race 等待「任何一個」任務完成
+                            // Promise.race 的特性：只要陣列中有一個 Promise 完成，就會 resolve
+                            // 這樣可以確保：當一個任務完成後，立即可以開始下一個任務
                             await Promise.race(executing);
+                            
+                            // 執行到這裡時，表示至少有一個任務完成了
+                            // 該任務已經自動從 executing 陣列中移除（見上面的 splice）
+                            // 現在 executing.length < limit，可以繼續添加新任務
                         }
                     }
                 }
                 
-                console.log('⏳ Waiting for all pages to complete...');
+                // 等待所有任務完成
+                // Promise.all 會等待 results 陣列中的所有 Promise 都完成
+                // 返回一個包含所有結果的陣列
                 return Promise.all(results);
             }
 
@@ -268,9 +223,17 @@ class ScrapeBrowserWowDomDetail extends Command
                         // 性能優化參數
                         '--disable-accelerated-2d-canvas',
                         '--no-first-run',
+                        '--no-zygote',
+                        '--single-process',
                         '--disable-gpu',
+                        '--disable-software-rasterizer',
+                        // 背景處理優化
+                        '--disable-background-timer-throttling',
+                        '--disable-backgrounding-occluded-windows',
+                        '--disable-renderer-backgrounding',
                         // 功能禁用（減少資源使用）
                         '--disable-features=TranslateUI',
+                        '--disable-ipc-flooding-protection',
                         '--disable-crash-reporter',
                         '--disable-breakpad',
                         '--disable-default-apps',
@@ -278,7 +241,11 @@ class ScrapeBrowserWowDomDetail extends Command
                         '--disable-plugins',
                         '--disable-web-security',
                         '--disable-features=VizDisplayCompositor',
-                        '--memory-pressure-off'
+                        '--temp-profile',
+                        '--memory-pressure-off',
+                        // 額外的性能優化
+                        '--disable-javascript-harmony-shipping',
+                        '--disable-sync'
                     ],
                     // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
@@ -296,11 +263,11 @@ class ScrapeBrowserWowDomDetail extends Command
 
                     console.log('🔐 Starting WOW sessionStorage login process...');
                     
-                    // 移除 JSON 編碼的引號
-                    const targetUrl = $urlJs.replace(/^"|"\$/g, '');
-                    
                     // 使用 trait 中的方法設置 sessionStorage 和 cookie
                     $wowLoginCode
+                    
+                    // 移除 JSON 編碼的引號
+                    const targetUrl = $urlJs.replace(/^"|"\$/g, '');
                     
                     // 等待頁面穩定
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -318,7 +285,6 @@ class ScrapeBrowserWowDomDetail extends Command
                     // 解析日期參數
                     let dateStartParsed = null;
                     let dateEndParsed = null;
-                    
                     try {
                         if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
                             dateStartParsed = JSON.parse($dateStartJs);
@@ -1203,7 +1169,6 @@ class ScrapeBrowserWowDomDetail extends Command
                                 pageNumber: pageInfo.pageNumber,
                                 tables: [tableData]
                             };
-                            
                         } catch (error) {
                             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
                             console.error('❌ [Page ' + pageInfo.pageNumber + '] Error after ' + elapsed + 's: ' + error.message);
@@ -1224,9 +1189,6 @@ class ScrapeBrowserWowDomDetail extends Command
                         otherPagesData.push(pageData);
                     }
                     
-                    const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    console.log('⏱️  Total time for all pages: ' + totalElapsed + 's');
-                    
                     // 合併第一頁和其他頁面的資料
                     const allPagesData = [
                         {
@@ -1238,15 +1200,6 @@ class ScrapeBrowserWowDomDetail extends Command
                     
                     // 按頁碼排序
                     allPagesData.sort((a, b) => a.pageNumber - b.pageNumber);
-                    
-                    // 計算總行數
-                    const totalRowsFromPages = allPagesData.reduce((sum, pageData) => {
-                        if (pageData.tables && pageData.tables.length > 0) {
-                            return sum + pageData.tables.reduce((s, table) => s + (table.rowCount || 0), 0);
-                        }
-                        return sum;
-                    }, 0);
-                    console.log('📊 Total rows from all pages: ' + totalRowsFromPages);
                     
                     console.log('✅ All pages scraped successfully!');
                     
@@ -1344,6 +1297,7 @@ class ScrapeBrowserWowDomDetail extends Command
                     await new Promise(resolve => setTimeout(resolve, 5000));
                     
                     await browser.close();
+                    
                     return result;
                 } catch (error) {
                     console.error('❌ Error:', error);
