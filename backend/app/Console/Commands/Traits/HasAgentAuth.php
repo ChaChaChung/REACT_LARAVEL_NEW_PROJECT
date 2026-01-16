@@ -243,480 +243,6 @@ trait HasAgentAuth
     }
 
     /**
-     * 生成 1BET Puppeteer 登入流程程式碼片段
-     * @param string $pageVar 頁面變數名稱（預設為 'page'）
-     * @return string 返回 JavaScript 程式碼片段
-     */
-    protected function generate1BetPuppeteerLoginCode(string $pageVar = 'page'): string
-    {
-        $domain = env('1BET_AGENT_DOMAIN', '');
-        $account = env('1BET_AGENT_ACCOUNT', '');
-        $password = env('1BET_AGENT_PASSWORD', '');
-        
-        // 轉義 JavaScript 字符串，避免注入問題
-        $domainJs = json_encode($domain);
-        $accountJs = json_encode($account);
-        $passwordJs = json_encode($password);
-
-        return <<<JS
-            console.log('🔐 Starting 1BET login process...');
-            console.log('📍 Step 1: Navigating to login page...');
-            console.log('   URL: ' + $domainJs);
-            
-            // 設置頁面錯誤監聽
-            {$pageVar}.on('pageerror', (error) => {
-                console.log('   ⚠️  Page error: ' + error.message);
-            });
-            
-            {$pageVar}.on('requestfailed', (request) => {
-                console.log('   ⚠️  Request failed: ' + request.url() + ' - ' + request.failure().errorText);
-            });
-            
-            // 監聽響應
-            {$pageVar}.on('response', (response) => {
-                const status = response.status();
-                if (status >= 400) {
-                    console.log('   ⚠️  Response error: ' + response.url() + ' - Status: ' + status);
-                }
-            });
-            
-            // 導航到登入頁面，使用 networkidle2 確保頁面完全加載
-            console.log('   Attempting to navigate...');
-            let navigationSuccess = false;
-            try {
-                const response = await {$pageVar}.goto($domainJs, {
-                    waitUntil: 'networkidle2',
-                    timeout: 60000
-                });
-                console.log('   Navigation completed (networkidle2)');
-                console.log('   Response status: ' + (response ? response.status() : 'N/A'));
-                navigationSuccess = true;
-            } catch (e) {
-                console.log('   ⚠️  Networkidle2 timeout: ' + e.message);
-                console.log('   Trying with load event...');
-                try {
-                    const response = await {$pageVar}.goto($domainJs, {
-                        waitUntil: 'load',
-                        timeout: 60000
-                    });
-                    console.log('   Navigation completed (load event)');
-                    console.log('   Response status: ' + (response ? response.status() : 'N/A'));
-                    navigationSuccess = true;
-                } catch (e2) {
-                    console.log('   ⚠️  Load event timeout: ' + e2.message);
-                    console.log('   Trying with domcontentloaded...');
-                    try {
-                        const response = await {$pageVar}.goto($domainJs, {
-                            waitUntil: 'domcontentloaded',
-                            timeout: 60000
-                        });
-                        console.log('   Navigation completed (domcontentloaded)');
-                        console.log('   Response status: ' + (response ? response.status() : 'N/A'));
-                        navigationSuccess = true;
-                    } catch (e3) {
-                        console.log('   ❌ All navigation attempts failed');
-                        console.log('   Last error: ' + e3.message);
-                        // 不抛出错误，继续尝试
-                    }
-                }
-            }
-            
-            // 如果导航失败，等待一下再检查
-            if (!navigationSuccess) {
-                console.log('   ⚠️  Navigation may have failed, waiting 5 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 5000));
-            }
-            
-            // 等待一下讓頁面完全渲染
-            console.log('   Waiting for page to render (3 seconds)...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            // 檢查頁面是否正確加載
-            let initialUrl = {$pageVar}.url();
-            let initialTitle = await {$pageVar}.title();
-            console.log('   Initial URL (from page.url()): ' + initialUrl);
-            console.log('   Initial Title: ' + initialTitle);
-            
-            // 如果 URL 是空白，嘗試等待或重新導航
-            if (initialUrl === 'about:blank' || initialUrl === '') {
-                console.log('   ⚠️  URL is blank, waiting for navigation (10 seconds)...');
-                try {
-                    await {$pageVar}.waitForNavigation({ 
-                        waitUntil: 'networkidle2', 
-                        timeout: 10000 
-                    });
-                    initialUrl = {$pageVar}.url();
-                    console.log('   URL after wait: ' + initialUrl);
-                } catch (e) {
-                    console.log('   ⚠️  Wait navigation timeout: ' + e.message);
-                    // 嘗試重新導航
-                    console.log('   Attempting to navigate again...');
-                    try {
-                        await {$pageVar}.goto($domainJs, {
-                            waitUntil: 'networkidle2',
-                            timeout: 30000
-                        });
-                        initialUrl = {$pageVar}.url();
-                        console.log('   URL after retry: ' + initialUrl);
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                    } catch (e2) {
-                        console.log('   ⚠️  Retry navigation failed: ' + e2.message);
-                    }
-                }
-            }
-            
-            // 檢查頁面內容
-            const pageInfo = await {$pageVar}.evaluate(() => {
-                return {
-                    url: window.location.href,
-                    title: document.title,
-                    readyState: document.readyState,
-                    hasBody: !!document.body,
-                    bodyTextLength: document.body ? document.body.innerText.length : 0,
-                    inputCount: document.querySelectorAll('input').length,
-                    scriptCount: document.querySelectorAll('script').length,
-                    hasContent: document.body && document.body.innerText.length > 0
-                };
-            });
-            console.log('   Page info:');
-            console.log('     - URL (from window.location): ' + pageInfo.url);
-            console.log('     - Title: ' + pageInfo.title);
-            console.log('     - Ready state: ' + pageInfo.readyState);
-            console.log('     - Has body: ' + pageInfo.hasBody);
-            console.log('     - Body text length: ' + pageInfo.bodyTextLength);
-            console.log('     - Input fields: ' + pageInfo.inputCount);
-            console.log('     - Script tags: ' + pageInfo.scriptCount);
-            console.log('     - Has content: ' + pageInfo.hasContent);
-            
-            // 如果頁面仍然是空白，等待更長時間
-            if ((initialUrl === 'about:blank' || pageInfo.url === 'about:blank') && !pageInfo.hasContent) {
-                console.log('⚠️  Page still appears blank, waiting longer (10 seconds)...');
-                await new Promise(resolve => setTimeout(resolve, 10000));
-                
-                // 再次檢查
-                const finalCheck = await {$pageVar}.evaluate(() => {
-                    return {
-                        url: window.location.href,
-                        bodyTextLength: document.body ? document.body.innerText.length : 0,
-                        inputCount: document.querySelectorAll('input').length
-                    };
-                });
-                console.log('   Final check - URL: ' + finalCheck.url);
-                console.log('   Final check - Body text length: ' + finalCheck.bodyTextLength);
-                console.log('   Final check - Input fields: ' + finalCheck.inputCount);
-            }
-            
-            const currentUrl = {$pageVar}.url();
-            const currentTitle = await {$pageVar}.title();
-            console.log('   Current URL: ' + currentUrl);
-            console.log('   Current Title: ' + currentTitle);
-            console.log('✅ Step 1 completed: Page loaded');
-            
-            // 等待頁面載入
-            console.log('⏳ Step 2: Waiting for page to fully load (3 seconds)...');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            
-            // 檢查頁面是否有內容
-            const pageHasContent = await {$pageVar}.evaluate(() => {
-                return {
-                    hasBody: !!document.body,
-                    bodyText: document.body ? document.body.innerText.length : 0,
-                    hasInputs: document.querySelectorAll('input').length > 0
-                };
-            });
-            console.log('   Page has body: ' + pageHasContent.hasBody);
-            console.log('   Body text length: ' + pageHasContent.bodyText);
-            console.log('   Has input fields: ' + pageHasContent.hasInputs);
-            console.log('✅ Step 2 completed: Page ready');
-            
-            // 查找並填入帳號欄位（優先使用精確的選擇器）
-            console.log('🔍 Step 3: Looking for account input field...');
-            const accountSelectors = [
-                'input[type="text"][placeholder="Please enter account number"]',
-                'input.el-input__inner[type="text"]',
-                'input[type="text"][name*="account"]',
-                'input[type="text"][name*="username"]',
-                'input[type="text"][name*="user"]',
-                'input[type="text"][id*="account"]',
-                'input[type="text"][id*="username"]',
-                'input[type="text"][id*="user"]',
-                'input[type="text"][placeholder*="帳號"]',
-                'input[type="text"][placeholder*="帳戶"]',
-                'input[type="text"][placeholder*="Account"]',
-                'input[type="text"][placeholder*="Username"]',
-                'input[type="text"]:first-of-type'
-            ];
-            
-            let accountInput = null;
-            let accountSelector = null;
-            for (let i = 0; i < accountSelectors.length; i++) {
-                const selector = accountSelectors[i];
-                console.log('   Trying selector ' + (i + 1) + '/' + accountSelectors.length + ': ' + selector);
-                try {
-                    accountInput = await {$pageVar}.$(selector);
-                    if (accountInput) {
-                        accountSelector = selector;
-                        console.log('✅ Step 3 completed: Found account input with selector: ' + selector);
-                        break;
-                    }
-                } catch (e) {
-                    console.log('   ⚠️  Selector not found, trying next...');
-                    continue;
-                }
-            }
-            
-            if (accountInput && accountSelector) {
-                console.log('✍️  Step 4: Filling account field...');
-                // 使用 Puppeteer 的 type 方法，更可靠
-                // $accountJs 已经是 JSON 编码的字符串，在 JavaScript 中可以直接使用
-                const accountValue = $accountJs;
-                console.log('   Account value: ' + accountValue);
-                console.log('   Clicking input field (triple click to select all)...');
-                await accountInput.click({ clickCount: 3 }); // 三击选中所有文本
-                console.log('   Clearing input field...');
-                await accountInput.type('', { delay: 0 }); // 清空
-                console.log('   Typing account (50ms delay per character)...');
-                await accountInput.type(accountValue, { delay: 50 }); // 输入账号，每个字符间隔50ms
-                console.log('✅ Step 4 completed: Account filled: ' + accountValue);
-            } else {
-                console.log('⚠️  Step 3 failed: Account input not found, trying fallback...');
-                // 如果找不到，嘗試填入第一個文字輸入框
-                try {
-                    console.log('   Trying first text input as fallback...');
-                    const firstTextInput = await {$pageVar}.$('input[type="text"]:first-of-type');
-                    if (firstTextInput) {
-                        const accountValue = $accountJs;
-                        console.log('   Account value: ' + accountValue);
-                        await firstTextInput.click({ clickCount: 3 });
-                        await firstTextInput.type('', { delay: 0 });
-                        await firstTextInput.type(accountValue, { delay: 50 });
-                        console.log('✅ Step 4 completed: Account filled using first text input: ' + accountValue);
-                    } else {
-                        console.log('❌ Step 4 failed: No text input found');
-                    }
-                } catch (e) {
-                    console.log('❌ Step 4 failed: ' + e.message);
-                }
-            }
-            
-            console.log('⏳ Waiting 500ms before next step...');
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // 查找並填入密碼欄位（優先使用精確的選擇器）
-            console.log('🔍 Step 5: Looking for password input field...');
-            console.log('   Waiting for password input to appear (timeout: 5 seconds)...');
-            
-            // 先等待密码输入框出现
-            let passwordInput = null;
-            let passwordSelector = null;
-            
-            // 优先尝试等待精确的选择器
-            const prioritySelectors = [
-                'input[type="password"][placeholder="password"]',
-                'input.el-input__inner[type="password"]'
-            ];
-            
-            for (const selector of prioritySelectors) {
-                try {
-                    console.log('   Waiting for: ' + selector);
-                    await {$pageVar}.waitForSelector(selector, { timeout: 5000 });
-                    passwordInput = await {$pageVar}.$(selector);
-                    if (passwordInput) {
-                        passwordSelector = selector;
-                        console.log('✅ Step 5 completed: Found password input with selector: ' + selector);
-                        break;
-                    }
-                } catch (e) {
-                    console.log('   ⚠️  Selector not found: ' + selector);
-                    continue;
-                }
-            }
-            
-            // 如果优先选择器都没找到，尝试其他选择器
-            if (!passwordInput) {
-                const passwordSelectors = [
-                    'input[type="password"]',
-                    'input[type="password"][name*="password"]',
-                    'input[type="password"][name*="pass"]',
-                    'input[type="password"][id*="password"]',
-                    'input[type="password"][id*="pass"]',
-                    'input[type="password"][placeholder*="密碼"]',
-                    'input[type="password"][placeholder*="Password"]'
-                ];
-                
-                for (let i = 0; i < passwordSelectors.length; i++) {
-                    const selector = passwordSelectors[i];
-                    console.log('   Trying selector ' + (i + 1) + '/' + passwordSelectors.length + ': ' + selector);
-                    try {
-                        passwordInput = await {$pageVar}.$(selector);
-                        if (passwordInput) {
-                            passwordSelector = selector;
-                            console.log('✅ Step 5 completed: Found password input with selector: ' + selector);
-                            break;
-                        }
-                    } catch (e) {
-                        console.log('   ⚠️  Selector not found, trying next...');
-                        continue;
-                    }
-                }
-            }
-            
-            if (passwordInput && passwordSelector) {
-                console.log('✍️  Step 6: Filling password field...');
-                // 使用 Puppeteer 的 type 方法，更可靠
-                // $passwordJs 已经是 JSON 编码的字符串，在 JavaScript 中可以直接使用
-                const passwordValue = $passwordJs;
-                console.log('   Password length: ' + passwordValue.length + ' characters');
-                console.log('   Clicking input field (triple click to select all)...');
-                await passwordInput.click({ clickCount: 3 }); // 三击选中所有文本
-                console.log('   Clearing input field...');
-                await passwordInput.type('', { delay: 0 }); // 清空
-                console.log('   Typing password (50ms delay per character)...');
-                await passwordInput.type(passwordValue, { delay: 50 }); // 输入密码，每个字符间隔50ms
-                console.log('✅ Step 6 completed: Password filled');
-            } else {
-                console.log('⚠️  Step 5 failed: Password input not found, trying fallback...');
-                // 如果找不到，嘗試填入第一個密碼輸入框
-                try {
-                    console.log('   Trying first password input as fallback...');
-                    const firstPasswordInput = await {$pageVar}.$('input[type="password"]');
-                    if (firstPasswordInput) {
-                        const passwordValue = $passwordJs;
-                        console.log('   Password length: ' + passwordValue.length + ' characters');
-                        await firstPasswordInput.click({ clickCount: 3 });
-                        await firstPasswordInput.type('', { delay: 0 });
-                        await firstPasswordInput.type(passwordValue, { delay: 50 });
-                        console.log('✅ Step 6 completed: Password filled using first password input');
-                    } else {
-                        console.log('❌ Step 6 failed: No password input found');
-                    }
-                } catch (e) {
-                    console.log('❌ Step 6 failed: ' + e.message);
-                }
-            }
-            
-            console.log('⏳ Waiting 500ms before next step...');
-            await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // 先查找登入按鈕，然後在等待導航的同時點擊
-            console.log('🔍 Step 7: Looking for login button...');
-            console.log('   Waiting for buttons to appear (timeout: 5 seconds)...');
-            
-            // 先等待按钮出现
-            try {
-                await {$pageVar}.waitForSelector('button, input[type="submit"], a[class*="btn"]', { timeout: 5000 });
-                console.log('   Buttons found, searching for login button...');
-            } catch (e) {
-                console.log('   ⚠️  No buttons found yet, continuing search...');
-            }
-            
-            // 等待一下让页面完全加载
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            const loginButtonInfo = await {$pageVar}.evaluate(() => {
-                // 查找所有可能的按鈕
-                const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], a[class*="btn"]'));
-                const loginBtn = buttons.find(btn => {
-                    const text = (btn.textContent || btn.value || btn.innerText || '').trim().toLowerCase();
-                    const className = (btn.className || '').toLowerCase();
-                    const id = (btn.id || '').toLowerCase();
-                    const type = (btn.type || '').toLowerCase();
-                    
-                    // 檢查是否包含登入相關的文字
-                    return text.includes('登入') || 
-                           text.includes('login') || 
-                           text.includes('登錄') ||
-                           text.includes('sign in') ||
-                           type === 'submit';
-                });
-                
-                if (loginBtn) {
-                    return { 
-                        found: true, 
-                        tagName: loginBtn.tagName,
-                        className: loginBtn.className || '',
-                        id: loginBtn.id || '',
-                        text: (loginBtn.textContent || loginBtn.value || '').trim()
-                    };
-                }
-                
-                // 如果找不到按鈕，檢查是否有表單
-                const forms = document.querySelectorAll('form');
-                if (forms.length > 0) {
-                    return { found: true, hasForm: true };
-                }
-                
-                return { found: false };
-            });
-
-            if (loginButtonInfo.found) {
-                console.log('✅ Step 7 completed: Login button found');
-                console.log('   Button tag: ' + (loginButtonInfo.tagName || 'N/A'));
-                console.log('   Button text: ' + (loginButtonInfo.text || 'N/A'));
-            } else {
-                console.log('⚠️  Step 7 failed: Login button not found');
-            }
-
-            // 在等待導航的同時點擊登入按鈕
-            if (loginButtonInfo.found) {
-                console.log('🖱️  Step 8: Clicking login button and waiting for navigation...');
-                const navigationPromise = {$pageVar}.waitForNavigation({ 
-                    waitUntil: 'domcontentloaded',
-                    timeout: 30000 
-                }).catch(() => {
-                    console.log('⚠️  Navigation timeout, waiting 3 seconds...');
-                });
-                
-                // 點擊登入按鈕
-                if (loginButtonInfo.hasForm) {
-                    console.log('   Submitting form...');
-                    // 提交表單
-                    await {$pageVar}.evaluate(() => {
-                        const forms = document.querySelectorAll('form');
-                        if (forms.length > 0) {
-                            forms[0].submit();
-                        }
-                    });
-                } else {
-                    console.log('   Clicking button...');
-                    // 點擊按鈕
-                    await {$pageVar}.evaluate(() => {
-                        const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], a[class*="btn"]'));
-                        const loginBtn = buttons.find(btn => {
-                            const text = (btn.textContent || btn.value || btn.innerText || '').trim().toLowerCase();
-                            const type = (btn.type || '').toLowerCase();
-                            return text.includes('登入') || 
-                                   text.includes('login') || 
-                                   text.includes('登錄') ||
-                                   text.includes('sign in') ||
-                                   type === 'submit';
-                        });
-                        
-                        if (loginBtn) {
-                            loginBtn.click();
-                        }
-                    });
-                }
-                
-                console.log('   Waiting for navigation (timeout: 30 seconds)...');
-                // 等待導航完成
-                await navigationPromise;
-                console.log('✅ Step 8 completed: Navigation completed');
-            } else {
-                console.log('⚠️  Step 8 skipped: Login button not found, waiting 3 seconds...');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-            }
-            
-            // 額外等待確保頁面完全載入
-            console.log('⏳ Step 9: Waiting for page to fully load (2 seconds)...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            console.log('✅ Step 9 completed: Page fully loaded');
-            
-            console.log('✅ 1BET login process completed');
-        JS;
-    }
-
-    /**
      * 生成 GLC Puppeteer cookies 設定程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @return string 返回 JavaScript 程式碼片段
@@ -1022,6 +548,396 @@ trait HasAgentAuth
             });
             
             console.log('✅ WOW login process completed using sessionStorage and cookies');
+        JS;
+    }
+
+    /**
+     * 生成 1BET Puppeteer 登入流程程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generate1BetPuppeteerLoginCode(string $pageVar = 'page'): string
+    {
+        $account = env('1BET_AGENT_ACCOUNT', '');
+        $password = env('1BET_AGENT_PASSWORD', '');
+        
+        // 轉義 JavaScript 字符串，避免注入問題
+        $accountJs = json_encode($account);
+        $passwordJs = json_encode($password);
+
+        return <<<JS
+            console.log('🔐 Starting 1BET login process...');
+            
+            // 解析帳號參數
+            let accountParsed = null;
+            try {
+                if ($accountJs && $accountJs !== 'null' && $accountJs !== '') {
+                    accountParsed = JSON.parse($accountJs);
+                }
+            } catch (e) {
+                accountParsed = $accountJs !== 'null' ? $accountJs.replace(/^"|"\$/g, '') : null;
+            }
+            
+            // 步驟 1: 查找並填入帳號 input（不標記）
+            console.log('🔍 Step 1: Looking for account input field...');
+            const accountInputFound = await {$pageVar}.evaluate((accountValue) => {
+                // 查找 input 框：placeholder="请输入账号" 且 class="el-input__inner"
+                const input = document.querySelector('input.el-input__inner[placeholder="请输入账号"]');
+                
+                if (input) {
+                    // 如果提供了帳號，填入帳號
+                    if (accountValue && accountValue !== null && accountValue !== '') {
+                        input.value = accountValue;
+                        // 觸發 input 和 change 事件，確保框架能檢測到值變化
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                    
+                    return {
+                        found: true,
+                        placeholder: input.placeholder,
+                        className: input.className,
+                        value: input.value
+                    };
+                }
+                
+                return { found: false };
+            }, accountParsed);
+            
+            if (accountInputFound.found) {
+                console.log('✅ Account input field found!');
+                console.log('   Placeholder: ' + accountInputFound.placeholder);
+                if (accountParsed && accountParsed !== null && accountParsed !== '') {
+                    console.log('   Account filled: ' + accountParsed);
+                }
+            } else {
+                console.log('⚠️  Account input field not found with placeholder "请输入账号"');
+            }
+            
+            // 等待一下讓輸入完成
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // 解析密碼參數
+            let passwordParsed = null;
+            try {
+                if ($passwordJs && $passwordJs !== 'null' && $passwordJs !== '') {
+                    passwordParsed = JSON.parse($passwordJs);
+                }
+            } catch (e) {
+                passwordParsed = $passwordJs !== 'null' ? $passwordJs.replace(/^"|"\$/g, '') : null;
+            }
+            
+            // 步驟 2: 查找並標記密碼 input
+            console.log('🔍 Step 2: Looking for password input field...');
+            const passwordInputFound = await {$pageVar}.evaluate((passwordValue) => {
+                // 查找密碼 input 框：placeholder="请输入密码" 且 class="el-input__inner"
+                const input = document.querySelector('input.el-input__inner[placeholder="请输入密码"]');
+                
+                if (input) {
+                    // 保存原始樣式
+                    input.setAttribute('data-original-style', input.getAttribute('style') || '');
+                    
+                    // 添加高亮標記（紅色邊框和陰影）
+                    input.style.border = '5px solid red';
+                    input.style.boxShadow = '0 0 20px red';
+                    input.style.zIndex = '9999';
+                    input.style.position = 'relative';
+                    input.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
+                    
+                    // 如果提供了密碼，填入密碼
+                    if (passwordValue && passwordValue !== null && passwordValue !== '') {
+                        input.value = passwordValue;
+                        // 觸發 input 和 change 事件，確保框架能檢測到值變化
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                    
+                    // 滾動到該元素位置
+                    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    return {
+                        found: true,
+                        placeholder: input.placeholder,
+                        className: input.className,
+                        type: input.type,
+                        value: input.value ? '***' : '' // 不顯示真實密碼，只顯示是否已填入
+                    };
+                }
+                
+                return { found: false };
+            }, passwordParsed);
+            
+            if (passwordInputFound.found) {
+                console.log('✅ Password input field found and marked!');
+                console.log('   Placeholder: ' + passwordInputFound.placeholder);
+                console.log('   Type: ' + passwordInputFound.type);
+                console.log('   Class: ' + passwordInputFound.className);
+                if (passwordParsed && passwordParsed !== null && passwordParsed !== '') {
+                    console.log('   Password filled: ' + (passwordInputFound.value ? 'Yes' : 'No'));
+                }
+                
+                // 等待一下讓滾動和樣式生效
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+                console.log('⚠️  Password input field not found with placeholder "请输入密码"');
+                // 嘗試查找其他可能的選擇器
+                const alternativeInput = await {$pageVar}.evaluate(() => {
+                    const passwordInputs = document.querySelectorAll('input[type="password"].el-input__inner');
+                    if (passwordInputs.length > 0) {
+                        return {
+                            found: true,
+                            count: passwordInputs.length,
+                            placeholders: Array.from(passwordInputs).map(inp => inp.placeholder).filter(p => p)
+                        };
+                    }
+                    return { found: false };
+                });
+                
+                if (alternativeInput.found) {
+                    console.log('   Found ' + alternativeInput.count + ' password input(s) with class el-input__inner');
+                    if (alternativeInput.placeholders.length > 0) {
+                        console.log('   Available placeholders: ' + alternativeInput.placeholders.join(', '));
+                    }
+                }
+            }
+            
+            // 步驟 3: 點擊登錄按鈕
+            console.log('🔍 Step 3: Looking for login button...');
+            
+            // 先檢查頁面狀態
+            const pageStatus = await {$pageVar}.evaluate(() => {
+                return {
+                    url: window.location.href,
+                    readyState: document.readyState,
+                    hasBody: !!document.body,
+                    bodyTextLength: document.body ? document.body.innerText.length : 0,
+                    buttonCount: document.querySelectorAll('button').length,
+                    allElementsCount: document.querySelectorAll('*').length
+                };
+            });
+            console.log('   Page status:');
+            console.log('     URL: ' + pageStatus.url);
+            console.log('     Ready state: ' + pageStatus.readyState);
+            console.log('     Has body: ' + pageStatus.hasBody);
+            console.log('     Body text length: ' + pageStatus.bodyTextLength);
+            console.log('     Button count: ' + pageStatus.buttonCount);
+            console.log('     Total elements: ' + pageStatus.allElementsCount);
+            
+            // 如果頁面沒有按鈕，等待更長時間讓頁面完全渲染
+            if (pageStatus.buttonCount === 0) {
+                console.log('   No buttons found, waiting for page to fully render...');
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                
+                // 再次檢查
+                const retryStatus = await {$pageVar}.evaluate(() => {
+                    return {
+                        buttonCount: document.querySelectorAll('button').length,
+                        readyState: document.readyState
+                    };
+                });
+                console.log('   After waiting - Button count: ' + retryStatus.buttonCount + ', Ready state: ' + retryStatus.readyState);
+            }
+            
+            // 先等待按鈕出現（多種選擇器）
+            const selectors = [
+                'button.btn-login',
+                'button.el-button.btn-login',
+                'button.el-button.btn-login.el-button--primary',
+                'button[class*="btn-login"]'
+            ];
+            
+            let buttonFoundBySelector = false;
+            for (const selector of selectors) {
+                try {
+                    await {$pageVar}.waitForSelector(selector, { 
+                        timeout: 5000,
+                        visible: true 
+                    });
+                    console.log('   ✅ Button found by selector: ' + selector);
+                    buttonFoundBySelector = true;
+                    break;
+                } catch (e) {
+                    // 繼續嘗試下一個選擇器
+                }
+            }
+            
+            if (!buttonFoundBySelector) {
+                console.log('   ⚠️  Button not found by any selector, trying alternative methods...');
+            }
+            
+            // 等待一下讓按鈕完全渲染
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            const loginButtonClicked = await {$pageVar}.evaluate(() => {
+                // 方法 1: 優先查找完整選擇器
+                let button = document.querySelector('button.el-button.btn-login.el-button--primary.el-button--small');
+                
+                // 方法 2: 查找 btn-login 類
+                if (!button) {
+                    button = document.querySelector('button.btn-login');
+                }
+                
+                // 方法 3: 查找包含 btn-login 的按鈕
+                if (!button) {
+                    const buttons = Array.from(document.querySelectorAll('button[class*="btn-login"]'));
+                    if (buttons.length > 0) {
+                        button = buttons[0];
+                    }
+                }
+                
+                // 方法 4: 通過文本查找 "登录"
+                if (!button) {
+                    const allButtons = Array.from(document.querySelectorAll('button.el-button, button[type="button"]'));
+                    button = allButtons.find(btn => {
+                        const text = btn.textContent.trim();
+                        const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
+                        return text === '登录' || text === '登入' || text === 'Login' ||
+                               spanText === '登录' || spanText === '登入' || spanText === 'Login';
+                    });
+                }
+                
+                // 方法 5: 查找任何包含 "登录" 文本的按鈕
+                if (!button) {
+                    const allButtons = Array.from(document.querySelectorAll('button'));
+                    button = allButtons.find(btn => {
+                        const text = btn.textContent.trim();
+                        return text.includes('登录') || text.includes('登入') || text.includes('Login');
+                    });
+                }
+                
+                if (button) {
+                    // 檢查按鈕是否可見
+                    const style = window.getComputedStyle(button);
+                    const isVisible = style.display !== 'none' && 
+                                    style.visibility !== 'hidden' && 
+                                    style.opacity !== '0' &&
+                                    button.offsetParent !== null;
+                    
+                    if (!isVisible) {
+                        console.log('   Button found but not visible');
+                        return { clicked: false, reason: 'not_visible' };
+                    }
+                    
+                    // 滾動到按鈕位置
+                    button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    
+                    // 點擊按鈕
+                    button.click();
+                    
+                    return {
+                        clicked: true,
+                        text: button.textContent.trim(),
+                        className: button.className,
+                        type: button.type
+                    };
+                }
+                
+                // 調試信息：列出所有按鈕和相關元素
+                const allButtons = Array.from(document.querySelectorAll('button'));
+                const allClickable = Array.from(document.querySelectorAll('button, a, [role="button"], input[type="submit"], input[type="button"]'));
+                const allElementsWithLogin = Array.from(document.querySelectorAll('*')).filter(el => {
+                    const text = el.textContent.trim().toLowerCase();
+                    return text.includes('登录') || text.includes('登入') || text.includes('login');
+                });
+                
+                const buttonInfo = allButtons.map(btn => ({
+                    text: btn.textContent.trim(),
+                    className: btn.className,
+                    type: btn.type,
+                    id: btn.id,
+                    visible: window.getComputedStyle(btn).display !== 'none'
+                }));
+                
+                const clickableInfo = allClickable.slice(0, 10).map(el => ({
+                    tag: el.tagName,
+                    text: el.textContent.trim().substring(0, 50),
+                    className: el.className,
+                    id: el.id
+                }));
+                
+                const loginElementsInfo = allElementsWithLogin.slice(0, 5).map(el => ({
+                    tag: el.tagName,
+                    text: el.textContent.trim().substring(0, 50),
+                    className: el.className
+                }));
+                
+                return { 
+                    clicked: false, 
+                    reason: 'not_found',
+                    availableButtons: buttonInfo,
+                    clickableElements: clickableInfo,
+                    loginRelatedElements: loginElementsInfo,
+                    totalButtons: allButtons.length,
+                    totalClickable: allClickable.length
+                };
+            });
+            
+            if (loginButtonClicked.clicked) {
+                console.log('✅ Login button clicked!');
+                console.log('   Button text: ' + loginButtonClicked.text);
+                console.log('   Button class: ' + loginButtonClicked.className);
+                console.log('   Button type: ' + loginButtonClicked.type);
+                
+                // 等待登錄處理
+                console.log('⏳ Waiting for login to process...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // 嘗試等待頁面導航或變化
+                try {
+                    await {$pageVar}.waitForNavigation({
+                        waitUntil: 'networkidle2',
+                        timeout: 10000
+                    }).catch(() => {
+                        console.log('   No navigation detected, continuing...');
+                    });
+                } catch (e) {
+                    console.log('   Navigation wait timeout, continuing...');
+                }
+                
+                // 再等待一下讓頁面完全載入
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            } else {
+                console.log('⚠️  Login button not found');
+                if (loginButtonClicked.reason) {
+                    console.log('   Reason: ' + loginButtonClicked.reason);
+                }
+                
+                console.log('   Total buttons on page: ' + (loginButtonClicked.totalButtons || 0));
+                console.log('   Total clickable elements: ' + (loginButtonClicked.totalClickable || 0));
+                
+                // 顯示可用的按鈕信息
+                if (loginButtonClicked.availableButtons && loginButtonClicked.availableButtons.length > 0) {
+                    console.log('   Available buttons on page:');
+                    loginButtonClicked.availableButtons.forEach((btn, index) => {
+                        console.log('     ' + (index + 1) + '. Text: "' + btn.text + '", Class: "' + btn.className + '", Type: "' + btn.type + '", Visible: ' + btn.visible);
+                    });
+                }
+                
+                // 顯示可點擊的元素
+                if (loginButtonClicked.clickableElements && loginButtonClicked.clickableElements.length > 0) {
+                    console.log('   Clickable elements on page:');
+                    loginButtonClicked.clickableElements.forEach((el, index) => {
+                        console.log('     ' + (index + 1) + '. Tag: ' + el.tag + ', Text: "' + el.text + '", Class: "' + el.className + '"');
+                    });
+                }
+                
+                // 顯示包含 "登录" 的元素
+                if (loginButtonClicked.loginRelatedElements && loginButtonClicked.loginRelatedElements.length > 0) {
+                    console.log('   Elements containing "登录" text:');
+                    loginButtonClicked.loginRelatedElements.forEach((el, index) => {
+                        console.log('     ' + (index + 1) + '. Tag: ' + el.tag + ', Text: "' + el.text + '", Class: "' + el.className + '"');
+                    });
+                }
+                
+                if (loginButtonClicked.totalButtons === 0) {
+                    console.log('   ⚠️  No buttons found at all - page may not be fully loaded');
+                    console.log('   💡 Suggestion: Check if page needs more time to render or if there are iframes');
+                }
+            }
+            
+            console.log('✅ 1BET login process completed');
         JS;
     }
 }

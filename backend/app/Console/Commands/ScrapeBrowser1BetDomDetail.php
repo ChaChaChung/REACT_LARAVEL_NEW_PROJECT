@@ -14,9 +14,9 @@ class ScrapeBrowser1BetDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-1bet-dom-detail
+     * 執行方式：php artisan agent:scrape-1bet-dom-detail {url}
      */
-    protected $signature = 'agent:scrape-1bet-dom-detail';
+    protected $signature = 'agent:scrape-1bet-dom-detail {url}';
 
     /**
      * 命令描述
@@ -30,13 +30,18 @@ class ScrapeBrowser1BetDomDetail extends Command
      */
     public function handle()
     {
-        // 從 .env 獲取 1BET_AGENT_DOMAIN
+        // 從 .env 獲取 1BET_AGENT_DOMAIN（登錄頁面 URL）
         $domain = env('1BET_AGENT_DOMAIN', '');
         
         if (empty($domain)) {
             $this->error('❌ 1BET_AGENT_DOMAIN is not set in .env file');
             return 1;
         }
+        
+        // 優先使用命令參數中的 url 作為登錄後要跳轉的目標 URL
+        // 如果沒有提供參數，則使用 .env 中的 1BET_AGENT_REDIRECT_URL
+        $url = $this->argument('url');
+        $redirectUrl = !empty($url) ? $url : env('1BET_AGENT_REDIRECT_URL', '');
         
         // 從 .env 獲取 1BET_AGENT_ACCOUNT
         $account = env('1BET_AGENT_ACCOUNT', '');
@@ -45,7 +50,10 @@ class ScrapeBrowser1BetDomDetail extends Command
         $password = env('1BET_AGENT_PASSWORD', '');
         
         $this->info('=== 1BET Browser Screenshot ===');
-        $this->info("Target Domain: {$domain}");
+        $this->info("Login Domain: {$domain}");
+        if (!empty($redirectUrl)) {
+            $this->info("Target URL (after login): {$redirectUrl}");
+        }
         if (!empty($account)) {
             $this->info("Account: {$account}");
         }
@@ -60,7 +68,7 @@ class ScrapeBrowser1BetDomDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $account, $password);
+        $scriptPath = $this->createPuppeteerScript($domain, $account, $password, $redirectUrl);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -122,9 +130,10 @@ class ScrapeBrowser1BetDomDetail extends Command
      * @param string $domain 要訪問的域名
      * @param string $account 帳號
      * @param string $password 密碼
+     * @param string $redirectUrl 登錄後要跳轉的 URL
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $account = '', $password = '')
+    private function createPuppeteerScript($domain, $account = '', $password = '', $redirectUrl = '')
     {
         $this->info('2. Creating browser automation script...');
 
@@ -132,6 +141,7 @@ class ScrapeBrowser1BetDomDetail extends Command
         $domainJs = json_encode($domain);
         $accountJs = json_encode($account);
         $passwordJs = json_encode($password);
+        $redirectUrlJs = json_encode($redirectUrl);
         
         // 獲取工作目錄的絕對路徑
         $workingDir = storage_path('app/temp');
@@ -207,54 +217,46 @@ class ScrapeBrowser1BetDomDetail extends Command
                     
                     console.log('🌐 Navigating to target URL: ' + targetUrl);
                     
-                    // 使用請求攔截來處理重定向循環
-                    await page.setRequestInterception(true);
+                    // 導航到目標 URL，使用多種策略處理重定向
+                    let navigationSuccess = false;
                     
-                    let redirectCount = 0;
-                    const maxRedirects = 15;
-                    const redirectHistory = [];
-                    
-                    page.on('request', async (request) => {
-                        const url = request.url();
-                        
-                        // 檢查重定向循環
-                        if (redirectHistory.includes(url) && redirectCount >= maxRedirects) {
-                            console.log('⚠️  Redirect loop detected, stopping redirects');
-                            console.log('   Final URL: ' + url);
-                            // 允許最後一個請求繼續，但停止重定向
-                            await request.continue();
-                            return;
-                        }
-                        
-                        // 記錄重定向歷史
-                        if (redirectHistory.length > 0 && redirectHistory[redirectHistory.length - 1] !== url) {
-                            redirectCount++;
-                            redirectHistory.push(url);
-                            if (redirectCount <= 5) {
-                                console.log('   Redirect ' + redirectCount + ': ' + url);
-                            }
-                        } else if (redirectHistory.length === 0) {
-                            redirectHistory.push(url);
-                        }
-                        
-                        await request.continue();
-                    });
-                    
-                    // 導航到目標 URL，即使有重定向錯誤也繼續
+                    // 策略 1: 嘗試正常導航
                     try {
                         await page.goto(targetUrl, {
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
-                        console.log('✅ Navigation completed');
+                        navigationSuccess = true;
+                        console.log('✅ Navigation completed (domcontentloaded)');
                     } catch (e) {
+                        console.log('⚠️  Navigation failed: ' + e.message);
+                        
                         if (e.message.includes('ERR_TOO_MANY_REDIRECTS')) {
-                            console.log('⚠️  Redirect loop detected, but continuing...');
-                            // 即使有重定向錯誤，也等待一下讓頁面載入
-                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            console.log('   Redirect loop detected, trying alternative method...');
+                            
+                            // 策略 2: 使用 evaluate 直接設置 URL
+                            try {
+                                await page.evaluate((url) => {
+                                    window.location.href = url;
+                                }, targetUrl);
+                                
+                                // 等待頁面載入
+                                await page.waitForNavigation({
+                                    waitUntil: 'domcontentloaded',
+                                    timeout: 30000
+                                }).catch(() => {
+                                    console.log('   Navigation wait timeout, but continuing...');
+                                });
+                                
+                                navigationSuccess = true;
+                                console.log('✅ Navigation completed (alternative method)');
+                            } catch (e2) {
+                                console.log('⚠️  Alternative method failed: ' + e2.message);
+                                // 即使失敗也繼續，等待頁面載入
+                                await new Promise(resolve => setTimeout(resolve, 5000));
+                            }
                         } else {
-                            console.log('⚠️  Navigation error: ' + e.message);
-                            // 等待一下讓頁面有機會載入
+                            // 其他錯誤，等待一下讓頁面有機會載入
                             await new Promise(resolve => setTimeout(resolve, 3000));
                         }
                     }
@@ -263,13 +265,86 @@ class ScrapeBrowser1BetDomDetail extends Command
                     console.log('⏳ Waiting for page to fully render...');
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
-                    // 檢查當前 URL
-                    try {
-                        const currentUrl = page.url();
-                        console.log('📍 Current URL: ' + currentUrl);
-                    } catch (e) {
-                        console.log('⚠️  Could not get current URL: ' + e.message);
+                    // 檢查頁面是否真正載入
+                    let pageLoaded = false;
+                    let currentUrl = '';
+                    let retryCount = 0;
+                    const maxRetries = 5;
+                    
+                    while (!pageLoaded && retryCount < maxRetries) {
+                        try {
+                            currentUrl = page.url();
+                            console.log('📍 Current URL (attempt ' + (retryCount + 1) + '): ' + currentUrl);
+                            
+                            // 檢查頁面是否有內容
+                            const pageInfo = await page.evaluate(() => {
+                                return {
+                                    url: window.location.href,
+                                    title: document.title,
+                                    hasBody: !!document.body,
+                                    bodyTextLength: document.body ? document.body.innerText.length : 0,
+                                    inputCount: document.querySelectorAll('input').length,
+                                    hasAccountInput: !!document.querySelector('input.el-input__inner[placeholder="请输入账号"]'),
+                                    hasPasswordInput: !!document.querySelector('input.el-input__inner[placeholder="请输入密码"]')
+                                };
+                            });
+                            
+                            // 如果 URL 不是 about:blank 且有內容，認為頁面已載入
+                            if (currentUrl !== 'about:blank' && currentUrl !== '' && pageInfo.hasBody && pageInfo.bodyTextLength > 0) {
+                                pageLoaded = true;
+                                console.log('✅ Page loaded successfully!');
+                                console.log('   Title: ' + pageInfo.title);
+                                console.log('   Body text length: ' + pageInfo.bodyTextLength);
+                                console.log('   Input count: ' + pageInfo.inputCount);
+                                console.log('   Has account input: ' + pageInfo.hasAccountInput);
+                                console.log('   Has password input: ' + pageInfo.hasPasswordInput);
+                                break;
+                            } else {
+                                console.log('⚠️  Page not fully loaded yet, waiting...');
+                                console.log('   URL: ' + pageInfo.url);
+                                console.log('   Has body: ' + pageInfo.hasBody);
+                                console.log('   Body text length: ' + pageInfo.bodyTextLength);
+                                
+                                // 如果還是空白頁面，嘗試重新導航
+                                if (currentUrl === 'about:blank' || currentUrl === '') {
+                                    console.log('   Attempting to navigate again...');
+                                    try {
+                                        await page.goto(targetUrl, {
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 30000
+                                        });
+                                    } catch (e) {
+                                        console.log('   Navigation retry failed: ' + e.message);
+                                    }
+                                }
+                                
+                                retryCount++;
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error checking page: ' + e.message);
+                            retryCount++;
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        }
                     }
+                    
+                    if (!pageLoaded) {
+                        console.log('❌ Page failed to load after ' + maxRetries + ' attempts');
+                        console.log('   Final URL: ' + currentUrl);
+                        throw new Error('Page failed to load. URL: ' + currentUrl);
+                    }
+                    
+                    // 截圖 1: 頁面載入完成後
+                    console.log('📸 Step 0: Taking screenshot after page loaded...');
+                    const screenshot0Path = path.join(workingDir, '1bet_step0_page_loaded.png');
+                    await page.screenshot({
+                        path: screenshot0Path,
+                        fullPage: true
+                    });
+                    console.log('✅ Screenshot saved: ' + screenshot0Path);
+                    
+                    // 1BET 登入流程
+                    console.log('🔐 Starting 1BET login process...');
                     
                     // 解析帳號參數
                     let accountParsed = null;
@@ -320,6 +395,15 @@ class ScrapeBrowser1BetDomDetail extends Command
                     
                     // 等待一下讓輸入完成
                     await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // 截圖 2: 填入帳號後
+                    console.log('📸 Step 1: Taking screenshot after account filled...');
+                    const screenshot1Path = path.join(workingDir, '1bet_step1_account_filled.png');
+                    await page.screenshot({
+                        path: screenshot1Path,
+                        fullPage: true
+                    });
+                    console.log('✅ Screenshot saved: ' + screenshot1Path);
                     
                     // 解析密碼參數
                     let passwordParsed = null;
@@ -406,9 +490,494 @@ class ScrapeBrowser1BetDomDetail extends Command
                         }
                     }
                     
-                    // 截圖
-                    console.log('📸 Taking screenshot...');
-                    const screenshotPath = path.join(workingDir, '1bet_screenshot.png');
+                    // 截圖 3: 標記並填入密碼後
+                    console.log('📸 Step 2: Taking screenshot after password filled and marked...');
+                    const screenshot2Path = path.join(workingDir, '1bet_step2_password_filled.png');
+                    await page.screenshot({
+                        path: screenshot2Path,
+                        fullPage: true
+                    });
+                    console.log('✅ Screenshot saved: ' + screenshot2Path);
+                    
+                    // 步驟 3: 點擊登錄按鈕
+                    console.log('🔍 Step 3: Looking for login button...');
+                    
+                    // 先等待一下讓按鈕完全渲染
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    
+                    // 獲取頁面上所有按鈕的調試信息
+                    const buttonDebugInfo = await page.evaluate(() => {
+                        const allButtons = Array.from(document.querySelectorAll('button'));
+                        return allButtons.map(btn => ({
+                            text: btn.textContent.trim(),
+                            className: btn.className,
+                            type: btn.type,
+                            id: btn.id,
+                            visible: window.getComputedStyle(btn).display !== 'none' && btn.offsetParent !== null,
+                            hasSpan: !!btn.querySelector('span'),
+                            spanText: btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : ''
+                        }));
+                    });
+                    
+                    console.log('   Found ' + buttonDebugInfo.length + ' button(s) on page:');
+                    buttonDebugInfo.forEach((btn, index) => {
+                        console.log('     ' + (index + 1) + '. Text: "' + btn.text + '", Class: "' + btn.className + '", Visible: ' + btn.visible);
+                        if (btn.hasSpan) {
+                            console.log('        Span text: "' + btn.spanText + '"');
+                        }
+                    });
+                    
+                    const loginButtonClicked = await page.evaluate(() => {
+                        // 方法 1: 查找完整選擇器
+                        let button = document.querySelector('button.el-button.btn-login.el-button--primary.el-button--small');
+                        
+                        // 方法 2: 查找 btn-login 類
+                        if (!button) {
+                            button = document.querySelector('button.btn-login');
+                        }
+                        
+                        // 方法 3: 查找包含 btn-login 的按鈕
+                        if (!button) {
+                            const buttons = Array.from(document.querySelectorAll('button[class*="btn-login"]'));
+                            if (buttons.length > 0) {
+                                button = buttons[0];
+                            }
+                        }
+                        
+                        // 方法 4: 通過文本查找 "登录"（檢查按鈕文本和 span 文本）
+                        if (!button) {
+                            const allButtons = Array.from(document.querySelectorAll('button.el-button, button[type="button"]'));
+                            button = allButtons.find(btn => {
+                                const text = btn.textContent.trim();
+                                const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
+                                return text === '登录' || text === '登入' || text === 'Login' ||
+                                       spanText === '登录' || spanText === '登入' || spanText === 'Login';
+                            });
+                        }
+                        
+                        // 方法 5: 查找任何包含 "登录" 文本的按鈕
+                        if (!button) {
+                            const allButtons = Array.from(document.querySelectorAll('button'));
+                            button = allButtons.find(btn => {
+                                const text = btn.textContent.trim();
+                                const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
+                                return text.includes('登录') || text.includes('登入') || text.includes('Login') ||
+                                       spanText.includes('登录') || spanText.includes('登入') || spanText.includes('Login');
+                            });
+                        }
+                        
+                        // 方法 6: 查找 primary 類型的按鈕（通常是登錄按鈕）
+                        if (!button) {
+                            const primaryButtons = Array.from(document.querySelectorAll('button.el-button--primary'));
+                            if (primaryButtons.length > 0) {
+                                button = primaryButtons[0];
+                            }
+                        }
+                        
+                        if (button) {
+                            // 檢查按鈕是否可見
+                            const style = window.getComputedStyle(button);
+                            const isVisible = style.display !== 'none' && 
+                                            style.visibility !== 'hidden' && 
+                                            style.opacity !== '0' &&
+                                            button.offsetParent !== null;
+                            
+                            if (!isVisible) {
+                                console.log('   Button found but not visible');
+                                return { clicked: false, reason: 'not_visible', buttonText: button.textContent.trim() };
+                            }
+                            
+                            // 滾動到按鈕位置
+                            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            
+                            // 點擊按鈕
+                            button.click();
+                            
+                            return {
+                                clicked: true,
+                                text: button.textContent.trim(),
+                                className: button.className,
+                                spanText: button.querySelector('span') ? button.querySelector('span').textContent.trim() : ''
+                            };
+                        }
+                        
+                        return { clicked: false, reason: 'not_found' };
+                    });
+                    
+                    if (loginButtonClicked.clicked) {
+                        console.log('✅ Login button clicked!');
+                        console.log('   Button text: ' + loginButtonClicked.text);
+                        console.log('   Button class: ' + loginButtonClicked.className);
+                        
+                        // 等待一下讓點擊生效
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // 截圖 4: 點擊登錄按鈕後（登錄處理前）
+                        console.log('📸 Step 3: Taking screenshot after login button clicked...');
+                        const screenshot3Path = path.join(workingDir, '1bet_step3_login_clicked.png');
+                        await page.screenshot({
+                            path: screenshot3Path,
+                            fullPage: true
+                        });
+                        console.log('✅ Screenshot saved: ' + screenshot3Path);
+                        
+                        // 記錄點擊前的 URL
+                        const urlBeforeLogin = page.url();
+                        console.log('   URL before login: ' + urlBeforeLogin);
+                        
+                        // 等待頁面響應（登錄後可能會有頁面跳轉或載入）
+                        console.log('⏳ Waiting for login response and page navigation...');
+                        
+                        try {
+                            // 等待頁面導航完成（最多等待 10 秒）
+                            await page.waitForNavigation({
+                                waitUntil: 'networkidle2',
+                                timeout: 10000
+                            }).catch(() => {
+                                console.log('   Navigation wait timeout, continuing...');
+                            });
+                            
+                            // 檢查 URL 是否變化
+                            const urlAfterLogin = page.url();
+                            console.log('   URL after login: ' + urlAfterLogin);
+                            
+                            if (urlAfterLogin !== urlBeforeLogin) {
+                                console.log('✅ Page navigated after login');
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Navigation error: ' + e.message);
+                        }
+                        
+                        // 等待頁面完全載入（即使沒有導航，也等待內容更新）
+                        console.log('⏳ Waiting for page content to load...');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        
+                        // 再次等待確保頁面完全渲染
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        
+                        // 檢查頁面是否有內容
+                        const pageContent = await page.evaluate(() => {
+                            const bodyText = document.body ? document.body.innerText : '';
+                            return {
+                                url: window.location.href,
+                                title: document.title,
+                                bodyText: bodyText,
+                                bodyTextLength: bodyText.length,
+                                hasContent: document.body && bodyText.length > 0,
+                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                bodyText.includes('security check') ||
+                                                document.title.includes('What Are You Looking For')
+                            };
+                        });
+                        
+                        console.log('   Page title: ' + pageContent.title);
+                        console.log('   Body text length: ' + pageContent.bodyTextLength);
+                        console.log('   Has content: ' + pageContent.hasContent);
+                        console.log('   Has security check: ' + pageContent.hasSecurityCheck);
+                        
+                        // 檢查是否為安全驗證頁面
+                        if (pageContent.hasSecurityCheck) {
+                            console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                            console.log('   Waiting for security check to complete...');
+                            
+                            // 等待安全驗證完成（最多等待 10 秒）
+                            let securityCheckPassed = false;
+                            for (let i = 0; i < 10; i++) {
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                
+                                const checkStatus = await page.evaluate(() => {
+                                    const bodyText = document.body ? document.body.innerText : '';
+                                    return {
+                                        hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                         document.title.includes('What Are You Looking For'),
+                                        url: window.location.href
+                                    };
+                                });
+                                
+                                if (!checkStatus.hasSecurityCheck) {
+                                    securityCheckPassed = true;
+                                    console.log('✅ Security check passed, URL: ' + checkStatus.url);
+                                    break;
+                                }
+                                
+                                console.log('   Still on security check page, waiting... (' + (i + 1) + '/10)');
+                            }
+                            
+                            if (!securityCheckPassed) {
+                                console.log('⚠️  Security check did not complete automatically');
+                            }
+                        }
+                        
+                        // 檢查是否為黑畫面（內容很少或沒有內容）
+                        const isBlackScreen = !pageContent.hasContent || pageContent.bodyTextLength < 100;
+                        
+                        if (isBlackScreen) {
+                            console.log('⚠️  Detected black screen or empty page after login');
+                        }
+                        
+                        // 如果提供了重定向 URL，則跳轉
+                        let redirectUrlParsed = null;
+                        try {
+                            if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                                redirectUrlParsed = JSON.parse($redirectUrlJs);
+                            }
+                        } catch (e) {
+                            redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                        }
+                        
+                        // 如果檢測到安全驗證頁面或黑畫面，且有重定向 URL，直接跳轉
+                        if ((pageContent.hasSecurityCheck || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                        } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
+                        }
+                        
+                        if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                            
+                            try {
+                                // 導航到指定的 URL
+                                await page.goto(redirectUrlParsed, {
+                                    waitUntil: 'networkidle2',
+                                    timeout: 30000
+                                });
+                                console.log('✅ Navigation to redirect URL completed');
+                                
+                                // 等待頁面完全載入
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                
+                                // 檢查新頁面狀態
+                                const redirectPageContent = await page.evaluate(() => {
+                                    return {
+                                        url: window.location.href,
+                                        title: document.title,
+                                        bodyText: document.body ? document.body.innerText.length : 0,
+                                        hasContent: document.body && document.body.innerText.length > 0
+                                    };
+                                });
+                                
+                                console.log('   Redirected URL: ' + redirectPageContent.url);
+                                console.log('   Redirected page title: ' + redirectPageContent.title);
+                                console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
+                                console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
+                            } catch (e) {
+                                console.log('⚠️  Redirect navigation failed: ' + e.message);
+                                // 即使失敗也繼續，可能頁面已經載入
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                            }
+                        } else if (isBlackScreen) {
+                            console.log('⚠️  Black screen detected but no redirect URL configured');
+                        }
+                        
+                        // 截圖 5: 登錄完成後（或重定向後）
+                        console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
+                        const screenshot4Path = path.join(workingDir, '1bet_step4_login_completed.png');
+                        await page.screenshot({
+                            path: screenshot4Path,
+                            fullPage: true
+                        });
+                        console.log('✅ Screenshot saved: ' + screenshot4Path);
+                    } else {
+                        console.log('⚠️  Login button not found');
+                        if (loginButtonClicked.reason) {
+                            console.log('   Reason: ' + loginButtonClicked.reason);
+                            if (loginButtonClicked.buttonText) {
+                                console.log('   Button text found: ' + loginButtonClicked.buttonText);
+                            }
+                        }
+                        
+                        // 嘗試使用 Puppeteer 的 click 方法
+                        console.log('   Trying Puppeteer click method...');
+                        try {
+                            // 嘗試多種選擇器
+                            const selectors = [
+                                'button.el-button.btn-login.el-button--primary.el-button--small',
+                                'button.btn-login',
+                                'button[class*="btn-login"]',
+                                'button.el-button--primary'
+                            ];
+                            
+                            let clicked = false;
+                            for (const selector of selectors) {
+                                try {
+                                    const button = await page.$(selector);
+                                    if (button) {
+                                        const isVisible = await button.isIntersectingViewport();
+                                        if (isVisible) {
+                                            await button.scrollIntoView();
+                                            await new Promise(resolve => setTimeout(resolve, 300));
+                                            await button.click();
+                                            console.log('   ✅ Button clicked using selector: ' + selector);
+                                            clicked = true;
+                                            break;
+                                        }
+                                    }
+                                } catch (e) {
+                                    // 繼續嘗試下一個選擇器
+                                }
+                            }
+                            
+                            if (!clicked) {
+                                console.log('   ⚠️  Could not click button using Puppeteer methods');
+                            } else {
+                                // 如果成功點擊，繼續登錄流程
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                
+                                // 截圖 4: 點擊登錄按鈕後
+                                console.log('📸 Step 3: Taking screenshot after login button clicked...');
+                                const screenshot3Path = path.join(workingDir, '1bet_step3_login_clicked.png');
+                                await page.screenshot({
+                                    path: screenshot3Path,
+                                    fullPage: true
+                                });
+                                console.log('✅ Screenshot saved: ' + screenshot3Path);
+                                
+                                // 繼續登錄流程
+                                const urlBeforeLogin = page.url();
+                                console.log('   URL before login: ' + urlBeforeLogin);
+                                
+                                console.log('⏳ Waiting for login response and page navigation...');
+                                
+                                try {
+                                    await page.waitForNavigation({
+                                        waitUntil: 'networkidle2',
+                                        timeout: 10000
+                                    }).catch(() => {
+                                        console.log('   Navigation wait timeout, continuing...');
+                                    });
+                                    
+                                    const urlAfterLogin = page.url();
+                                    console.log('   URL after login: ' + urlAfterLogin);
+                                    
+                                    if (urlAfterLogin !== urlBeforeLogin) {
+                                        console.log('✅ Page navigated after login');
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Navigation error: ' + e.message);
+                                }
+                                
+                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                
+                                const pageContent = await page.evaluate(() => {
+                                    const bodyText = document.body ? document.body.innerText : '';
+                                    return {
+                                        url: window.location.href,
+                                        title: document.title,
+                                        bodyText: bodyText,
+                                        bodyTextLength: bodyText.length,
+                                        hasContent: document.body && bodyText.length > 0,
+                                        hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                        bodyText.includes('security check') ||
+                                                        document.title.includes('What Are You Looking For')
+                                    };
+                                });
+                                
+                                console.log('   Page title: ' + pageContent.title);
+                                console.log('   Body text length: ' + pageContent.bodyTextLength);
+                                console.log('   Has content: ' + pageContent.hasContent);
+                                console.log('   Has security check: ' + pageContent.hasSecurityCheck);
+                                
+                                if (pageContent.hasSecurityCheck) {
+                                    console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                                    console.log('   Waiting for security check to complete...');
+                                    
+                                    let securityCheckPassed = false;
+                                    for (let i = 0; i < 10; i++) {
+                                        await new Promise(resolve => setTimeout(resolve, 1000));
+                                        
+                                        const checkStatus = await page.evaluate(() => {
+                                            const bodyText = document.body ? document.body.innerText : '';
+                                            return {
+                                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                                                 document.title.includes('What Are You Looking For'),
+                                                url: window.location.href
+                                            };
+                                        });
+                                        
+                                        if (!checkStatus.hasSecurityCheck) {
+                                            securityCheckPassed = true;
+                                            console.log('✅ Security check passed, URL: ' + checkStatus.url);
+                                            break;
+                                        }
+                                        
+                                        console.log('   Still on security check page, waiting... (' + (i + 1) + '/10)');
+                                    }
+                                    
+                                    if (!securityCheckPassed) {
+                                        console.log('⚠️  Security check did not complete automatically');
+                                    }
+                                }
+                                
+                                const isBlackScreen = !pageContent.hasContent || pageContent.bodyTextLength < 100;
+                                
+                                if (isBlackScreen) {
+                                    console.log('⚠️  Detected black screen or empty page after login');
+                                }
+                                
+                                let redirectUrlParsed = null;
+                                try {
+                                    if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                                        redirectUrlParsed = JSON.parse($redirectUrlJs);
+                                    }
+                                } catch (e) {
+                                    redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                                }
+                                
+                                if ((pageContent.hasSecurityCheck || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                                    console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                                } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                                    console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
+                                }
+                                
+                                if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                                    try {
+                                        await page.goto(redirectUrlParsed, {
+                                            waitUntil: 'networkidle2',
+                                            timeout: 30000
+                                        });
+                                        console.log('✅ Navigation to redirect URL completed');
+                                        
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                        
+                                        const redirectPageContent = await page.evaluate(() => {
+                                            return {
+                                                url: window.location.href,
+                                                title: document.title,
+                                                bodyText: document.body ? document.body.innerText.length : 0,
+                                                hasContent: document.body && document.body.innerText.length > 0
+                                            };
+                                        });
+                                        
+                                        console.log('   Redirected URL: ' + redirectPageContent.url);
+                                        console.log('   Redirected page title: ' + redirectPageContent.title);
+                                        console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
+                                        console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
+                                    } catch (e) {
+                                        console.log('⚠️  Redirect navigation failed: ' + e.message);
+                                        await new Promise(resolve => setTimeout(resolve, 2000));
+                                    }
+                                } else if (isBlackScreen) {
+                                    console.log('⚠️  Black screen detected but no redirect URL configured');
+                                }
+                                
+                                console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
+                                const screenshot4Path = path.join(workingDir, '1bet_step4_login_completed.png');
+                                await page.screenshot({
+                                    path: screenshot4Path,
+                                    fullPage: true
+                                });
+                                console.log('✅ Screenshot saved: ' + screenshot4Path);
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Error trying Puppeteer click: ' + e.message);
+                        }
+                    }
+                    
+                    console.log('✅ 1BET login process completed');
+                    
+                    // 最終截圖
+                    console.log('📸 Final: Taking final screenshot...');
+                    const screenshotPath = path.join(workingDir, '1bet_final.png');
                     await page.screenshot({
                         path: screenshotPath,
                         fullPage: true
@@ -524,7 +1093,7 @@ class ScrapeBrowser1BetDomDetail extends Command
     private function processScreenshot($result)
     {
         $this->info('');
-        $this->info('4. Processing screenshot...');
+        $this->info('4. Processing screenshots...');
 
         $timestamp = date('Y-m-d_H-i-s');
         $workingDir = storage_path('app/temp');
@@ -535,23 +1104,39 @@ class ScrapeBrowser1BetDomDetail extends Command
             mkdir($screenshotsDir, 0755, true);
         }
 
-        // 處理截圖文件
-        $screenshotFile = '1bet_screenshot.png';
-        $screenshotSrc = $workingDir . '/' . $screenshotFile;
-        if (file_exists($screenshotSrc)) {
-            $screenshotDst = $screenshotsDir . '/1bet_' . $timestamp . '_' . $screenshotFile;
-            rename($screenshotSrc, $screenshotDst);
-            $this->info("📸 Screenshot saved: {$screenshotDst}");
+        // 處理所有步驟的截圖文件
+        $screenshotFiles = [
+            '1bet_step0_page_loaded.png' => 'step0_page_loaded',
+            '1bet_step1_account_filled.png' => 'step1_account_filled',
+            '1bet_step2_password_filled.png' => 'step2_password_filled',
+            '1bet_step3_login_clicked.png' => 'step3_login_clicked',
+            '1bet_step4_login_completed.png' => 'step4_login_completed',
+            '1bet_final.png' => 'final'
+        ];
+
+        $savedCount = 0;
+        foreach ($screenshotFiles as $screenshotFile => $stepName) {
+            $screenshotSrc = $workingDir . '/' . $screenshotFile;
+            if (file_exists($screenshotSrc)) {
+                $screenshotDst = $screenshotsDir . '/1bet_' . $timestamp . '_' . $stepName . '.png';
+                rename($screenshotSrc, $screenshotDst);
+                $this->info("📸 {$stepName} screenshot saved: {$screenshotDst}");
+                $savedCount++;
+            }
+        }
+
+        if ($savedCount === 0) {
+            $this->warn('⚠️  No screenshot files found');
         } else {
-            $this->warn('⚠️  Screenshot file not found');
+            $this->info("✅ Total {$savedCount} screenshot(s) saved");
         }
 
         if (isset($result['success']) && $result['success']) {
-            $this->info('✅ Screenshot completed successfully!');
+            $this->info('✅ Screenshot process completed successfully!');
             $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
             $this->info('📄 Title: ' . ($result['title'] ?? 'N/A'));
         } else {
-            $this->error('❌ Screenshot failed: ' . ($result['error'] ?? 'Unknown error'));
+            $this->error('❌ Screenshot process failed: ' . ($result['error'] ?? 'Unknown error'));
         }
 
         $this->info('');
