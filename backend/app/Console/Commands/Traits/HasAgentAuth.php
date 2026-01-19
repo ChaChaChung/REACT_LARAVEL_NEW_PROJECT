@@ -583,8 +583,8 @@ trait HasAgentAuth
             // 步驟 1: 查找並填入帳號 input（不標記）
             console.log('🔍 Step 1: Looking for account input field...');
             const accountInputFound = await {$pageVar}.evaluate((accountValue) => {
-                // 查找 input 框：placeholder="请输入账号" 且 class="el-input__inner"
-                const input = document.querySelector('input.el-input__inner[placeholder="请输入账号"]');
+                // 查找 input 框：placeholder="Please enter account number" 且 class="el-input__inner"
+                const input = document.querySelector('input.el-input__inner[placeholder="Please enter account number"]');
                 
                 if (input) {
                     // 如果提供了帳號，填入帳號
@@ -614,7 +614,7 @@ trait HasAgentAuth
                     console.log('   Account filled: ' + accountParsed);
                 }
             } else {
-                console.log('⚠️  Account input field not found with placeholder "请输入账号"');
+                console.log('⚠️  Account input field not found with placeholder "Please enter account number"');
             }
             
             // 等待一下讓輸入完成
@@ -644,8 +644,8 @@ trait HasAgentAuth
             // 步驟 2: 查找並標記密碼 input
             console.log('🔍 Step 2: Looking for password input field...');
             const passwordInputFound = await {$pageVar}.evaluate((passwordValue) => {
-                // 查找密碼 input 框：placeholder="请输入密码" 且 class="el-input__inner"
-                const input = document.querySelector('input.el-input__inner[placeholder="请输入密码"]');
+                // 查找密碼 input 框：placeholder="password" 且 class="el-input__inner"
+                const input = document.querySelector('input.el-input__inner[placeholder="password"]');
                 
                 if (input) {
                     // 保存原始樣式
@@ -694,7 +694,7 @@ trait HasAgentAuth
                 // 等待一下讓滾動和樣式生效
                 await new Promise(resolve => setTimeout(resolve, 1000));
             } else {
-                console.log('⚠️  Password input field not found with placeholder "请输入密码"');
+                console.log('⚠️  Password input field not found with placeholder "password"');
                 // 嘗試查找其他可能的選擇器
                 const alternativeInput = await {$pageVar}.evaluate(() => {
                     const passwordInputs = document.querySelectorAll('input[type="password"].el-input__inner');

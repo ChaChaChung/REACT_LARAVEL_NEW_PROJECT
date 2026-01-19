@@ -149,6 +149,10 @@ class ScrapeBrowser1BetDomDetail extends Command
         $workingDir = storage_path('app/temp');
         $workingDirJs = json_encode($workingDir);
         
+        // 1BET_AGENT_LANG：在每個新文件載入「前」注入到 sessionStorage/localStorage（key: lang）
+        $lang = env('1BET_AGENT_LANG', 'zh-TW');
+        $langJs = json_encode($lang);
+        
         // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
 
@@ -247,6 +251,21 @@ class ScrapeBrowser1BetDomDetail extends Command
                             runtime: {}
                         };
                     });
+
+                    // 在每個新文件載入「前」注入 1BET_AGENT_LANG 到 sessionStorage / localStorage（key: lang，並寫入常見別名）
+                    await page.evaluateOnNewDocument((l) => {
+                        try {
+                            var v = (l && String(l) !== 'null' && String(l) !== '') ? l : 'zh-TW';
+                            var keys = ['lang', 'locale', 'language', 'i18n', 'user-lang', 'site_lang'];
+                            keys.forEach(function(k) {
+                                try { sessionStorage.setItem(k, v); } catch (e) {}
+                                try { localStorage.setItem(k, v); } catch (e) {}
+                            });
+                            if (v && (v.startsWith('zh') || v.startsWith('en') || v.startsWith('th'))) {
+                                try { Object.defineProperty(navigator, 'languages', { get: function() { return [v, v.split('-')[0], 'en-US', 'en']; } }); } catch (e) {}
+                            }
+                        } catch (e) {}
+                    }, $langJs);
 
                     // 移除 JSON 編碼的引號
                     const targetUrl = $domainJs.replace(/^"|"\$/g, '');
@@ -378,6 +397,16 @@ class ScrapeBrowser1BetDomDetail extends Command
                         fullPage: true
                     });
                     console.log('✅ Screenshot saved: ' + screenshot0Path);
+                    
+                    // 設置 site_lang cookie（evaluateOnNewDocument 已注入 sessionStorage.lang，這裡用同一值）
+                    try {
+                        const langForCookie = await page.evaluate(() => (sessionStorage.getItem('lang') || localStorage.getItem('lang') || 'zh-TW'));
+                        const curl = await page.url();
+                        const u = new URL(curl);
+                        if (u.hostname) {
+                            await page.setCookie({ name: 'site_lang', value: langForCookie, domain: u.hostname, path: '/' });
+                        }
+                    } catch (e) { console.log('⚠️  site_lang cookie: ' + (e.message || e)); }
                     
                     // 1BET 登入流程（使用 trait 方法）
                     {$loginCode}
