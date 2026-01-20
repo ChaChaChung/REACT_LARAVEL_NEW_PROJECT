@@ -580,6 +580,56 @@ trait HasAgentAuth
                 accountParsed = $accountJs !== 'null' ? $accountJs.replace(/^"|"\$/g, '') : null;
             }
             
+            // 重試機制：如果找不到登入表單，重新整理頁面
+            let loginFormFound = false;
+            let refreshAttempts = 0;
+            const maxRefreshAttempts = 5;
+            
+            while (!loginFormFound && refreshAttempts < maxRefreshAttempts) {
+                if (refreshAttempts > 0) {
+                    console.log('⚠️  Login form not found, refreshing page (attempt ' + refreshAttempts + '/' + maxRefreshAttempts + ')...');
+                    await {$pageVar}.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    
+                    // 重新注入防護代碼
+                    await {$pageVar}.evaluate(() => {
+                        try {
+                            Object.defineProperty(window, 'DisableDevtool', {
+                                get: () => undefined,
+                                set: () => {},
+                                configurable: false
+                            });
+                            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                        } catch (e) {}
+                    });
+                }
+                
+                // 檢查登入表單是否存在
+                const formCheck = await {$pageVar}.evaluate(() => {
+                    const accountInput = document.querySelector('input.el-input__inner[placeholder="Please enter account number"]');
+                    const passwordInput = document.querySelector('input.el-input__inner[placeholder="password"]') || 
+                                         document.querySelector('input[type="password"].el-input__inner');
+                    return {
+                        hasAccountInput: !!accountInput,
+                        hasPasswordInput: !!passwordInput,
+                        hasLoginButton: !!document.querySelector('button.btn-login, button[class*="btn-login"], a.btn-login')
+                    };
+                });
+                
+                if (formCheck.hasAccountInput && formCheck.hasPasswordInput) {
+                    loginFormFound = true;
+                    console.log('✅ Login form found (account: ' + formCheck.hasAccountInput + ', password: ' + formCheck.hasPasswordInput + ', button: ' + formCheck.hasLoginButton + ')');
+                } else {
+                    console.log('⚠️  Login form incomplete (account: ' + formCheck.hasAccountInput + ', password: ' + formCheck.hasPasswordInput + ', button: ' + formCheck.hasLoginButton + ')');
+                    refreshAttempts++;
+                }
+            }
+            
+            if (!loginFormFound) {
+                console.log('❌ Failed to find login form after ' + maxRefreshAttempts + ' refresh attempts');
+            }
+            
             // 步驟 1: 查找並填入帳號 input（不標記）
             console.log('🔍 Step 1: Looking for account input field...');
             const accountInputFound = await {$pageVar}.evaluate((accountValue) => {
@@ -855,45 +905,172 @@ trait HasAgentAuth
                 } catch (e) {
                     console.log('⚠️  Navigation error: ' + e.message);
                 }
+                // 登入後立即重新注入防護代碼（防止新頁面載入 disable-devtool）
+                console.log('🛡️ Re-injecting anti-detection code after login...');
+                await {$pageVar}.evaluate(() => {
+                    // 重新禁用 disable-devtool
+                    try {
+                        // 1. 完全禁用 DisableDevtool
+                        Object.defineProperty(window, 'DisableDevtool', {
+                            get: () => undefined,
+                            set: () => {},
+                            configurable: false
+                        });
+                        
+                        // 2. 偽造視窗尺寸
+                        Object.defineProperty(window, 'outerWidth', {
+                            get: () => window.innerWidth
+                        });
+                        Object.defineProperty(window, 'outerHeight', {
+                            get: () => window.innerHeight
+                        });
+                        
+                        console.log('🛡️ Anti-detection re-injection complete');
+                    } catch (e) {
+                        console.log('⚠️ Error re-injecting protection:', e.message);
+                    }
+                });
+                
                 // 登入後 #/player 常為非同步載入，需較長時間才能渲染，避免誤判黑屏
                 console.log('⏳ Waiting for page content to load (#/player may load slowly)...');
                 await new Promise(resolve => setTimeout(resolve, 4000));
                 await new Promise(resolve => setTimeout(resolve, 12000));
                 let pageContent = await {$pageVar}.evaluate(() => {
                     const bodyText = document.body ? document.body.innerText : '';
+                    const currentUrl = window.location.href;
+                    const pageTitle = document.title || '';
                     return {
-                        url: window.location.href,
-                        title: document.title,
+                        url: currentUrl,
+                        title: pageTitle,
                         bodyText: bodyText,
                         bodyTextLength: bodyText.length,
                         hasContent: document.body && bodyText.length > 0,
                         hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
                                         bodyText.includes('security check') ||
-                                        document.title.includes('What Are You Looking For')
+                                        pageTitle.includes('What Are You Looking For'),
+                        isDisableDevtoolPage: currentUrl.includes('disable-devtool') || 
+                                             currentUrl.includes('theajack.github.io') ||
+                                             currentUrl.includes('chrome-error://') ||
+                                             pageTitle.includes('theajack.github.io') ||
+                                             pageTitle.includes('Not allowed') ||
+                                             bodyText.includes('Not allowed') ||
+                                             bodyText.includes('What Are You Looking For')
                     };
                 });
+                
+                // 檢測到 disable-devtool 頁面，立即處理
+                if (pageContent.isDisableDevtoolPage) {
+                    console.log('⚠️ Detected disable-devtool redirect page!');
+                    console.log('   Current URL: ' + pageContent.url);
+                    console.log('   Page title: ' + pageContent.title);
+                    
+                    // 解析重定向 URL（如果有的話）
+                    let targetRedirectUrl = null;
+                    try {
+                        if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                            targetRedirectUrl = JSON.parse($redirectUrlJs);
+                        }
+                    } catch (e) {
+                        targetRedirectUrl = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                    }
+                    
+                    // 如果有重定向 URL，直接導航到那裡，否則嘗試返回
+                    if (targetRedirectUrl && targetRedirectUrl !== null && targetRedirectUrl !== '') {
+                        console.log('   Navigating directly to target URL: ' + targetRedirectUrl);
+                        try {
+                            await {$pageVar}.goto(targetRedirectUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        } catch (e) {
+                            console.log('⚠️ Failed to navigate to target URL:', e.message);
+                        }
+                    } else {
+                        console.log('   Attempting to navigate back...');
+                        try {
+                            // 嘗試返回前一頁
+                            await {$pageVar}.goBack({ waitUntil: 'domcontentloaded', timeout: 5000 });
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } catch (e) {
+                            console.log('⚠️ Failed to navigate back:', e.message);
+                        }
+                    }
+                    
+                    // 重新注入防護並檢查頁面
+                    await {$pageVar}.evaluate(() => {
+                        try {
+                            Object.defineProperty(window, 'DisableDevtool', {
+                                get: () => undefined,
+                                set: () => {},
+                                configurable: false
+                            });
+                            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                            console.log('🛡️ Re-injected protection after recovery');
+                        } catch (e) {}
+                    });
+                    
+                    // 重新檢查頁面
+                    pageContent = await {$pageVar}.evaluate(() => {
+                        const bodyText = document.body ? document.body.innerText : '';
+                        const currentUrl = window.location.href;
+                        const pageTitle = document.title || '';
+                        return {
+                            url: currentUrl,
+                            title: pageTitle,
+                            bodyText: bodyText,
+                            bodyTextLength: bodyText.length,
+                            hasContent: document.body && bodyText.length > 0,
+                            hasSecurityCheck: bodyText.includes('What Are You Looking For') || pageTitle.includes('What Are You Looking For'),
+                            isDisableDevtoolPage: currentUrl.includes('disable-devtool') || 
+                                                 currentUrl.includes('theajack.github.io') ||
+                                                 currentUrl.includes('chrome-error://') ||
+                                                 pageTitle.includes('theajack.github.io')
+                        };
+                    });
+                    
+                    console.log('✅ Recovery complete, new URL: ' + pageContent.url);
+                    console.log('   New title: ' + pageContent.title);
+                    console.log('   Still on disable-devtool: ' + pageContent.isDisableDevtoolPage);
+                }
                 if (!pageContent.hasContent || pageContent.bodyTextLength < 100) {
                     console.log('   Page still empty, waiting 5s more for #/player to render...');
                     await new Promise(resolve => setTimeout(resolve, 5000));
                     pageContent = await {$pageVar}.evaluate(() => {
                         const bodyText = document.body ? document.body.innerText : '';
+                        const currentUrl = window.location.href;
                         return {
-                            url: window.location.href,
+                            url: currentUrl,
                             title: document.title,
                             bodyText: bodyText,
                             bodyTextLength: bodyText.length,
                             hasContent: document.body && bodyText.length > 0,
-                            hasSecurityCheck: bodyText.includes('What Are You Looking For') || bodyText.includes('security check') || document.title.includes('What Are You Looking For')
+                            hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
+                                            bodyText.includes('security check') || 
+                                            document.title.includes('What Are You Looking For'),
+                            isDisableDevtoolPage: currentUrl.includes('disable-devtool') || 
+                                                 currentUrl.includes('theajack.github.io') ||
+                                                 bodyText.includes('Not allowed')
                         };
                     });
                     console.log('   After retry: hasContent=' + pageContent.hasContent + ' bodyTextLength=' + pageContent.bodyTextLength);
+                    
+                    // 再次檢查是否被重定向到 disable-devtool
+                    if (pageContent.isDisableDevtoolPage) {
+                        console.log('⚠️ Still on disable-devtool page after retry');
+                        console.log('   URL: ' + pageContent.url);
+                    }
                 }
                 console.log('   Page title: ' + pageContent.title);
                 console.log('   Body text length: ' + pageContent.bodyTextLength);
                 console.log('   Has content: ' + pageContent.hasContent);
                 console.log('   Has security check: ' + pageContent.hasSecurityCheck);
-                if (pageContent.hasSecurityCheck) {
-                    console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                console.log('   Is disable-devtool page: ' + pageContent.isDisableDevtoolPage);
+                
+                if (pageContent.hasSecurityCheck || pageContent.isDisableDevtoolPage) {
+                    if (pageContent.isDisableDevtoolPage) {
+                        console.log('⚠️  Detected disable-devtool block page');
+                    } else {
+                        console.log('⚠️  Detected security check page: "What Are You Looking For"');
+                    }
                     console.log('   Waiting for security check to complete...');
                     
                     // 等待安全驗證完成（最多等待 10 秒）
@@ -903,14 +1080,57 @@ trait HasAgentAuth
                         
                         const checkStatus = await {$pageVar}.evaluate(() => {
                             const bodyText = document.body ? document.body.innerText : '';
+                            const currentUrl = window.location.href;
+                            const pageTitle = document.title || '';
                             return {
                                 hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
-                                                 document.title.includes('What Are You Looking For'),
-                                url: window.location.href
+                                                 pageTitle.includes('What Are You Looking For'),
+                                isDisableDevtoolPage: currentUrl.includes('disable-devtool') || 
+                                                     currentUrl.includes('theajack.github.io') ||
+                                                     currentUrl.includes('chrome-error://') ||
+                                                     pageTitle.includes('theajack.github.io'),
+                                url: currentUrl,
+                                title: pageTitle
                             };
                         });
                         
-                        if (!checkStatus.hasSecurityCheck) {
+                        // 如果檢測到 disable-devtool 頁面，立即嘗試恢復
+                        if (checkStatus.isDisableDevtoolPage) {
+                            console.log('   Still on disable-devtool page (title: ' + checkStatus.title + '), attempting recovery...');
+                            
+                            // 嘗試導航到重定向 URL
+                            let recoveryUrl = null;
+                            try {
+                                if ($redirectUrlJs && $redirectUrlJs !== 'null' && $redirectUrlJs !== '') {
+                                    recoveryUrl = JSON.parse($redirectUrlJs);
+                                }
+                            } catch (e) {
+                                recoveryUrl = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
+                            }
+                            
+                            if (recoveryUrl && recoveryUrl !== null && recoveryUrl !== '') {
+                                try {
+                                    console.log('   Forcing navigation to: ' + recoveryUrl);
+                                    await {$pageVar}.goto(recoveryUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    
+                                    // 重新注入防護
+                                    await {$pageVar}.evaluate(() => {
+                                        try {
+                                            Object.defineProperty(window, 'DisableDevtool', { get: () => undefined, set: () => {}, configurable: false });
+                                            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                                            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                        } catch (e) {}
+                                    });
+                                    
+                                    continue; // 重新檢查
+                                } catch (e) {
+                                    console.log('   Recovery navigation failed:', e.message);
+                                }
+                            }
+                        }
+                        
+                        if (!checkStatus.hasSecurityCheck && !checkStatus.isDisableDevtoolPage) {
                             securityCheckPassed = true;
                             console.log('✅ Security check passed, URL: ' + checkStatus.url);
                             break;
@@ -921,6 +1141,7 @@ trait HasAgentAuth
                     
                     if (!securityCheckPassed) {
                         console.log('⚠️  Security check did not complete automatically');
+                        console.log('   Final URL: ' + pageContent.url);
                     }
                 }
                 
@@ -941,9 +1162,13 @@ trait HasAgentAuth
                     redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
                 }
                 
-                // 如果檢測到安全驗證頁面或黑畫面，且有重定向 URL，直接跳轉
-                if ((pageContent.hasSecurityCheck || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
-                    console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                // 如果檢測到安全驗證頁面、disable-devtool 頁面或黑畫面，且有重定向 URL，直接跳轉
+                if ((pageContent.hasSecurityCheck || pageContent.isDisableDevtoolPage || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
+                    if (pageContent.isDisableDevtoolPage) {
+                        console.log('🔄 Disable-devtool block detected, redirecting to specified URL: ' + redirectUrlParsed);
+                    } else {
+                        console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
+                    }
                 } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
                     console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
                 }
@@ -976,6 +1201,26 @@ trait HasAgentAuth
                             await {$pageVar}.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { console.log('   Navigation wait timeout, but continuing...'); });
                             await new Promise(resolve => setTimeout(resolve, 3000));
                         }
+                        
+                        // 重定向後重新注入防護代碼
+                        console.log('🛡️ Re-injecting protection after redirect...');
+                        await {$pageVar}.evaluate(() => {
+                            try {
+                                if (typeof window.DisableDevtool === 'undefined') {
+                                    Object.defineProperty(window, 'DisableDevtool', {
+                                        get: () => undefined,
+                                        set: () => {},
+                                        configurable: false
+                                    });
+                                }
+                                Object.defineProperty(window, 'outerWidth', {
+                                    get: () => window.innerWidth
+                                });
+                                Object.defineProperty(window, 'outerHeight', {
+                                    get: () => window.innerHeight
+                                });
+                            } catch (e) {}
+                        });
                         const redirectPageContent = await {$pageVar}.evaluate(() => {
                             return {
                                 url: window.location.href,

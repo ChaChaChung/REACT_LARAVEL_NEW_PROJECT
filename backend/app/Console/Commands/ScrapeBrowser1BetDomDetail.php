@@ -229,8 +229,15 @@ class ScrapeBrowser1BetDomDetail extends Command
                         '--disable-sync',
                         // 重定向相關參數
                         '--disable-features=IsolateOrigins,site-per-process',
-                        '--disable-site-isolation-trials'
+                        '--disable-site-isolation-trials',
+                        '--disable-blink-features=AutomationControlled', // 核心：禁用自動化控制特徵
+                        // 防止 DevTools Protocol 檢測
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-features=ChromeWhatsNewUI,HttpsUpgrades',
+                        '--use-fake-ui-for-media-stream',
                     ],
+                    // 排除自動化開關
+                    ignoreDefaultArgs: ['--enable-automation'],
                     // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
                 });
@@ -243,37 +250,101 @@ class ScrapeBrowser1BetDomDetail extends Command
                     await page.setViewport({ width: 1920, height: 1080 });
 
                     // 設定 User Agent，模擬真實的瀏覽器請求
-                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
                     
-                    // 隱藏自動化特徵（反檢測）
+                    // 攔截並阻止跳轉到 disable-devtool 頁面
+                    await page.setRequestInterception(true);
+                    page.on('request', (request) => {
+                        const url = request.url();
+                        const resourceType = request.resourceType();
+                        
+                        // 阻止載入 disable-devtool 相關資源
+                        if (url.includes('disable-devtool') || url.includes('theajack.github.io')) {
+                            console.log('🛡️ Blocked request to:', url);
+                            // 直接 abort，不返回自定義內容（避免替換頁面）
+                            request.abort('blockedbyclient');
+                        } else {
+                            request.continue();
+                        }
+                    });
+                    
+                    // 監聽頁面跳轉，防止被重定向
+                    page.on('framenavigated', async (frame) => {
+                        const url = frame.url();
+                        if (url.includes('disable-devtool') || url.includes('theajack.github.io') || url.includes('chrome-error://')) {
+                            console.log('🛡️ Detected navigation to disable-devtool, blocking...');
+                            
+                            // 立即重新注入防護代碼
+                            try {
+                                await page.evaluate(() => {
+                                    try {
+                                        Object.defineProperty(window, 'DisableDevtool', {
+                                            get: () => undefined,
+                                            set: () => {},
+                                            configurable: false
+                                        });
+                                        
+                                        // 阻止任何跳轉
+                                        const blockUrl = (url) => {
+                                            if (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io'))) {
+                                                console.log('🛡️ Blocked navigation in framenavigated handler');
+                                                return true;
+                                            }
+                                            return false;
+                                        };
+                                        
+                                        const originalAssign = window.location.assign;
+                                        window.location.assign = function(url) {
+                                            if (!blockUrl(url)) {
+                                                originalAssign.call(window.location, url);
+                                            }
+                                        };
+                                        
+                                        console.log('🛡️ Emergency protection injected');
+                                    } catch (e) {}
+                                });
+                            } catch (e) {
+                                console.log('⚠️ Failed to inject emergency protection:', e.message);
+                            }
+                        }
+                    });
+                    
+                    // 隱藏自動化特徵（反檢測）+ 禁用 disable-devtool（簡化版，避免干擾頁面運行）
                     await page.evaluateOnNewDocument(() => {
                         // 隱藏 webdriver 屬性
-                        Object.defineProperty(navigator, 'webdriver', {
-                            get: () => undefined
-                        });
-                        
-                        // 偽造 plugins
-                        Object.defineProperty(navigator, 'plugins', {
-                            get: () => [1, 2, 3, 4, 5]
-                        });
-                        
-                        // 偽造 languages
-                        Object.defineProperty(navigator, 'languages', {
-                            get: () => ['en-US', 'en', 'zh-CN', 'zh']
-                        });
-                        
-                        // 偽造 permissions
-                        const originalQuery = window.navigator.permissions.query;
-                        window.navigator.permissions.query = (parameters) => (
-                            parameters.name === 'notifications' ?
-                                Promise.resolve({ state: Notification.permission }) :
-                                originalQuery(parameters)
-                        );
+                        try {
+                            Object.defineProperty(navigator, 'webdriver', {
+                                get: () => undefined
+                            });
+                        } catch (e) {}
                         
                         // 偽造 chrome 對象
-                        window.chrome = {
-                            runtime: {}
-                        };
+                        try {
+                            if (!window.chrome) {
+                                window.chrome = { runtime: {} };
+                            }
+                        } catch (e) {}
+                        
+                        // 阻止 disable-devtool 初始化（核心防護）
+                        try {
+                            Object.defineProperty(window, 'DisableDevtool', {
+                                get: () => undefined,
+                                set: () => {},
+                                configurable: false
+                            });
+                        } catch (e) {}
+                        
+                        // 偽造視窗尺寸（防止通過視窗尺寸檢測 DevTools）
+                        try {
+                            Object.defineProperty(window, 'outerWidth', {
+                                get: () => window.innerWidth
+                            });
+                            Object.defineProperty(window, 'outerHeight', {
+                                get: () => window.innerHeight
+                            });
+                        } catch (e) {}
+                        
+                        console.log('🛡️ Anti-detection measures activated (minimal)');
                     });
 
                     // 在每個新文件載入「前」注入 1BET_AGENT_LANG 到 sessionStorage / localStorage（key: lang，並寫入常見別名）
@@ -285,9 +356,6 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 try { sessionStorage.setItem(k, v); } catch (e) {}
                                 try { localStorage.setItem(k, v); } catch (e) {}
                             });
-                            if (v && (v.startsWith('zh') || v.startsWith('en') || v.startsWith('th'))) {
-                                try { Object.defineProperty(navigator, 'languages', { get: function() { return [v, v.split('-')[0], 'en-US', 'en']; } }); } catch (e) {}
-                            }
                         } catch (e) {}
                     }, $langJs);
 
@@ -598,7 +666,9 @@ class ScrapeBrowser1BetDomDetail extends Command
                         try {
                             const accEl = await page.$('input[placeholder="Please enter player account"]');
                             if (accEl) {
-                                await accEl.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, accountNumberVal);
+                                // await accEl.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, accountNumberVal);
+                                await accEl.focus(); // 必須先 focus
+                                await page.keyboard.type(accountNumberVal, { delay: 100 });
                                 console.log('✅ Filled account_number (Please enter player account): ' + accountNumberVal);
                             } else { console.log('⚠️  input[placeholder="Please enter player account"] not found'); }
                         } catch (e) { console.log('⚠️  Fill account_number: ' + (e.message || e)); }
@@ -656,6 +726,123 @@ class ScrapeBrowser1BetDomDetail extends Command
                     });
                     if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
                     await new Promise(r => setTimeout(r, 1200));
+                    
+                    // 檢查是否被跳轉到 disable-devtool 頁面
+                    const currentPageStatus = await page.evaluate(() => {
+                        const url = window.location.href;
+                        const title = document.title || '';
+                        return {
+                            url: url,
+                            title: title,
+                            isDisableDevtool: url.includes('disable-devtool') || 
+                                             url.includes('theajack.github.io') ||
+                                             title.includes('theajack.github.io') ||
+                                             title === 'Blocked'
+                        };
+                    });
+                    
+                    if (currentPageStatus.isDisableDevtool) {
+                        console.log('⚠️  Detected redirect to disable-devtool after query!');
+                        console.log('   Current URL: ' + currentPageStatus.url);
+                        console.log('   Current Title: ' + currentPageStatus.title);
+                        console.log('   Navigating back to target page...');
+                        
+                        // 導航回目標頁面
+                        const targetUrl = $redirectUrlJs.replace(/^"|"\$/g, '');
+                        if (targetUrl && targetUrl !== 'null' && targetUrl !== '') {
+                            try {
+                                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                                await new Promise(r => setTimeout(r, 3000));
+                                
+                                // 重新注入防護
+                                await page.evaluate(() => {
+                                    try {
+                                        Object.defineProperty(window, 'DisableDevtool', {
+                                            get: () => undefined,
+                                            set: () => {},
+                                            configurable: false
+                                        });
+                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                        console.log('🛡️ Protection re-injected after recovery');
+                                    } catch (e) {}
+                                });
+                                
+                                console.log('✅ Successfully navigated back to: ' + page.url());
+                                
+                                // 等待頁面重新載入
+                                await new Promise(r => setTimeout(r, 2000));
+                                
+                                // 重新填寫表單（因為頁面重新載入了）
+                                console.log('🔄 Re-filling form after recovery...');
+                                
+                                // 重新填寫 account_number
+                                if (accountNumberVal) {
+                                    try {
+                                        const accEl = await page.$('input[placeholder="Please enter player account"]');
+                                        if (accEl) {
+                                            await accEl.focus();
+                                            await page.keyboard.type(accountNumberVal, { delay: 100 });
+                                            console.log('✅ Re-filled account_number: ' + accountNumberVal);
+                                        }
+                                    } catch (e) { console.log('⚠️  Re-fill account_number failed:', e.message); }
+                                    await new Promise(r => setTimeout(r, 300));
+                                }
+                                
+                                // 重新填寫日期
+                                if (dateStartVal || dateEndVal) {
+                                    try {
+                                        const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || await page.$('div.el-date-editor--datetimerange input') || await page.$('div.el-date-editor--datetimerange');
+                                        if (toOpen) {
+                                            await toOpen.click();
+                                            await new Promise(resolve => setTimeout(resolve, 800));
+                                        }
+                                        
+                                        if (dateStartVal) {
+                                            const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
+                                            if (el) {
+                                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
+                                                console.log('✅ Re-filled Start Date: ' + dateStartVal);
+                                            }
+                                        }
+                                        
+                                        if (dateEndVal) {
+                                            const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
+                                            if (el) {
+                                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
+                                                console.log('✅ Re-filled End Date: ' + dateEndVal);
+                                            }
+                                        }
+                                        
+                                        const ok = await page.evaluate(() => {
+                                            const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
+                                            for (const b of btns) { if ((b.textContent || '').trim() === 'OK') { b.click(); return true; } }
+                                            return false;
+                                        });
+                                        if (ok) console.log('✅ OK clicked (retry)');
+                                        await new Promise(r => setTimeout(r, 600));
+                                    } catch (e) { console.log('⚠️  Re-fill dates failed:', e.message); }
+                                }
+                                
+                                // 重新點擊 query
+                                const queryRetry = await page.evaluate(() => {
+                                    const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
+                                    for (const b of btns) {
+                                        const t = (b.textContent || '').trim();
+                                        const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
+                                        if (t === 'query' || s === 'query') { b.click(); return true; }
+                                    }
+                                    return false;
+                                });
+                                if (queryRetry) { console.log('✅ Query button re-clicked'); }
+                                await new Promise(r => setTimeout(r, 1200));
+                                
+                            } catch (e) {
+                                console.log('⚠️  Failed to navigate back:', e.message);
+                            }
+                        }
+                    }
+                    
                     // 爬取 table.el-table__header / el-table__body 的資料（模仿 GLC）
                     await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 8000 }).catch(() => {});
                     let tableData = { found: false };
@@ -666,6 +853,168 @@ class ScrapeBrowser1BetDomDetail extends Command
                     } catch (e) { console.log('⚠️  extractTableData: ' + (e.message || e)); }
                     console.log('📸 Taking screenshot after query...');
                     await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
+                    
+                    // 最終檢查：確保不在 disable-devtool 頁面
+                    const finalPageStatus = await page.evaluate(() => {
+                        const url = window.location.href;
+                        const title = document.title || '';
+                        return {
+                            url: url,
+                            title: title,
+                            isDisableDevtool: url.includes('disable-devtool') || 
+                                             url.includes('theajack.github.io') ||
+                                             title.includes('theajack.github.io') ||
+                                             title === 'Blocked'
+                        };
+                    });
+                    
+                    if (finalPageStatus.isDisableDevtool) {
+                        console.log('⚠️  Still on disable-devtool page before final screenshot!');
+                        console.log('   URL: ' + finalPageStatus.url);
+                        console.log('   Title: ' + finalPageStatus.title);
+                        console.log('   Attempting final recovery...');
+                        
+                        const targetUrl = $redirectUrlJs.replace(/^"|"\$/g, '');
+                        if (targetUrl && targetUrl !== 'null' && targetUrl !== '') {
+                            try {
+                                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                                await new Promise(r => setTimeout(r, 3000));
+                                console.log('✅ Final recovery successful: ' + page.url());
+                                
+                                // 重新注入防護
+                                await page.evaluate(() => {
+                                    try {
+                                        Object.defineProperty(window, 'DisableDevtool', {
+                                            get: () => undefined,
+                                            set: () => {},
+                                            configurable: false
+                                        });
+                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                    } catch (e) {}
+                                });
+                                
+                                // 重新填寫完整表單
+                                console.log('🔄 Re-filling complete form after final recovery...');
+                                
+                                // 1. 重新填寫 account_number
+                                if (accountNumberVal) {
+                                    try {
+                                        const accEl = await page.$('input[placeholder="Please enter player account"]');
+                                        if (accEl) {
+                                            await accEl.click({ clickCount: 3 }); // 選中所有文字
+                                            await page.keyboard.press('Backspace'); // 清除
+                                            await accEl.type(accountNumberVal, { delay: 100 });
+                                            console.log('✅ Final: Re-filled account_number: ' + accountNumberVal);
+                                        }
+                                    } catch (e) { console.log('⚠️  Final: Re-fill account failed:', e.message); }
+                                    await new Promise(r => setTimeout(r, 500));
+                                }
+                                
+                                // 2. 重新填寫日期
+                                if (dateStartVal || dateEndVal) {
+                                    try {
+                                        // 點擊打開日期選擇器
+                                        const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || 
+                                                      await page.$('div.el-date-editor--datetimerange input') || 
+                                                      await page.$('div.el-date-editor--datetimerange');
+                                        if (toOpen) {
+                                            await toOpen.click();
+                                            await new Promise(r => setTimeout(r, 1000));
+                                            console.log('✅ Final: Date picker opened');
+                                        }
+                                        
+                                        // 等待日期輸入框出現
+                                        await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input[placeholder="Start Date"]', { timeout: 5000 }).catch(() => {});
+                                        
+                                        // 填寫開始日期
+                                        if (dateStartVal) {
+                                            const startEl = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
+                                            if (startEl) {
+                                                await startEl.evaluate((e, v) => { 
+                                                    e.value = v; 
+                                                    e.dispatchEvent(new Event('input', { bubbles: true })); 
+                                                    e.dispatchEvent(new Event('change', { bubbles: true })); 
+                                                }, dateStartVal);
+                                                console.log('✅ Final: Re-filled Start Date: ' + dateStartVal);
+                                            }
+                                            await new Promise(r => setTimeout(r, 300));
+                                        }
+                                        
+                                        // 填寫結束日期
+                                        if (dateEndVal) {
+                                            const endEl = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
+                                            if (endEl) {
+                                                await endEl.evaluate((e, v) => { 
+                                                    e.value = v; 
+                                                    e.dispatchEvent(new Event('input', { bubbles: true })); 
+                                                    e.dispatchEvent(new Event('change', { bubbles: true })); 
+                                                }, dateEndVal);
+                                                console.log('✅ Final: Re-filled End Date: ' + dateEndVal);
+                                            }
+                                            await new Promise(r => setTimeout(r, 300));
+                                        }
+                                        
+                                        // 點擊 OK
+                                        const okClicked = await page.evaluate(() => {
+                                            const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
+                                            for (const b of btns) { 
+                                                if ((b.textContent || '').trim() === 'OK') { 
+                                                    b.click(); 
+                                                    return true; 
+                                                } 
+                                            }
+                                            return false;
+                                        });
+                                        if (okClicked) console.log('✅ Final: OK clicked');
+                                        await new Promise(r => setTimeout(r, 800));
+                                        
+                                    } catch (e) { 
+                                        console.log('⚠️  Final: Re-fill dates failed:', e.message); 
+                                    }
+                                }
+                                
+                                // 3. 重新點擊 query 按鈕
+                                const queryClicked = await page.evaluate(() => {
+                                    const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
+                                    for (const b of btns) {
+                                        const t = (b.textContent || '').trim();
+                                        const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
+                                        if (t === 'query' || s === 'query') { 
+                                            b.click(); 
+                                            return true; 
+                                        }
+                                    }
+                                    return false;
+                                });
+                                if (queryClicked) { 
+                                    console.log('✅ Final: Query button clicked'); 
+                                } else { 
+                                    console.log('⚠️  Final: Query button not found'); 
+                                }
+                                
+                                // 等待查詢完成
+                                await new Promise(r => setTimeout(r, 2000));
+                                
+                                // 重新抓取表格
+                                console.log('🔍 Final: Extracting table data...');
+                                await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 8000 }).catch(() => {});
+                                try {
+                                    tableData = await extractTableData(page);
+                                    if (tableData.found) {
+                                        console.log('✅ Final: Table extracted: ' + (tableData.rowCount || 0) + ' rows, ' + (tableData.headerCount || 0) + ' columns');
+                                    } else {
+                                        console.log('⚠️  Final: Table not found');
+                                    }
+                                } catch (e) {
+                                    console.log('⚠️  Final: Table extraction failed:', e.message);
+                                }
+                                
+                            } catch (e) {
+                                console.log('⚠️  Final recovery failed:', e.message);
+                            }
+                        }
+                    }
                     
                     // 最終截圖（若有找到 Date time 欄位，已加上紅框；若已點擊 Start date time，日期面板應已開啟）
                     console.log('📸 Final: Taking final screenshot...');
@@ -745,7 +1094,7 @@ class ScrapeBrowser1BetDomDetail extends Command
         
         // 使用 Process 執行腳本，並實時輸出日誌
         $process = Process::path($workingDir)
-            ->timeout(600)
+            ->timeout(600) // 10 分鐘超時
             ->tty(false); // 不使用 TTY，以便捕獲所有輸出
         
         // 執行腳本並實時輸出
