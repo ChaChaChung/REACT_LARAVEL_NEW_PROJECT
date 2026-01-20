@@ -16,9 +16,9 @@ class ScrapeBrowser1BetDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?}
+     * 執行方式：php artisan agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?} {account_number?}
      */
-    protected $signature = 'agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?}';
+    protected $signature = 'agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?} {account_number?}';
 
     /**
      * 命令描述
@@ -68,6 +68,9 @@ class ScrapeBrowser1BetDomDetail extends Command
         if ($dateEnd = $this->argument('date_end')) {
             $this->info("Date End: {$dateEnd}");
         }
+        if ($accountNumber = $this->argument('account_number')) {
+            $this->info("Account number: {$accountNumber}");
+        }
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -75,12 +78,13 @@ class ScrapeBrowser1BetDomDetail extends Command
             return 1;
         }
 
-        // 從命令參數獲取 date_start、date_end（可選）
+        // 從命令參數獲取 date_start、date_end、account_number（可選）
         $dateStart = $this->argument('date_start');
         $dateEnd = $this->argument('date_end');
+        $accountNumber = $this->argument('account_number');
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $redirectUrl, $dateStart, $dateEnd);
+        $scriptPath = $this->createPuppeteerScript($domain, $redirectUrl, $dateStart, $dateEnd, $accountNumber);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -140,14 +144,13 @@ class ScrapeBrowser1BetDomDetail extends Command
     /**
      * 創建 Puppeteer 自動化腳本
      * @param string $domain 要訪問的域名
-     * @param string $account 帳號
-     * @param string $password 密碼
      * @param string $redirectUrl 登錄後要跳轉的 URL
      * @param string|null $dateStart 開始日期，填入 placeholder="Start Date" 的 input
      * @param string|null $dateEnd 結束日期，填入 placeholder="End Date" 的 input
+     * @param string|null $accountNumber 玩家帳號，填入 placeholder="Please enter player account" 的 input
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $redirectUrl = '', $dateStart = null, $dateEnd = null)
+    private function createPuppeteerScript($domain, $redirectUrl = '', $dateStart = null, $dateEnd = null, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -166,6 +169,9 @@ class ScrapeBrowser1BetDomDetail extends Command
         // date_start / date_end：填入 Start Date、End Date 的 input
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
+        
+        // account_number：填入 placeholder="Please enter player account" 的 input
+        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
         
         // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
@@ -491,6 +497,18 @@ class ScrapeBrowser1BetDomDetail extends Command
                     } else {
                         console.log('⚠️  Date time field not found (searched: "Date time:" label, placeholder*="Date time|datetime", .el-date-editor)');
                     }
+                    // account_number 填入 placeholder="Please enter player account" 的欄位
+                    const accountNumberVal = $accountNumberJs;
+                    if (accountNumberVal) {
+                        try {
+                            const accEl = await page.$('input[placeholder="Please enter player account"]');
+                            if (accEl) {
+                                await accEl.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, accountNumberVal);
+                                console.log('✅ Filled account_number (Please enter player account): ' + accountNumberVal);
+                            } else { console.log('⚠️  input[placeholder="Please enter player account"] not found'); }
+                        } catch (e) { console.log('⚠️  Fill account_number: ' + (e.message || e)); }
+                        await new Promise(r => setTimeout(r, 300));
+                    }
                     const dateStartVal = $dateStartJs;
                     const dateEndVal = $dateEndJs;
                     if (dateStartVal || dateEndVal) {
@@ -529,22 +547,22 @@ class ScrapeBrowser1BetDomDetail extends Command
                             });
                             if (ok) console.log('✅ OK clicked');
                             await new Promise(r => setTimeout(r, 600));
-                            // 6) 點擊 query 按鈕（el-button el-button--primary el-button--small，span=query）
-                            const queryClicked = await page.evaluate(() => {
-                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
-                                for (const b of btns) {
-                                    const t = (b.textContent || '').trim();
-                                    const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
-                                    if (t === 'query' || s === 'query') { b.click(); return true; }
-                                }
-                                return false;
-                            });
-                            if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
-                            await new Promise(r => setTimeout(r, 1200));
-                            console.log('📸 Taking screenshot after filling Start/End date time...');
-                            await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
                         } catch (e) { console.log('⚠️  Date range fill: ' + (e.message || e)); }
                     }
+                    // 點擊 query 按鈕（el-button el-button--primary el-button--small，span=query）；填完 account_number 或日期後皆執行
+                    const queryClicked = await page.evaluate(() => {
+                        const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
+                        for (const b of btns) {
+                            const t = (b.textContent || '').trim();
+                            const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
+                            if (t === 'query' || s === 'query') { b.click(); return true; }
+                        }
+                        return false;
+                    });
+                    if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
+                    await new Promise(r => setTimeout(r, 1200));
+                    console.log('📸 Taking screenshot after query...');
+                    await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
                     
                     // 最終截圖（若有找到 Date time 欄位，已加上紅框；若已點擊 Start date time，日期面板應已開啟）
                     console.log('📸 Final: Taking final screenshot...');
