@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * 1BET 瀏覽器截圖命令
@@ -89,9 +90,12 @@ class ScrapeBrowser1BetDomDetail extends Command
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
 
-        // 如果執行成功，處理截圖
+        // 如果執行成功，處理截圖與表格資料
         if ($result) {
             $this->processScreenshot($result);
+            if (!empty($result['tableData']['found']) && !empty($result['tableData']['data'])) {
+                $this->processScrapedData($result);
+            }
             return 0;
         }
 
@@ -431,6 +435,97 @@ class ScrapeBrowser1BetDomDetail extends Command
                     // 1BET 登入流程（使用 trait 方法）
                     {$loginCode}
 
+                    // 提取表格資料的函數（模仿 GLC：table.el-table__header / el-table__body）
+                    const extractTableData = async (pageObject) => {
+                        return await pageObject.evaluate(() => {
+                            let headerTable = document.querySelector('table.el-table__header');
+                            let bodyTable = document.querySelector('table.el-table__body');
+                            let table = document.querySelector('table.el-table');
+                            if (!table && !headerTable) {
+                                const allTables = document.querySelectorAll('table');
+                                for (let t of allTables) {
+                                    if (t.className && (t.className.includes('el-table') || t.className.includes('el-table__header') || t.className.includes('el-table__body'))) {
+                                        if (t.className.includes('el-table__header')) headerTable = t;
+                                        else if (t.className.includes('el-table__body')) bodyTable = t;
+                                        else if (!table) table = t;
+                                    }
+                                }
+                            }
+                            if (!table && !headerTable && !bodyTable) {
+                                const el = document.querySelector('.el-table, .el-table__header, .el-table__body, [class*="el-table"]');
+                                if (el) {
+                                    let p = el.parentElement;
+                                    while (p && p.tagName !== 'TABLE') p = p.parentElement;
+                                    if (p && p.tagName === 'TABLE') {
+                                        if (p.className.includes('el-table__header')) headerTable = p;
+                                        else if (p.className.includes('el-table__body')) bodyTable = p;
+                                        else table = p;
+                                    } else if (el.tagName === 'TABLE') {
+                                        if (el.className.includes('el-table__header')) headerTable = el;
+                                        else if (el.className.includes('el-table__body')) bodyTable = el;
+                                        else table = el;
+                                    }
+                                }
+                            }
+                            if (!table && !headerTable && !bodyTable) {
+                                return { found: false, error: 'Table el-table not found' };
+                            }
+                            let headers = [];
+                            let thead = (headerTable && headerTable.querySelector('thead')) || (table && table.querySelector('thead'));
+                            if (thead) {
+                                const hrs = thead.querySelectorAll('tr');
+                                if (hrs.length > 0) {
+                                    const hcs = hrs[0].querySelectorAll('th, td');
+                                    headers = Array.from(hcs).map(cell => {
+                                        const d = cell.querySelector('div.cell');
+                                        return d ? d.textContent.trim() : cell.textContent.trim();
+                                    });
+                                }
+                            } else {
+                                const src = headerTable || table;
+                                if (src) {
+                                    const fr = src.querySelector('tr');
+                                    if (fr) {
+                                        const hcs = fr.querySelectorAll('th, td');
+                                        headers = Array.from(hcs).map(cell => {
+                                            const d = cell.querySelector('div.cell');
+                                            return d ? d.textContent.trim() : cell.textContent.trim();
+                                        });
+                                    }
+                                }
+                            }
+                            let rows = [], dataStartIndex = 0, tbody = null;
+                            if (bodyTable) {
+                                tbody = bodyTable.querySelector('tbody');
+                                rows = tbody ? Array.from(tbody.querySelectorAll('tr')) : Array.from(bodyTable.querySelectorAll('tr'));
+                            } else if (table) {
+                                tbody = table.querySelector('tbody');
+                                rows = tbody ? Array.from(tbody.querySelectorAll('tr')) : Array.from(table.querySelectorAll('tr'));
+                                if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) dataStartIndex = 1;
+                            }
+                            const dataRows = rows.slice(dataStartIndex).map((row, ri) => {
+                                const cells = Array.from(row.querySelectorAll('td'));
+                                const rowData = {};
+                                if (headers && headers.length > 0) {
+                                    headers.forEach((h, ci) => {
+                                        let ch = (h || '').replace(/[^\\w\\u4e00-\\u9fa5]/g, '_').replace(/^_+|_+$/g, '') || ('column_' + ci);
+                                        let fh = ch; let c = 1;
+                                        while (rowData.hasOwnProperty(fh)) { fh = ch + '_' + c; c++; }
+                                        let cv = null;
+                                        if (cells[ci]) { const d = cells[ci].querySelector('div.cell'); cv = d ? d.textContent.trim() : cells[ci].textContent.trim(); }
+                                        rowData[fh] = cv;
+                                    });
+                                } else {
+                                    cells.forEach((c, ci) => { const d = c.querySelector('div.cell'); rowData['column_' + ci] = (d || c) ? (d ? d.textContent.trim() : c.textContent.trim()) : null; });
+                                }
+                                rowData._rowIndex = ri;
+                                return rowData;
+                            }).filter(rd => { const v = Object.values(rd)[0]; return v !== '小計' && v !== '總計'; });
+                            const ft = bodyTable || table || headerTable;
+                            return { found: true, tableClass: ft ? ft.className : null, headers, headerCount: headers.length, rowCount: dataRows.length, data: dataRows };
+                        });
+                    };
+
                     // 先尋找並框起 Date time 欄位（.el-date-editor--datetimerange 內 input[placeholder="Start date time"]），再將 date_start 填入該 input
                     const dateTimeFieldInfo = await page.evaluate(() => {
                         const info = { found: false, by: null, tagName: '', className: '', placeholder: '', id: '', name: '', value: '' };
@@ -561,6 +656,14 @@ class ScrapeBrowser1BetDomDetail extends Command
                     });
                     if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
                     await new Promise(r => setTimeout(r, 1200));
+                    // 爬取 table.el-table__header / el-table__body 的資料（模仿 GLC）
+                    await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 8000 }).catch(() => {});
+                    let tableData = { found: false };
+                    try {
+                        tableData = await extractTableData(page);
+                        if (tableData.found) console.log('✅ Table extracted: ' + (tableData.rowCount || 0) + ' rows, ' + (tableData.headerCount || 0) + ' columns');
+                        else console.log('⚠️  Table not found: ' + (tableData.error || ''));
+                    } catch (e) { console.log('⚠️  extractTableData: ' + (e.message || e)); }
                     console.log('📸 Taking screenshot after query...');
                     await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
                     
@@ -573,12 +676,13 @@ class ScrapeBrowser1BetDomDetail extends Command
                     });
                     console.log('✅ Screenshot saved: ' + screenshotPath);
                     
-                    // 返回結果
+                    // 返回結果（含 tableData 供 processScrapedData 儲存）
                     const result = {
                         success: true,
                         url: page.url(),
                         title: await page.title(),
-                        screenshot: screenshotPath
+                        screenshot: screenshotPath,
+                        tableData: tableData
                     };
                     
                     // 保存結果
@@ -731,5 +835,39 @@ class ScrapeBrowser1BetDomDetail extends Command
 
         $this->info('');
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+    }
+
+    /**
+     * 處理並儲存爬取的表格資料（模仿 GLC：table.el-table__header / el-table__body）
+     * @param array $result runPuppeteerScript 的結果，需含 tableData
+     */
+    private function processScrapedData($result)
+    {
+        $tableData = $result['tableData'] ?? null;
+        if (!$tableData || empty($tableData['found']) || empty($tableData['data'])) {
+            $this->warn('⚠️  No table data to save.');
+            return;
+        }
+
+        $timestamp = date('Y-m-d_H-i-s');
+        $allData = $tableData['data'];
+        $headers = $tableData['headers'] ?? [];
+        $totalRows = count($allData);
+
+        $mergedData = [
+            'metadata' => [
+                'timestamp' => $timestamp,
+                'url' => $result['url'] ?? '',
+                'totalRows' => $totalRows,
+                'source' => '1bet_el_table',
+            ],
+            'headers' => $headers,
+            'data' => $allData,
+        ];
+
+        $fileName = "scraped_data/scraped_data_1bet_{$timestamp}.json";
+        Storage::put($fileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+        $this->info("✅ Table data saved: {$fileName} ({$totalRows} rows)");
     }
 }
