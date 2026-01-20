@@ -80,7 +80,7 @@ class ScrapeBrowser1BetDomDetail extends Command
         $dateEnd = $this->argument('date_end');
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $account, $password, $redirectUrl, $dateStart, $dateEnd);
+        $scriptPath = $this->createPuppeteerScript($domain, $redirectUrl, $dateStart, $dateEnd);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -147,14 +147,12 @@ class ScrapeBrowser1BetDomDetail extends Command
      * @param string|null $dateEnd 結束日期，填入 placeholder="End Date" 的 input
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $account = '', $password = '', $redirectUrl = '', $dateStart = null, $dateEnd = null)
+    private function createPuppeteerScript($domain, $redirectUrl = '', $dateStart = null, $dateEnd = null)
     {
         $this->info('2. Creating browser automation script...');
 
         // 轉義 JavaScript 字符串
         $domainJs = json_encode($domain);
-        $accountJs = json_encode($account);
-        $passwordJs = json_encode($password);
         $redirectUrlJs = json_encode($redirectUrl);
         
         // 獲取工作目錄的絕對路徑
@@ -166,8 +164,8 @@ class ScrapeBrowser1BetDomDetail extends Command
         $langJs = json_encode($lang);
 
         // date_start / date_end：填入 Start Date、End Date 的 input
-        $dateStartJs = json_encode((string) ($dateStart ?? ''));
-        $dateEndJs = json_encode((string) ($dateEnd ?? ''));
+        $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
+        $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         
         // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
@@ -497,46 +495,56 @@ class ScrapeBrowser1BetDomDetail extends Command
                     const dateEndVal = $dateEndJs;
                     if (dateStartVal || dateEndVal) {
                         try {
-                            await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="End Date"], div.el-date-editor--datetimerange, input.el-range-input[placeholder="Start date time"]', { timeout: 8000 });
-                        } catch (e) { console.log('⚠️  Date input not found: ' + (e.message || e)); }
+                            // 1) 點擊主輸入打開彈窗（Start Date / End Date 在彈窗內）
+                            const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || await page.$('div.el-date-editor--datetimerange input') || await page.$('div.el-date-editor--datetimerange');
+                            if (toOpen) {
+                                await toOpen.click();
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                            }
+                            // 2) 等待彈窗內的 input[placeholder="Start Date"]、input[placeholder="End Date"] 出現
+                            await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input.el-input__inner[placeholder="End Date"], input[placeholder="Start Date"], input[placeholder="End Date"]', { timeout: 8000 }).catch(() => {});
+                            // 3) date_start 填入 <input placeholder="Start Date" class="el-input__inner">
+                            if (dateStartVal) {
+                                const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
+                                if (el) {
+                                    await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
+                                    console.log('✅ Filled Start Date (date_start): ' + dateStartVal);
+                                } else { console.log('⚠️  input[placeholder="Start Date"].el-input__inner not found'); }
+                                await new Promise(r => setTimeout(r, 300));
+                            }
+                            // 4) date_end 填入 <input placeholder="End Date" class="el-input__inner">
+                            if (dateEndVal) {
+                                const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
+                                if (el) {
+                                    await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
+                                    console.log('✅ Filled End Date (date_end): ' + dateEndVal);
+                                } else { console.log('⚠️  input[placeholder="End Date"].el-input__inner not found'); }
+                                await new Promise(r => setTimeout(r, 300));
+                            }
+                            // 5) 點擊 OK 確認
+                            const ok = await page.evaluate(() => {
+                                const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
+                                for (const b of btns) { if ((b.textContent || '').trim() === 'OK') { b.click(); return true; } }
+                                return false;
+                            });
+                            if (ok) console.log('✅ OK clicked');
+                            await new Promise(r => setTimeout(r, 600));
+                            // 6) 點擊 query 按鈕（el-button el-button--primary el-button--small，span=query）
+                            const queryClicked = await page.evaluate(() => {
+                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
+                                for (const b of btns) {
+                                    const t = (b.textContent || '').trim();
+                                    const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
+                                    if (t === 'query' || s === 'query') { b.click(); return true; }
+                                }
+                                return false;
+                            });
+                            if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
+                            await new Promise(r => setTimeout(r, 1200));
+                            console.log('📸 Taking screenshot after filling Start/End date time...');
+                            await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
+                        } catch (e) { console.log('⚠️  Date range fill: ' + (e.message || e)); }
                     }
-                    // date_start 填入 <input placeholder="Start Date" class="el-input__inner">
-                    if (dateStartVal) {
-                        try {
-                            const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
-                            if (el) {
-                                await el.click();
-                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
-                                console.log('✅ Filled Start Date (date_start): ' + dateStartVal);
-                            } else { console.log('⚠️  input[placeholder="Start Date"] not found'); }
-                        } catch (e) { console.log('⚠️  Fill Start Date: ' + (e.message || e)); }
-                    }
-                    if (dateEndVal) {
-                        try {
-                            const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]') || await page.$('input.el-range-input[placeholder="End date time"]');
-                            if (el) {
-                                await el.click();
-                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
-                                console.log('✅ Filled End Date (date_end): ' + dateEndVal);
-                            } else { console.log('⚠️  input[placeholder="End Date"] / End date time not found'); }
-                        } catch (e) { console.log('⚠️  Fill End Date: ' + (e.message || e)); }
-                    }
-                    if (dateStartVal || dateEndVal) {
-                        await new Promise(resolve => setTimeout(resolve, 600));
-                        console.log('📸 Taking screenshot after filling Start/End date time...');
-                        await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
-                    }
-                    // 點擊 input.el-range-input[placeholder="Start date time"] 以打開日期區間選擇器（若尚未填入日期時仍會執行）
-                    try {
-                        const startInput = await page.$('input.el-range-input[placeholder="Start date time"]');
-                        if (startInput) {
-                            await startInput.click();
-                            await new Promise(resolve => setTimeout(resolve, 800));
-                            console.log('✅ Clicked input.el-range-input[placeholder="Start date time"]');
-                        } else {
-                            console.log('⚠️  input.el-range-input[placeholder="Start date time"] not found');
-                        }
-                    } catch (e) { console.log('⚠️  Click Start date time: ' + (e.message || e)); }
                     
                     // 最終截圖（若有找到 Date time 欄位，已加上紅框；若已點擊 Start date time，日期面板應已開啟）
                     console.log('📸 Final: Taking final screenshot...');
