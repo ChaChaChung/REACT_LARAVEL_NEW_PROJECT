@@ -641,58 +641,29 @@ trait HasAgentAuth
                 passwordParsed = $passwordJs !== 'null' ? $passwordJs.replace(/^"|"\$/g, '') : null;
             }
             
-            // 步驟 2: 查找並標記密碼 input
+            // 步驟 2: 查找並填入密碼（不改樣式，避免 1BET 防篡改偵測導致表單被清空 bodyLen=0）
             console.log('🔍 Step 2: Looking for password input field...');
             const passwordInputFound = await {$pageVar}.evaluate((passwordValue) => {
-                // 查找密碼 input 框：placeholder="password" 且 class="el-input__inner"
                 const input = document.querySelector('input.el-input__inner[placeholder="password"]');
-                
                 if (input) {
-                    // 保存原始樣式
-                    input.setAttribute('data-original-style', input.getAttribute('style') || '');
-                    
-                    // 添加高亮標記（紅色邊框和陰影）
-                    input.style.border = '5px solid red';
-                    input.style.boxShadow = '0 0 20px red';
-                    input.style.zIndex = '9999';
-                    input.style.position = 'relative';
-                    input.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
-                    
-                    // 如果提供了密碼，填入密碼
                     if (passwordValue && passwordValue !== null && passwordValue !== '') {
                         input.value = passwordValue;
-                        // 觸發 input 和 change 事件，確保框架能檢測到值變化
                         input.dispatchEvent(new Event('input', { bubbles: true }));
                         input.dispatchEvent(new Event('change', { bubbles: true }));
-                        input.dispatchEvent(new Event('blur', { bubbles: true }));
                     }
-                    
-                    // 滾動到該元素位置
                     input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    
-                    return {
-                        found: true,
-                        placeholder: input.placeholder,
-                        className: input.className,
-                        type: input.type,
-                        value: input.value ? '***' : '' // 不顯示真實密碼，只顯示是否已填入
-                    };
+                    return { found: true, placeholder: input.placeholder, className: input.className, type: input.type, value: input.value ? '***' : '' };
                 }
-                
                 return { found: false };
             }, passwordParsed);
             
             if (passwordInputFound.found) {
-                console.log('✅ Password input field found and marked!');
+                console.log('✅ Password input field found and filled!');
                 console.log('   Placeholder: ' + passwordInputFound.placeholder);
-                console.log('   Type: ' + passwordInputFound.type);
-                console.log('   Class: ' + passwordInputFound.className);
                 if (passwordParsed && passwordParsed !== null && passwordParsed !== '') {
                     console.log('   Password filled: ' + (passwordInputFound.value ? 'Yes' : 'No'));
                 }
-                
-                // 等待一下讓滾動和樣式生效
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, 100));
             } else {
                 console.log('⚠️  Password input field not found with placeholder "password"');
                 // 嘗試查找其他可能的選擇器
@@ -716,46 +687,25 @@ trait HasAgentAuth
                 }
             }
             
-            // 截圖 3: 標記並填入密碼後
-            if ($workingDirJs && $workingDirJs !== 'null') {
-                console.log('📸 Step 2: Taking screenshot after password filled and marked...');
-                const screenshot2Path = path.join($workingDirJs, '1bet_step2_password_filled.png');
-                await {$pageVar}.screenshot({
-                    path: screenshot2Path,
-                    fullPage: true
-                });
-                console.log('✅ Screenshot saved: ' + screenshot2Path);
-            }
-            
-            // 步驟 3: 點擊登錄按鈕
+            // 步驟 3: 點擊登錄按鈕（填完密碼後儘快點，attempt 0 在 100ms 後即試，減少表單被清空 bodyLen=0 前就完成）
             console.log('🔍 Step 3: Looking for login button...');
-            
-            // 先等待一下讓按鈕完全渲染
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // 獲取頁面上所有按鈕的調試信息
-            const buttonDebugInfo = await {$pageVar}.evaluate(() => {
-                const allButtons = Array.from(document.querySelectorAll('button'));
-                return allButtons.map(btn => ({
-                    text: btn.textContent.trim(),
-                    className: btn.className,
-                    type: btn.type,
-                    id: btn.id,
-                    visible: window.getComputedStyle(btn).display !== 'none' && btn.offsetParent !== null,
-                    hasSpan: !!btn.querySelector('span'),
-                    spanText: btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : ''
-                }));
-            });
-            
-            console.log('   Found ' + buttonDebugInfo.length + ' button(s) on page:');
-            buttonDebugInfo.forEach((btn, index) => {
-                console.log('     ' + (index + 1) + '. Text: "' + btn.text + '", Class: "' + btn.className + '", Visible: ' + btn.visible);
-                if (btn.hasSpan) {
-                    console.log('        Span text: "' + btn.spanText + '"');
+            let loginButtonClicked = { clicked: false };
+            for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt === 1) {
+                    if ($workingDirJs && $workingDirJs !== 'null') {
+                        console.log('📸 Step 2: Taking screenshot after password (retry path)...');
+                        await {$pageVar}.screenshot({ path: path.join($workingDirJs, '1bet_step2_password_filled.png'), fullPage: true });
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 400));
+                    await {$pageVar}.waitForSelector('button, a.btn-login, a[class*="btn-login"], a.el-button--primary, input[type="submit"]', { timeout: 6000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    const buttonDebugInfo = await {$pageVar}.evaluate(() => {
+                        const all = Array.from(document.querySelectorAll('button, a.btn-login, a[class*="btn-login"], a.el-button--primary'));
+                        return all.map(btn => ({ text: btn.textContent.trim(), className: btn.className, visible: window.getComputedStyle(btn).display !== 'none' && btn.offsetParent !== null }));
+                    });
+                    console.log('   Found ' + buttonDebugInfo.length + ' button(s) on page (retry)');
                 }
-            });
-            
-            const loginButtonClicked = await {$pageVar}.evaluate(() => {
+                loginButtonClicked = await {$pageVar}.evaluate(() => {
                 // 方法 1: 優先查找完整選擇器
                 let button = document.querySelector('button.el-button.btn-login.el-button--primary.el-button--small');
                 
@@ -771,7 +721,19 @@ trait HasAgentAuth
                         button = buttons[0];
                     }
                 }
-                
+                // 方法 3b: 可能是 a 標籤（Element UI 的 el-button 有時渲染為 a）
+                if (!button) {
+                    button = document.querySelector('a.btn-login') || document.querySelector('a[class*="btn-login"]');
+                }
+                // 方法 3c: a.el-button--primary（僅一個時視為登錄）
+                if (!button) {
+                    const as = Array.from(document.querySelectorAll('a.el-button--primary'));
+                    if (as.length === 1) button = as[0];
+                }
+                // 方法 3d: input[type="submit"]
+                if (!button) {
+                    button = document.querySelector('input[type="submit"]');
+                }
                 // 方法 4: 通過文本查找 "登录"（檢查按鈕文本和 span 文本）
                 if (!button) {
                     const allButtons = Array.from(document.querySelectorAll('button.el-button, button[type="button"]'));
@@ -801,7 +763,24 @@ trait HasAgentAuth
                         button = primaryButtons[0];
                     }
                 }
-                
+                // 方法 6b: 在 a.el-button 中依文本查找 login/登录/登入
+                if (!button) {
+                    const all = Array.from(document.querySelectorAll('a.el-button, a[class*="el-button"]'));
+                    button = all.find(function(el) {
+                        var t = (el.textContent || '').trim();
+                        var s = (el.querySelector('span') ? (el.querySelector('span').textContent || '') : '').trim();
+                        return t === '登录' || t === '登入' || t === 'Login' || t === 'login' || s === '登录' || s === '登入' || s === 'Login' || t.includes('登录') || t.includes('登入') || t.toLowerCase().includes('login');
+                    });
+                }
+                // 方法 6c: div/span.el-button（Element UI 有時用 div/span 當按鈕）
+                if (!button) {
+                    const all = Array.from(document.querySelectorAll('div.el-button, span.el-button, div[class*="el-button"], [role="button"]'));
+                    button = all.find(function(el) {
+                        var t = (el.textContent || '').trim();
+                        var s = (el.querySelector('span') ? (el.querySelector('span').textContent || '') : '').trim();
+                        return t === '登录' || t === '登入' || t === 'Login' || t === 'login' || s === '登录' || s === '登入' || s === 'Login' || t.includes('登录') || t.includes('登入') || t.toLowerCase().includes('login');
+                    });
+                }
                 if (button) {
                     // 檢查按鈕是否可見
                     const style = window.getComputedStyle(button);
@@ -831,7 +810,9 @@ trait HasAgentAuth
                 
                 return { clicked: false, reason: 'not_found' };
             });
-            
+                if (loginButtonClicked.clicked) break;
+                if (attempt < 2) { console.log('   Login button not found, retrying in 2s (body may have been empty)...'); await new Promise(r => setTimeout(r, 2000)); }
+            }
             if (loginButtonClicked.clicked) {
                 console.log('✅ Login button clicked!');
                 console.log('   Button text: ' + loginButtonClicked.text);
@@ -859,34 +840,26 @@ trait HasAgentAuth
                 console.log('⏳ Waiting for login response and page navigation...');
                 
                 try {
-                    // 等待頁面導航完成（最多等待 10 秒）
+                    // SPA 登入多為 hash 切換，未必觸發 document 導航；用 domcontentloaded 短等，常會 timeout，再接固定等待
                     await {$pageVar}.waitForNavigation({
-                        waitUntil: 'networkidle2',
-                        timeout: 10000
+                        waitUntil: 'domcontentloaded',
+                        timeout: 6000
                     }).catch(() => {
-                        console.log('   Navigation wait timeout, continuing...');
+                        console.log('   Navigation wait timeout (SPA hash change may not fire), continuing...');
                     });
-                    
-                    // 檢查 URL 是否變化
                     const urlAfterLogin = {$pageVar}.url();
                     console.log('   URL after login: ' + urlAfterLogin);
-                    
                     if (urlAfterLogin !== urlBeforeLogin) {
                         console.log('✅ Page navigated after login');
                     }
                 } catch (e) {
                     console.log('⚠️  Navigation error: ' + e.message);
                 }
-                
-                // 等待頁面完全載入（即使沒有導航，也等待內容更新）
-                console.log('⏳ Waiting for page content to load...');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                
-                // 再次等待確保頁面完全渲染
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                // 檢查頁面是否有內容
-                const pageContent = await {$pageVar}.evaluate(() => {
+                // 登入後 #/player 常為非同步載入，需較長時間才能渲染，避免誤判黑屏
+                console.log('⏳ Waiting for page content to load (#/player may load slowly)...');
+                await new Promise(resolve => setTimeout(resolve, 4000));
+                await new Promise(resolve => setTimeout(resolve, 12000));
+                let pageContent = await {$pageVar}.evaluate(() => {
                     const bodyText = document.body ? document.body.innerText : '';
                     return {
                         url: window.location.href,
@@ -899,13 +872,26 @@ trait HasAgentAuth
                                         document.title.includes('What Are You Looking For')
                     };
                 });
-                
+                if (!pageContent.hasContent || pageContent.bodyTextLength < 100) {
+                    console.log('   Page still empty, waiting 5s more for #/player to render...');
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    pageContent = await {$pageVar}.evaluate(() => {
+                        const bodyText = document.body ? document.body.innerText : '';
+                        return {
+                            url: window.location.href,
+                            title: document.title,
+                            bodyText: bodyText,
+                            bodyTextLength: bodyText.length,
+                            hasContent: document.body && bodyText.length > 0,
+                            hasSecurityCheck: bodyText.includes('What Are You Looking For') || bodyText.includes('security check') || document.title.includes('What Are You Looking For')
+                        };
+                    });
+                    console.log('   After retry: hasContent=' + pageContent.hasContent + ' bodyTextLength=' + pageContent.bodyTextLength);
+                }
                 console.log('   Page title: ' + pageContent.title);
                 console.log('   Body text length: ' + pageContent.bodyTextLength);
                 console.log('   Has content: ' + pageContent.hasContent);
                 console.log('   Has security check: ' + pageContent.hasSecurityCheck);
-                
-                // 檢查是否為安全驗證頁面
                 if (pageContent.hasSecurityCheck) {
                     console.log('⚠️  Detected security check page: "What Are You Looking For"');
                     console.log('   Waiting for security check to complete...');
@@ -965,25 +951,31 @@ trait HasAgentAuth
                 if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
                     try {
                         console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
-                        
-                        // 使用 JavaScript 直接修改 window.location，避免被檢測為自動化工具
-                        await {$pageVar}.evaluate((targetUrl) => {
-                            window.location.href = targetUrl;
-                        }, redirectUrlParsed);
-                        
-                        // 等待頁面導航
-                        console.log('⏳ Waiting for page navigation...');
-                        await {$pageVar}.waitForNavigation({
-                            waitUntil: 'networkidle2',
-                            timeout: 30000
-                        }).catch(() => {
-                            console.log('   Navigation wait timeout, but continuing...');
-                        });
-                        
-                        // 等待頁面完全載入
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                        
-                        // 檢查新頁面狀態
+                        // 在 Node 端判斷：同 origin 且目標有 hash 時，只改 location.hash，避免整頁重載、減少觸發 anti-devtool
+                        // 黑屏時 pageContent.url 常為空，改優先用 page.url() 取得目前 URL，避免 new URL('') 拋錯導致誤走 full nav
+                        let hashPart = null;
+                        try {
+                            var ru = new URL(redirectUrlParsed);
+                            var curUrl = (pageContent && pageContent.url) || '';
+                            if (!curUrl) { try { curUrl = await {$pageVar}.url(); } catch (e2) {} }
+                            if (curUrl) {
+                                var cu = new URL(curUrl);
+                                if (ru.origin === cu.origin) {
+                                    if (ru.hash && ru.hash.length > 1) hashPart = ru.hash;
+                                    else if (redirectUrlParsed.indexOf('#') >= 0) { var h = redirectUrlParsed.substring(redirectUrlParsed.indexOf('#')); if (h && h.length > 1) hashPart = h; }
+                                }
+                            }
+                        } catch (e) {}
+                        if (hashPart) {
+                            console.log('   Using hash-only navigation (SPA) to avoid full reload...');
+                            await {$pageVar}.evaluate((h) => { window.location.hash = h; }, hashPart);
+                            await new Promise(resolve => setTimeout(resolve, 4000));
+                        } else {
+                            await {$pageVar}.evaluate((targetUrl) => { window.location.href = targetUrl; }, redirectUrlParsed);
+                            console.log('⏳ Waiting for page navigation...');
+                            await {$pageVar}.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { console.log('   Navigation wait timeout, but continuing...'); });
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                        }
                         const redirectPageContent = await {$pageVar}.evaluate(() => {
                             return {
                                 url: window.location.href,
@@ -1048,7 +1040,23 @@ trait HasAgentAuth
                         console.log('   Button text found: ' + loginButtonClicked.buttonText);
                     }
                 }
-                
+                const loginDebug = await {$pageVar}.evaluate(() => {
+                    const q = (s) => document.querySelectorAll(s).length;
+                    return {
+                        button: q('button'),
+                        aBtn: q('a.btn-login') + q('a[class*="btn-login"]') + q('a.el-button--primary'),
+                        divSpanBtn: q('div.el-button') + q('span.el-button') + q('div[class*="el-button"]'),
+                        iframes: document.querySelectorAll('iframe').length,
+                        bodyLen: document.body ? document.body.innerText.length : 0
+                    };
+                });
+                console.log('   Debug: <button>=' + loginDebug.button + ' a(btn-login/el-button--primary)=' + loginDebug.aBtn + ' div/span.el-button=' + loginDebug.divSpanBtn + ' iframes=' + loginDebug.iframes + ' bodyLen=' + loginDebug.bodyLen);
+                if (loginDebug.iframes > 0) {
+                    console.log('   ⚠️  Page has iframes – 登入按鈕若在 iframe 內，目前只搜主頁，需改為切到該 frame 再找');
+                }
+                if (loginDebug.button === 0 && loginDebug.aBtn === 0 && loginDebug.divSpanBtn === 0) {
+                    console.log('   ⚠️  主頁沒有 button/a/div 登入控制項，可能：尚未渲染（可加長 wait）、在 iframe、或為其他標籤');
+                }
                 // 嘗試使用 Puppeteer 的 click 方法
                 console.log('   Trying Puppeteer click method...');
                 try {
@@ -1056,7 +1064,15 @@ trait HasAgentAuth
                         'button.el-button.btn-login.el-button--primary.el-button--small',
                         'button.btn-login',
                         'button[class*="btn-login"]',
-                        'button.el-button--primary'
+                        'button.el-button--primary',
+                        'a.btn-login',
+                        'a[class*="btn-login"]',
+                        'a.el-button--primary',
+                        'input[type="submit"]',
+                        'div.btn-login',
+                        'div[class*="btn-login"]',
+                        'div.el-button--primary',
+                        'span.el-button--primary'
                     ];
                     
                     let clicked = false;
@@ -1099,26 +1115,18 @@ trait HasAgentAuth
                         
                         try {
                             await {$pageVar}.waitForNavigation({
-                                waitUntil: 'networkidle2',
-                                timeout: 10000
-                            }).catch(() => {
-                                console.log('   Navigation wait timeout, continuing...');
-                            });
-                            
+                                waitUntil: 'domcontentloaded',
+                                timeout: 6000
+                            }).catch(() => { console.log('   Navigation wait timeout (SPA), continuing...'); });
                             const urlAfterLogin = {$pageVar}.url();
                             console.log('   URL after login: ' + urlAfterLogin);
-                            
-                            if (urlAfterLogin !== urlBeforeLogin) {
-                                console.log('✅ Page navigated after login');
-                            }
+                            if (urlAfterLogin !== urlBeforeLogin) console.log('✅ Page navigated after login');
                         } catch (e) {
                             console.log('⚠️  Navigation error: ' + e.message);
                         }
-                        
-                        await new Promise(resolve => setTimeout(resolve, 3000));
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        
-                        const pageContent = await {$pageVar}.evaluate(() => {
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                        await new Promise(resolve => setTimeout(resolve, 12000));
+                        let pageContent = await {$pageVar}.evaluate(() => {
                             const bodyText = document.body ? document.body.innerText : '';
                             return {
                                 url: window.location.href,
@@ -1126,17 +1134,29 @@ trait HasAgentAuth
                                 bodyText: bodyText,
                                 bodyTextLength: bodyText.length,
                                 hasContent: document.body && bodyText.length > 0,
-                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || 
-                                                bodyText.includes('security check') ||
-                                                document.title.includes('What Are You Looking For')
+                                hasSecurityCheck: bodyText.includes('What Are You Looking For') || bodyText.includes('security check') || document.title.includes('What Are You Looking For')
                             };
                         });
-                        
+                        if (!pageContent.hasContent || pageContent.bodyTextLength < 100) {
+                            console.log('   Page still empty, waiting 5s more for #/player to render...');
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                            pageContent = await {$pageVar}.evaluate(() => {
+                                const bodyText = document.body ? document.body.innerText : '';
+                                return {
+                                    url: window.location.href,
+                                    title: document.title,
+                                    bodyText: bodyText,
+                                    bodyTextLength: bodyText.length,
+                                    hasContent: document.body && bodyText.length > 0,
+                                    hasSecurityCheck: bodyText.includes('What Are You Looking For') || bodyText.includes('security check') || document.title.includes('What Are You Looking For')
+                                };
+                            });
+                            console.log('   After retry: hasContent=' + pageContent.hasContent + ' bodyTextLength=' + pageContent.bodyTextLength);
+                        }
                         console.log('   Page title: ' + pageContent.title);
                         console.log('   Body text length: ' + pageContent.bodyTextLength);
                         console.log('   Has content: ' + pageContent.hasContent);
                         console.log('   Has security check: ' + pageContent.hasSecurityCheck);
-                        
                         if (pageContent.hasSecurityCheck) {
                             console.log('⚠️  Detected security check page: "What Are You Looking For"');
                             console.log('   Waiting for security check to complete...');
@@ -1192,21 +1212,29 @@ trait HasAgentAuth
                         if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
                             try {
                                 console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
-                                
-                                await {$pageVar}.evaluate((targetUrl) => {
-                                    window.location.href = targetUrl;
-                                }, redirectUrlParsed);
-                                
-                                console.log('⏳ Waiting for page navigation...');
-                                await {$pageVar}.waitForNavigation({
-                                    waitUntil: 'networkidle2',
-                                    timeout: 30000
-                                }).catch(() => {
-                                    console.log('   Navigation wait timeout, but continuing...');
-                                });
-                                
-                                await new Promise(resolve => setTimeout(resolve, 3000));
-                                
+                                let hashPart = null;
+                                try {
+                                    var ru = new URL(redirectUrlParsed);
+                                    var curUrl = (pageContent && pageContent.url) || '';
+                                    if (!curUrl) { try { curUrl = await {$pageVar}.url(); } catch (e2) {} }
+                                    if (curUrl) {
+                                        var cu = new URL(curUrl);
+                                        if (ru.origin === cu.origin) {
+                                            if (ru.hash && ru.hash.length > 1) hashPart = ru.hash;
+                                            else if (redirectUrlParsed.indexOf('#') >= 0) { var h = redirectUrlParsed.substring(redirectUrlParsed.indexOf('#')); if (h && h.length > 1) hashPart = h; }
+                                        }
+                                    }
+                                } catch (e) {}
+                                if (hashPart) {
+                                    console.log('   Using hash-only navigation (SPA) to avoid full reload...');
+                                    await {$pageVar}.evaluate((h) => { window.location.hash = h; }, hashPart);
+                                    await new Promise(resolve => setTimeout(resolve, 4000));
+                                } else {
+                                    await {$pageVar}.evaluate((targetUrl) => { window.location.href = targetUrl; }, redirectUrlParsed);
+                                    console.log('⏳ Waiting for page navigation...');
+                                    await {$pageVar}.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => { console.log('   Navigation wait timeout, but continuing...'); });
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                }
                                 const redirectPageContent = await {$pageVar}.evaluate(() => {
                                     return {
                                         url: window.location.href,
@@ -1215,30 +1243,17 @@ trait HasAgentAuth
                                         hasContent: document.body && document.body.innerText.length > 0
                                     };
                                 });
-                                
                                 console.log('   Redirected URL: ' + redirectPageContent.url);
                                 console.log('   Redirected page title: ' + redirectPageContent.title);
                                 console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
                                 console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
-                                
-                                if (redirectPageContent.url.includes('disable-devtool') || 
+                                if (redirectPageContent.url.includes('disable-devtool') ||
                                     redirectPageContent.url.includes('theajack.github.io') ||
                                     redirectPageContent.title.includes('Not allowed')) {
                                     console.log('⚠️  Detected anti-devtool page, trying alternative navigation method...');
-                                    
-                                    await {$pageVar}.evaluate((targetUrl) => {
-                                        window.location.replace(targetUrl);
-                                    }, redirectUrlParsed);
-                                    
+                                    await {$pageVar}.evaluate((targetUrl) => { window.location.replace(targetUrl); }, redirectUrlParsed);
                                     await new Promise(resolve => setTimeout(resolve, 3000));
-                                    
-                                    const retryPageContent = await {$pageVar}.evaluate(() => {
-                                        return {
-                                            url: window.location.href,
-                                            title: document.title
-                                        };
-                                    });
-                                    
+                                    const retryPageContent = await {$pageVar}.evaluate(() => { return { url: window.location.href, title: document.title }; });
                                     console.log('   Retry URL: ' + retryPageContent.url);
                                     console.log('   Retry title: ' + retryPageContent.title);
                                 }
@@ -1249,7 +1264,6 @@ trait HasAgentAuth
                         } else if (isBlackScreen) {
                             console.log('⚠️  Black screen detected but no redirect URL configured');
                         }
-                        
                         if ($workingDirJs && $workingDirJs !== 'null') {
                             console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
                             const screenshot4Path = path.join($workingDirJs, '1bet_step4_login_completed.png');

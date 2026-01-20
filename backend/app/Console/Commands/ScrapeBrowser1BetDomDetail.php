@@ -16,9 +16,9 @@ class ScrapeBrowser1BetDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-1bet-dom-detail {url}
+     * 執行方式：php artisan agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?}
      */
-    protected $signature = 'agent:scrape-1bet-dom-detail {url}';
+    protected $signature = 'agent:scrape-1bet-dom-detail {url} {date_start?} {date_end?}';
 
     /**
      * 命令描述
@@ -62,6 +62,12 @@ class ScrapeBrowser1BetDomDetail extends Command
         if (!empty($password)) {
             $this->info("Password: " . str_repeat('*', strlen($password)));
         }
+        if ($dateStart = $this->argument('date_start')) {
+            $this->info("Date Start: {$dateStart}");
+        }
+        if ($dateEnd = $this->argument('date_end')) {
+            $this->info("Date End: {$dateEnd}");
+        }
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         // 檢查 Node.js 是否安裝
@@ -69,8 +75,12 @@ class ScrapeBrowser1BetDomDetail extends Command
             return 1;
         }
 
+        // 從命令參數獲取 date_start、date_end（可選）
+        $dateStart = $this->argument('date_start');
+        $dateEnd = $this->argument('date_end');
+
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $account, $password, $redirectUrl);
+        $scriptPath = $this->createPuppeteerScript($domain, $account, $password, $redirectUrl, $dateStart, $dateEnd);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -133,9 +143,11 @@ class ScrapeBrowser1BetDomDetail extends Command
      * @param string $account 帳號
      * @param string $password 密碼
      * @param string $redirectUrl 登錄後要跳轉的 URL
+     * @param string|null $dateStart 開始日期，填入 placeholder="Start Date" 的 input
+     * @param string|null $dateEnd 結束日期，填入 placeholder="End Date" 的 input
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $account = '', $password = '', $redirectUrl = '')
+    private function createPuppeteerScript($domain, $account = '', $password = '', $redirectUrl = '', $dateStart = null, $dateEnd = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -152,6 +164,10 @@ class ScrapeBrowser1BetDomDetail extends Command
         // 1BET_AGENT_LANG：在每個新文件載入「前」注入到 sessionStorage/localStorage（key: lang）
         $lang = env('1BET_AGENT_LANG', 'zh-TW');
         $langJs = json_encode($lang);
+
+        // date_start / date_end：填入 Start Date、End Date 的 input
+        $dateStartJs = json_encode((string) ($dateStart ?? ''));
+        $dateEndJs = json_encode((string) ($dateEnd ?? ''));
         
         // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
@@ -410,8 +426,119 @@ class ScrapeBrowser1BetDomDetail extends Command
                     
                     // 1BET 登入流程（使用 trait 方法）
                     {$loginCode}
+
+                    // 先尋找並框起 Date time 欄位（.el-date-editor--datetimerange 內 input[placeholder="Start date time"]），再將 date_start 填入該 input
+                    const dateTimeFieldInfo = await page.evaluate(() => {
+                        const info = { found: false, by: null, tagName: '', className: '', placeholder: '', id: '', name: '', value: '' };
+                        // 1) 找文字包含 "Date time:" 或 "Date time" 的節點，再找其後的 input / .el-date-editor
+                        const walk = (el) => {
+                            if (!el || el.nodeType !== 1) return null;
+                            const t = (el.textContent || '').trim();
+                            if (/Date\s*time\s*:?/i.test(t) && (el.tagName === 'LABEL' || el.tagName === 'SPAN' || el.tagName === 'DIV' || el.tagName === 'TD' || el.tagName === 'TH')) {
+                                let n = el.nextElementSibling;
+                                while (n) {
+                                    if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA' || n.classList.contains('el-date-editor') || n.querySelector?.('input, .el-date-editor')) {
+                                        const inp = n.tagName === 'INPUT' ? n : n.querySelector('input.el-input__inner, input');
+                                        return inp || n;
+                                    }
+                                    n = n.nextElementSibling;
+                                }
+                                n = el.parentElement?.nextElementSibling;
+                                if (n) {
+                                    const inp = n.querySelector?.('input, .el-date-editor') || (n.tagName === 'INPUT' ? n : null);
+                                    if (inp) return inp.tagName === 'INPUT' ? inp : inp.querySelector?.('input') || inp;
+                                }
+                                const inParent = el.closest('tr, .el-form-item, div[class*="form"], li')?.querySelector?.('input, .el-date-editor input, .el-date-editor');
+                                if (inParent) return inParent;
+                            }
+                            for (let c = el.firstChild; c; c = c.nextSibling) { const r = walk(c); if (r) return r; }
+                            return null;
+                        };
+                        const fromLabel = walk(document.body);
+                        if (fromLabel) {
+                            info.found = true; info.by = 'Date time label';
+                            const el = fromLabel.tagName === 'INPUT' ? fromLabel : fromLabel.querySelector?.('input');
+                            if (el) { info.tagName = el.tagName; info.className = el.className || ''; info.placeholder = el.placeholder || ''; info.id = el.id || ''; info.name = el.name || ''; info.value = (el.value || '').slice(0, 80); }
+                            else { info.tagName = fromLabel.tagName; info.className = fromLabel.className || ''; }
+                            var toFrame = (fromLabel.tagName === 'INPUT' ? fromLabel : (fromLabel.querySelector && fromLabel.querySelector('input.el-input__inner, input'))) || fromLabel;
+                            try {
+                                toFrame.style.border = '3px solid red';
+                                toFrame.style.boxShadow = '0 0 10px red';
+                                toFrame.style.zIndex = '9999';
+                                toFrame.style.position = 'relative';
+                            } catch (e) {}
+                            return info;
+                        }
+                        // 2) 依 placeholder / 元件型別找
+                        const sel = 'input.el-input__inner[placeholder*="Date time"], input[placeholder*="date time"], input[placeholder*="datetime"], .el-date-editor.el-input__inner, .el-date-editor--datetimerange, .el-date-editor';
+                        const el2 = document.querySelector(sel) || document.querySelector('.el-date-editor input, .el-date-editor--datetimerange input');
+                        if (el2) {
+                            const inp = el2.tagName === 'INPUT' ? el2 : el2.querySelector?.('input');
+                            if (inp) {
+                                info.found = true; info.by = 'placeholder or el-date-editor';
+                                info.tagName = inp.tagName; info.className = inp.className || ''; info.placeholder = inp.placeholder || ''; info.id = inp.id || ''; info.name = inp.name || ''; info.value = (inp.value || '').slice(0, 80);
+                                try {
+                                    inp.style.border = '3px solid red';
+                                    inp.style.boxShadow = '0 0 10px red';
+                                    inp.style.zIndex = '9999';
+                                    inp.style.position = 'relative';
+                                } catch (e) {}
+                            }
+                        }
+                        return info;
+                    });
+                    if (dateTimeFieldInfo.found) {
+                        console.log('✅ Date time field found and framed (by: ' + dateTimeFieldInfo.by + ') tagName=' + dateTimeFieldInfo.tagName + ' placeholder=' + dateTimeFieldInfo.placeholder);
+                        await new Promise(resolve => setTimeout(resolve, 600));
+                    } else {
+                        console.log('⚠️  Date time field not found (searched: "Date time:" label, placeholder*="Date time|datetime", .el-date-editor)');
+                    }
+                    const dateStartVal = $dateStartJs;
+                    const dateEndVal = $dateEndJs;
+                    if (dateStartVal || dateEndVal) {
+                        try {
+                            await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="End Date"], div.el-date-editor--datetimerange, input.el-range-input[placeholder="Start date time"]', { timeout: 8000 });
+                        } catch (e) { console.log('⚠️  Date input not found: ' + (e.message || e)); }
+                    }
+                    // date_start 填入 <input placeholder="Start Date" class="el-input__inner">
+                    if (dateStartVal) {
+                        try {
+                            const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
+                            if (el) {
+                                await el.click();
+                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
+                                console.log('✅ Filled Start Date (date_start): ' + dateStartVal);
+                            } else { console.log('⚠️  input[placeholder="Start Date"] not found'); }
+                        } catch (e) { console.log('⚠️  Fill Start Date: ' + (e.message || e)); }
+                    }
+                    if (dateEndVal) {
+                        try {
+                            const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]') || await page.$('input.el-range-input[placeholder="End date time"]');
+                            if (el) {
+                                await el.click();
+                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
+                                console.log('✅ Filled End Date (date_end): ' + dateEndVal);
+                            } else { console.log('⚠️  input[placeholder="End Date"] / End date time not found'); }
+                        } catch (e) { console.log('⚠️  Fill End Date: ' + (e.message || e)); }
+                    }
+                    if (dateStartVal || dateEndVal) {
+                        await new Promise(resolve => setTimeout(resolve, 600));
+                        console.log('📸 Taking screenshot after filling Start/End date time...');
+                        await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
+                    }
+                    // 點擊 input.el-range-input[placeholder="Start date time"] 以打開日期區間選擇器（若尚未填入日期時仍會執行）
+                    try {
+                        const startInput = await page.$('input.el-range-input[placeholder="Start date time"]');
+                        if (startInput) {
+                            await startInput.click();
+                            await new Promise(resolve => setTimeout(resolve, 800));
+                            console.log('✅ Clicked input.el-range-input[placeholder="Start date time"]');
+                        } else {
+                            console.log('⚠️  input.el-range-input[placeholder="Start date time"] not found');
+                        }
+                    } catch (e) { console.log('⚠️  Click Start date time: ' + (e.message || e)); }
                     
-                    // 最終截圖
+                    // 最終截圖（若有找到 Date time 欄位，已加上紅框；若已點擊 Start date time，日期面板應已開啟）
                     console.log('📸 Final: Taking final screenshot...');
                     const screenshotPath = path.join(workingDir, '1bet_final.png');
                     await page.screenshot({
@@ -547,6 +674,7 @@ class ScrapeBrowser1BetDomDetail extends Command
             '1bet_step2_password_filled.png' => 'step2_password_filled',
             '1bet_step3_login_clicked.png' => 'step3_login_clicked',
             '1bet_step4_login_completed.png' => 'step4_login_completed',
+            '1bet_step4b_dates_filled.png' => 'step4b_dates_filled',
             '1bet_final.png' => 'final'
         ];
 
