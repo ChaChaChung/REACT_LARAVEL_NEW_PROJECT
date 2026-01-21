@@ -35,23 +35,23 @@ class ScrapeBrowser1BetDomDetail extends Command
     {
         // 從 .env 獲取 1BET_AGENT_DOMAIN（登錄頁面 URL）
         $domain = env('1BET_AGENT_DOMAIN', '');
-        
+
         if (empty($domain)) {
             $this->error('❌ 1BET_AGENT_DOMAIN is not set in .env file');
             return 1;
         }
-        
+
         // 優先使用命令參數中的 url 作為登錄後要跳轉的目標 URL
         // 如果沒有提供參數，則使用 .env 中的 1BET_AGENT_REDIRECT_URL
         $url = $this->argument('url');
         $redirectUrl = !empty($url) ? $url : env('1BET_AGENT_REDIRECT_URL', '');
-        
+
         // 從 .env 獲取 1BET_AGENT_ACCOUNT
         $account = env('1BET_AGENT_ACCOUNT', '');
-        
+
         // 從 .env 獲取 1BET_AGENT_PASSWORD
         $password = env('1BET_AGENT_PASSWORD', '');
-        
+
         $this->info('=== 1BET Browser Screenshot ===');
         $this->info("Login Domain: {$domain}");
         if (!empty($redirectUrl)) {
@@ -101,7 +101,7 @@ class ScrapeBrowser1BetDomDetail extends Command
 
         return 1;
     }
-    
+
     /**
      * 檢查 Node.js 和 Puppeteer 環境
      * @return bool 返回 true 表示環境檢查通過，false 表示失敗
@@ -161,11 +161,11 @@ class ScrapeBrowser1BetDomDetail extends Command
         // 轉義 JavaScript 字符串
         $domainJs = json_encode($domain);
         $redirectUrlJs = json_encode($redirectUrl);
-        
+
         // 獲取工作目錄的絕對路徑
         $workingDir = storage_path('app/temp');
         $workingDirJs = json_encode($workingDir);
-        
+
         // 1BET_AGENT_LANG：在每個新文件載入「前」注入到 sessionStorage/localStorage（key: lang）
         $lang = env('1BET_AGENT_LANG', 'zh-TW');
         $langJs = json_encode($lang);
@@ -173,10 +173,10 @@ class ScrapeBrowser1BetDomDetail extends Command
         // date_start / date_end：填入 Start Date、End Date 的 input
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
-        
+
         // account_number：填入 placeholder="Please enter player account" 的 input
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
-        
+
         // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
 
@@ -245,6 +245,16 @@ class ScrapeBrowser1BetDomDetail extends Command
                 try {
                     // 創建新的瀏覽器頁面
                     const page = await browser.newPage();
+                    
+                    // 核心：透過 CDP 徹底禁用 debugger 語句
+                    try {
+                        const client = await page.target().createCDPSession();
+                        await client.send('Debugger.enable');
+                        await client.send('Debugger.setBreakpointsActive', { active: false });
+                        console.log('🛡️ CDP Debugger disabled');
+                    } catch (e) {
+                        console.log('⚠️ Failed to disable debugger via CDP:', e.message);
+                    }
 
                     // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
                     await page.setViewport({ width: 1920, height: 1080 });
@@ -309,46 +319,9 @@ class ScrapeBrowser1BetDomDetail extends Command
                         }
                     });
                     
-                    // 隱藏自動化特徵（反檢測）+ 禁用 disable-devtool（簡化版，避免干擾頁面運行）
-                    await page.evaluateOnNewDocument(() => {
-                        // 隱藏 webdriver 屬性
-                        try {
-                            Object.defineProperty(navigator, 'webdriver', {
-                                get: () => undefined
-                            });
-                        } catch (e) {}
-                        
-                        // 偽造 chrome 對象
-                        try {
-                            if (!window.chrome) {
-                                window.chrome = { runtime: {} };
-                            }
-                        } catch (e) {}
-                        
-                        // 阻止 disable-devtool 初始化（核心防護）
-                        try {
-                            Object.defineProperty(window, 'DisableDevtool', {
-                                get: () => undefined,
-                                set: () => {},
-                                configurable: false
-                            });
-                        } catch (e) {}
-                        
-                        // 偽造視窗尺寸（防止通過視窗尺寸檢測 DevTools）
-                        try {
-                            Object.defineProperty(window, 'outerWidth', {
-                                get: () => window.innerWidth
-                            });
-                            Object.defineProperty(window, 'outerHeight', {
-                                get: () => window.innerHeight
-                            });
-                        } catch (e) {}
-                        
-                        console.log('🛡️ Anti-detection measures activated (minimal)');
-                    });
-
-                    // 在每個新文件載入「前」注入 1BET_AGENT_LANG 到 sessionStorage / localStorage（key: lang，並寫入常見別名）
+                    // 隱藏自動化特徵 + 繞過 disable-devtool + 語言注入
                     await page.evaluateOnNewDocument((l) => {
+                        // 1. 語言注入
                         try {
                             var v = (l && String(l) !== 'null' && String(l) !== '') ? l : 'zh-TW';
                             var keys = ['lang', 'locale', 'language', 'i18n', 'user-lang', 'site_lang'];
@@ -357,6 +330,54 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 try { localStorage.setItem(k, v); } catch (e) {}
                             });
                         } catch (e) {}
+
+                        // 2. 隱藏 webdriver 屬性
+                        try {
+                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                        } catch (e) {}
+                        
+                        // 3. 偽造 chrome 對象
+                        try {
+                            if (!window.chrome) {
+                                window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+                            }
+                        } catch (e) {}
+                        
+                        // 4. 繞過與偽裝 disable-devtool 物件
+                        try {
+                            const mock = {
+                                isSuspend: true,
+                                init: () => { console.log('🛡️ DisableDevtool.init called (mocked)'); },
+                                suspend: () => {},
+                                resume: () => {},
+                                md5: (s) => s,
+                                version: '0.3.7'
+                            };
+                            Object.defineProperty(window, 'DisableDevtool', {
+                                get: () => mock,
+                                set: () => {},
+                                configurable: false
+                            });
+                        } catch (e) {}
+                        
+                        // 5. 偽造視窗尺寸（防止通過視窗尺寸檢測 DevTools）
+                        try {
+                            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                        } catch (e) {}
+
+                        // 6. 覆寫 Function 建構函式以阻斷 debugger 語句
+                        try {
+                            const originalConstructor = Function.prototype.constructor;
+                            Function.prototype.constructor = function(str) {
+                                if (str && (str.includes('debugger') || str.includes('debug'))) {
+                                    return function() {};
+                                }
+                                return originalConstructor.apply(this, arguments);
+                            };
+                        } catch (e) {}
+                        
+                        console.log('🛡️ Advanced anti-detection activated');
                     }, $langJs);
 
                     // 移除 JSON 編碼的引號
@@ -758,12 +779,26 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 await page.evaluate(() => {
                                     try {
                                         Object.defineProperty(window, 'DisableDevtool', {
-                                            get: () => undefined,
+                                            get: () => ({
+                                                isSuspend: true,
+                                                init: () => {},
+                                                suspend: () => {},
+                                                resume: () => {},
+                                                md5: (s) => s,
+                                                version: '0.3.7'
+                                            }),
                                             set: () => {},
                                             configurable: false
                                         });
                                         Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                                         Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                        const originalConstructor = Function.prototype.constructor;
+                                        Function.prototype.constructor = function(str) {
+                                            if (str && (str.includes('debugger') || str.includes('debug'))) {
+                                                return function() {};
+                                            }
+                                            return originalConstructor.apply(this, arguments);
+                                        };
                                         console.log('🛡️ Protection re-injected after recovery');
                                     } catch (e) {}
                                 });
@@ -885,12 +920,26 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 await page.evaluate(() => {
                                     try {
                                         Object.defineProperty(window, 'DisableDevtool', {
-                                            get: () => undefined,
+                                            get: () => ({
+                                                isSuspend: true,
+                                                init: () => {},
+                                                suspend: () => {},
+                                                resume: () => {},
+                                                md5: (s) => s,
+                                                version: '0.3.7'
+                                            }),
                                             set: () => {},
                                             configurable: false
                                         });
                                         Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                                         Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                        const originalConstructor = Function.prototype.constructor;
+                                        Function.prototype.constructor = function(str) {
+                                            if (str && (str.includes('debugger') || str.includes('debug'))) {
+                                                return function() {};
+                                            }
+                                            return originalConstructor.apply(this, arguments);
+                                        };
                                     } catch (e) {}
                                 });
                                 
@@ -1077,7 +1126,7 @@ class ScrapeBrowser1BetDomDetail extends Command
             mkdir($directory, 0755, true);
         }
         file_put_contents($scriptPath, $script);
-        
+
         return $scriptPath;
     }
 
@@ -1089,14 +1138,14 @@ class ScrapeBrowser1BetDomDetail extends Command
     private function runPuppeteerScript($scriptPath)
     {
         $this->info('3. Running browser automation script...');
-        
+
         $workingDir = dirname($scriptPath);
-        
+
         // 使用 Process 執行腳本，並實時輸出日誌
         $process = Process::path($workingDir)
             ->timeout(600) // 10 分鐘超時
             ->tty(false); // 不使用 TTY，以便捕獲所有輸出
-        
+
         // 執行腳本並實時輸出
         $result = $process->run("node " . basename($scriptPath), function ($type, $output) {
             // 實時輸出腳本的控制台日誌
@@ -1107,7 +1156,7 @@ class ScrapeBrowser1BetDomDetail extends Command
             $this->error("❌ Script execution failed");
             $errorOutput = $result->errorOutput();
             $stdOutput = $result->output();
-            
+
             // 顯示完整的錯誤信息
             if (!empty($errorOutput)) {
                 $this->line("Error output: " . $errorOutput);
@@ -1115,7 +1164,7 @@ class ScrapeBrowser1BetDomDetail extends Command
             if (!empty($stdOutput)) {
                 $this->line("Standard output: " . $stdOutput);
             }
-            
+
             return null;
         }
 
