@@ -139,7 +139,7 @@ trait HasAgentAuth
         $domain = env('SPLUS_AGENT_DOMAIN', '');
         $account = env('SPLUS_AGENT_ACCOUNT', '');
         $password = env('SPLUS_AGENT_PASSWORD', '');
-        
+
         // 轉義 JavaScript 字符串，避免注入問題
         $domainJs = json_encode($domain);
         $accountJs = json_encode($account);
@@ -375,7 +375,7 @@ trait HasAgentAuth
     {
         $domain = env('ATGSLOT_AGENT_DOMAIN', '');
         $domainJs = json_encode($domain);
-        
+
         // 驗證並轉義 loginInfo JSON
         $loginInfo = json_decode($loginInfoJson, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
@@ -385,7 +385,7 @@ trait HasAgentAuth
                 throw new Error('Invalid loginInfo JSON format');
             JS;
         }
-        
+
         $loginInfoJs = json_encode($loginInfo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
         return <<<JS
@@ -472,12 +472,12 @@ trait HasAgentAuth
         $domain = env('WOW_AGENT_DOMAIN', '');
         $token = env('WOW_AGENT_TOKEN', '');
         $lang = env('WOW_AGENT_LANG', 'zh-TW');
-        
+
         // 轉義 JavaScript 字符串，避免注入問題
         $domainJs = json_encode($domain);
         $tokenJs = json_encode($token);
         $langJs = json_encode($lang);
-        
+
         return <<<JS
             // 導航到登入頁面
             await {$pageVar}.goto($domainJs, {
@@ -562,7 +562,7 @@ trait HasAgentAuth
     {
         $account = env('1BET_AGENT_ACCOUNT', '');
         $password = env('1BET_AGENT_PASSWORD', '');
-        
+
         // 轉義 JavaScript 字符串，避免注入問題
         $accountJs = json_encode($account);
         $passwordJs = json_encode($password);
@@ -594,13 +594,20 @@ trait HasAgentAuth
                     // 重新注入防護代碼
                     await {$pageVar}.evaluate(() => {
                         try {
-                            Object.defineProperty(window, 'DisableDevtool', {
-                                get: () => undefined,
-                                set: () => {},
-                                configurable: false
-                            });
+                            const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
+                            Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
                             Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                             Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                            const oConstructor = Function.prototype.constructor;
+                            Function.prototype.constructor = function(str) {
+                                if (str && (str.includes('debugger') || str.includes('debug'))) return function() {};
+                                return oConstructor.apply(this, arguments);
+                            };
+                            const oRegExpToString = RegExp.prototype.toString;
+                            RegExp.prototype.toString = function() {
+                                if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                                return oRegExpToString.call(this);
+                            };
                         } catch (e) {}
                     });
                 }
@@ -890,18 +897,16 @@ trait HasAgentAuth
                 console.log('⏳ Waiting for login response and page navigation...');
                 
                 try {
-                    // SPA 登入多為 hash 切換，未必觸發 document 導航；用 domcontentloaded 短等，常會 timeout，再接固定等待
-                    await {$pageVar}.waitForNavigation({
-                        waitUntil: 'domcontentloaded',
-                        timeout: 6000
-                    }).catch(() => {
-                        console.log('   Navigation wait timeout (SPA hash change may not fire), continuing...');
-                    });
+                    // 等待登入響應：導航、SPA hash 變化或特定元素出現
+                    await Promise.race([
+                        {$pageVar}.waitForNavigation({ waitUntil: 'networkidle2', timeout: 8000 }),
+                        {$pageVar}.waitForSelector('input[placeholder="Please enter player account"]', { timeout: 10000 }),
+                        {$pageVar}.waitForSelector('i.el-icon-switch-button, .btn-logout, .user-info', { timeout: 10000 }),
+                        new Promise(resolve => setTimeout(resolve, 5000))
+                    ]).catch(() => console.log('   Wait for login response timed out, checking status...'));
+
                     const urlAfterLogin = {$pageVar}.url();
                     console.log('   URL after login: ' + urlAfterLogin);
-                    if (urlAfterLogin !== urlBeforeLogin) {
-                        console.log('✅ Page navigated after login');
-                    }
                 } catch (e) {
                     console.log('⚠️  Navigation error: ' + e.message);
                 }
@@ -997,13 +1002,20 @@ trait HasAgentAuth
                     // 重新注入防護並檢查頁面
                     await {$pageVar}.evaluate(() => {
                         try {
-                            Object.defineProperty(window, 'DisableDevtool', {
-                                get: () => undefined,
-                                set: () => {},
-                                configurable: false
-                            });
+                            const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
+                            Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
                             Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                             Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                            const oConstructor = Function.prototype.constructor;
+                            Function.prototype.constructor = function(str) {
+                                if (str && (str.includes('debugger') || str.includes('debug'))) return function() {};
+                                return oConstructor.apply(this, arguments);
+                            };
+                            const oRegExpToString = RegExp.prototype.toString;
+                            RegExp.prototype.toString = function() {
+                                if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                                return oRegExpToString.call(this);
+                            };
                             console.log('🛡️ Re-injected protection after recovery');
                         } catch (e) {}
                     });
@@ -1117,9 +1129,20 @@ trait HasAgentAuth
                                     // 重新注入防護
                                     await {$pageVar}.evaluate(() => {
                                         try {
-                                            Object.defineProperty(window, 'DisableDevtool', { get: () => undefined, set: () => {}, configurable: false });
+                                            const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
+                                            Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
                                             Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                                             Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                            const oConstructor = Function.prototype.constructor;
+                                            Function.prototype.constructor = function(str) {
+                                                if (str && (str.includes('debugger') || str.includes('debug'))) return function() {};
+                                                return oConstructor.apply(this, arguments);
+                                            };
+                                            const oRegExpToString = RegExp.prototype.toString;
+                                            RegExp.prototype.toString = function() {
+                                                if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                                                return oRegExpToString.call(this);
+                                            };
                                         } catch (e) {}
                                     });
                                     
@@ -1206,19 +1229,20 @@ trait HasAgentAuth
                         console.log('🛡️ Re-injecting protection after redirect...');
                         await {$pageVar}.evaluate(() => {
                             try {
-                                if (typeof window.DisableDevtool === 'undefined') {
-                                    Object.defineProperty(window, 'DisableDevtool', {
-                                        get: () => undefined,
-                                        set: () => {},
-                                        configurable: false
-                                    });
-                                }
-                                Object.defineProperty(window, 'outerWidth', {
-                                    get: () => window.innerWidth
-                                });
-                                Object.defineProperty(window, 'outerHeight', {
-                                    get: () => window.innerHeight
-                                });
+                                const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
+                                Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
+                                Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                                Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                                const oConstructor = Function.prototype.constructor;
+                                Function.prototype.constructor = function(str) {
+                                    if (str && (str.includes('debugger') || str.includes('debug'))) return function() {};
+                                    return oConstructor.apply(this, arguments);
+                                };
+                                const oRegExpToString = RegExp.prototype.toString;
+                                RegExp.prototype.toString = function() {
+                                    if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                                    return oRegExpToString.call(this);
+                                };
                             } catch (e) {}
                         });
                         const redirectPageContent = await {$pageVar}.evaluate(() => {
@@ -1359,10 +1383,13 @@ trait HasAgentAuth
                         console.log('⏳ Waiting for login response and page navigation...');
                         
                         try {
-                            await {$pageVar}.waitForNavigation({
-                                waitUntil: 'domcontentloaded',
-                                timeout: 6000
-                            }).catch(() => { console.log('   Navigation wait timeout (SPA), continuing...'); });
+                            await Promise.race([
+                                {$pageVar}.waitForNavigation({ waitUntil: 'networkidle2', timeout: 8000 }),
+                                {$pageVar}.waitForSelector('input[placeholder="Please enter player account"]', { timeout: 10000 }),
+                                {$pageVar}.waitForSelector('i.el-icon-switch-button, .btn-logout, .user-info', { timeout: 10000 }),
+                                new Promise(resolve => setTimeout(resolve, 5000))
+                            ]).catch(() => console.log('   Wait for login response timed out, checking status...'));
+                            
                             const urlAfterLogin = {$pageVar}.url();
                             console.log('   URL after login: ' + urlAfterLogin);
                             if (urlAfterLogin !== urlBeforeLogin) console.log('✅ Page navigated after login');

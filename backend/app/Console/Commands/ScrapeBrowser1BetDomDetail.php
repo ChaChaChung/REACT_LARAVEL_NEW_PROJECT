@@ -266,13 +266,23 @@ class ScrapeBrowser1BetDomDetail extends Command
                     await page.setRequestInterception(true);
                     page.on('request', (request) => {
                         const url = request.url();
-                        const resourceType = request.resourceType();
+                        const isNav = request.isNavigationRequest() && request.frame() === page.mainFrame();
                         
-                        // 阻止載入 disable-devtool 相關資源
                         if (url.includes('disable-devtool') || url.includes('theajack.github.io')) {
-                            console.log('🛡️ Blocked request to:', url);
-                            // 直接 abort，不返回自定義內容（避免替換頁面）
-                            request.abort('blockedbyclient');
+                            if (isNav) {
+                                console.log('🛡️ Blocked navigation request to error page, staying on app');
+                                request.respond({
+                                    status: 204,
+                                    body: ''
+                                });
+                            } else {
+                                console.log('🛡️ Blocked script/resource request to:', url);
+                                request.respond({
+                                    status: 200,
+                                    contentType: 'text/javascript',
+                                    body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; console.log("🛡️ DisableDevtool blocked via request interception");'
+                                });
+                            }
                         } else {
                             request.continue();
                         }
@@ -288,28 +298,17 @@ class ScrapeBrowser1BetDomDetail extends Command
                             try {
                                 await page.evaluate(() => {
                                     try {
-                                        Object.defineProperty(window, 'DisableDevtool', {
-                                            get: () => undefined,
-                                            set: () => {},
-                                            configurable: false
-                                        });
+                                        const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
+                                        Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
+                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
                                         
-                                        // 阻止任何跳轉
-                                        const blockUrl = (url) => {
-                                            if (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io'))) {
-                                                console.log('🛡️ Blocked navigation in framenavigated handler');
-                                                return true;
-                                            }
-                                            return false;
-                                        };
-                                        
-                                        const originalAssign = window.location.assign;
-                                        window.location.assign = function(url) {
-                                            if (!blockUrl(url)) {
-                                                originalAssign.call(window.location, url);
-                                            }
-                                        };
-                                        
+                                        // 阻止導航
+                                        const blockNav = (url) => (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io')));
+                                        const oAssign = window.location.assign;
+                                        window.location.assign = function(u) { if (!blockNav(u)) oAssign.call(window.location, u); };
+                                        const oReplace = window.location.replace;
+                                        window.location.replace = function(u) { if (!blockNav(u)) oReplace.call(window.location, u); };
                                         console.log('🛡️ Emergency protection injected');
                                     } catch (e) {}
                                 });
@@ -344,26 +343,40 @@ class ScrapeBrowser1BetDomDetail extends Command
                         } catch (e) {}
                         
                         // 4. 繞過與偽裝 disable-devtool 物件
+                        // 1. 完全禁用 DisableDevtool
+                        const mock = {
+                            isSuspend: true,
+                            init: () => { console.log('🛡️ DisableDevtool.init called (mocked)'); },
+                            suspend: () => { console.log('🛡️ DisableDevtool.suspend called (mocked)'); },
+                            resume: () => { console.log('🛡️ DisableDevtool.resume called (mocked)'); },
+                            md5: (s) => s,
+                            version: '0.3.7'
+                        };
                         try {
-                            const mock = {
-                                isSuspend: true,
-                                init: () => { console.log('🛡️ DisableDevtool.init called (mocked)'); },
-                                suspend: () => {},
-                                resume: () => {},
-                                md5: (s) => s,
-                                version: '0.3.7'
-                            };
                             Object.defineProperty(window, 'DisableDevtool', {
                                 get: () => mock,
                                 set: () => {},
                                 configurable: false
                             });
                         } catch (e) {}
-                        
-                        // 5. 偽造視窗尺寸（防止通過視窗尺寸檢測 DevTools）
+
+                        // 2. 移除一些常見的自動化特徵
+                        try {
+                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                        } catch (e) {}
+
+                        // 3. 偽裝 Chrome 相關屬性
+                        window.chrome = { runtime: {} };
+
+                        // 4. 偽造視窗尺寸，防止被檢測出正在開發者模式
                         try {
                             Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                             Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+                        } catch (e) {}
+
+                        // 5. 語言注入
+                        try {
+                            Object.defineProperty(navigator, 'languages', { get: () => [lang || 'zh-CN', 'zh', 'en'] });
                         } catch (e) {}
 
                         // 6. 覆寫 Function 建構函式以阻斷 debugger 語句
@@ -375,6 +388,44 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 }
                                 return originalConstructor.apply(this, arguments);
                             };
+                        } catch (e) {}
+
+                        // 7. 攔截 RegExp 以防止探針
+                        try {
+                            const originalRegExpToString = RegExp.prototype.toString;
+                            RegExp.prototype.toString = function() {
+                                if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                                return originalRegExpToString.call(this);
+                            };
+                        } catch (e) {}
+
+                        // 8. 攔截 console 以防止除錯工具偵測
+                        try {
+                            const methods = ['log', 'debug', 'info', 'warn', 'error', 'table', 'clear'];
+                            methods.forEach(m => {
+                                const original = console[m];
+                                if (original) {
+                                    console[m] = function() {
+                                        if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('devtool') || arguments[0].includes('detect'))) return;
+                                        return original.apply(console, arguments);
+                                    };
+                                }
+                            });
+                        } catch (e) {}
+
+                        // 9. 阻止跳轉到 disable-devtool
+                        try {
+                            const blockUrl = (url) => {
+                                if (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io'))) {
+                                    console.log('🛡️ Blocked navigation in evaluateOnNewDocument');
+                                    return true;
+                                }
+                                return false;
+                            };
+                            const originalAssign = window.location.assign;
+                            window.location.assign = function(url) { if (!blockUrl(url)) originalAssign.call(window.location, url); };
+                            const originalReplace = window.location.replace;
+                            window.location.replace = function(url) { if (!blockUrl(url)) originalReplace.call(window.location, url); };
                         } catch (e) {}
                         
                         console.log('🛡️ Advanced anti-detection activated');
