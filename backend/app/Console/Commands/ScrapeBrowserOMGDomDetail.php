@@ -172,6 +172,148 @@ class ScrapeBrowserOMGDomDetail extends Command
                      
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
+                    // 解析日期參數
+                    let dateStartParsed = null;
+                    let dateEndParsed = null;
+                    try {
+                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs.replace(/^"|"\$/g, '') : null;
+                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs.replace(/^"|"\$/g, '') : null;
+                    } catch (e) {
+                         console.error('Date parsing error', e);
+                    }
+
+                    // 填入日期
+                    if (dateStartParsed || dateEndParsed) {
+                         // DEBUG: Click date input, find specific date, and screenshot
+                         try {
+                             console.log('👆 Debug: Clicking Start Date input (#v-16-form-item)...');
+                             await page.waitForSelector('#v-16-form-item', { timeout: 5000 });
+                             await page.click('#v-16-form-item');
+                             await new Promise(r => setTimeout(r, 1000)); // Wait for picker (if any)
+                             
+                             if (dateStartParsed) {
+                                 console.log('🔍 Debug: Looking for element with date: ' + dateStartParsed);
+                                 const clickedDate = await page.evaluate((dateStr) => {
+                                     // 嘗試查找 Ant Design 或其他常見 UI 庫的日期單元格
+                                     // AntD 通常使用 title="YYYY-MM-DD"
+                                     let el = document.querySelector(`td[title="\${dateStr}"]`);
+                                     
+                                     // 如果找不到，嘗試 aria-label
+                                     if (!el) {
+                                          el = document.querySelector(`td[aria-label="\${dateStr}"]`);
+                                     }
+                                     
+                                     // 嘗試查找包含該日期的 div 或 span (精確匹配內容)
+                                     if (!el) {
+                                         // 假設 dateStr 是 YYYY-MM-DD，取出 Day 部分
+                                         const day = parseInt(dateStr.split('-')[2], 10).toString();
+                                         // 查找所有可能的日期單元格
+                                         const cells = Array.from(document.querySelectorAll('.ant-picker-cell-inner, .el-date-table__cell'));
+                                         el = cells.find(c => c.textContent.trim() === day);
+                                     }
+                                     
+                                     if (el) {
+                                         el.click();
+                                         return true;
+                                     }
+                                     return false;
+                                 }, dateStartParsed);
+                                 
+                                 if (clickedDate) {
+                                     console.log('✅ Debug: Found and clicked date element for ' + dateStartParsed);
+                                     
+                                     // Click OK button
+                                     await new Promise(r => setTimeout(r, 500));
+                                     const okClicked = await page.evaluate(() => {
+                                         const buttons = Array.from(document.querySelectorAll('button'));
+                                         const okBtn = buttons.find(b => 
+                                             b.textContent.trim() === 'Ok' || 
+                                             b.querySelector('span')?.textContent.trim() === 'Ok'
+                                         );
+                                         
+                                         if (okBtn) {
+                                             okBtn.click();
+                                             return true;
+                                         }
+                                         return false;
+                                     });
+                                     
+                                     if (okClicked) {
+                                         console.log('✅ Debug: Clicked OK button');
+                                     } else {
+                                         console.log('⚠️ Debug: OK button not found');
+                                     }
+                                 } else {
+                                     console.log('⚠️ Debug: Specific date element not found for ' + dateStartParsed);
+                                 }
+                             }
+                             
+                             await new Promise(r => setTimeout(r, 1000));
+                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_date_selected_ok.png'), fullPage: true });
+                             console.log('📸 Debug screenshot saved: omg_debug_date_selected_ok.png');
+                         } catch (e) {
+                             console.error('❌ Debug interaction failed:', e.message);
+                         }
+
+                         console.log('📅 Filling dates...');
+                         await page.evaluate(async (start, end) => {
+                                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                                
+                                if (start) {
+                                     // 嘗試多種方式尋找 Start Date
+                                     const startInput = document.querySelector('#v-16-form-item') || 
+                                                        document.querySelector('input[placeholder="Start date"]');
+                                     
+                                     if (startInput) {
+                                         console.log('Found start date input');
+                                         // 移除 readonly 屬性以允許填寫
+                                         startInput.removeAttribute('readonly');
+                                         startInput.value = start + ' 00:00:00';
+                                         
+                                         // 觸發事件
+                                         startInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                         startInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                         startInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                     } else {
+                                         console.log('Start date input not found');
+                                     }
+                                }
+                                
+                                await sleep(500);
+
+                                if (end) {
+                                     // End Date 根據 placeholder 尋找
+                                     const endInput = document.querySelector('input[placeholder="End date"]');
+                                     
+                                     if (endInput) {
+                                         console.log('Found end date input');
+                                         endInput.removeAttribute('readonly');
+                                         endInput.value = end + ' 23:59:59';
+                                         
+                                         endInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                         endInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                         endInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                     } else {
+                                         console.log('End date input not found');
+                                     }
+                                }
+                         }, dateStartParsed, dateEndParsed);
+                         
+                         // 等待一下讓UI反應
+                         await new Promise(resolve => setTimeout(resolve, 1000));
+                         
+                         // 嘗試點擊搜尋按鈕 (假設有)
+                         console.log('🔍 Clicking search...');
+                         await page.evaluate(() => {
+                             const buttons = Array.from(document.querySelectorAll('button'));
+                             const searchBtn = buttons.find(b => b.textContent.includes('Search') || b.textContent.includes('查询') || b.textContent.includes('搜尋'));
+                             if (searchBtn) searchBtn.click();
+                         });
+                         
+                         await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+
+                    
                     // 截圖
                     const screenshotPath = path.join(workingDir, 'omg_scraped_result.png');
                     await page.screenshot({ path: screenshotPath, fullPage: true });
