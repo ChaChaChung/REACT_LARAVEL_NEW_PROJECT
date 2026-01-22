@@ -171,6 +171,41 @@ class ScrapeBrowserOMGDomDetail extends Command
                     });
                      
                     await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    // DEBUG: Click language button
+                    try {
+                        console.log('👆 Debug: Clicking Language Button (#radix-vue-dropdown-menu-trigger-v-3)...');
+                        await page.waitForSelector('#radix-vue-dropdown-menu-trigger-v-3', { timeout: 5000 });
+                        await page.click('#radix-vue-dropdown-menu-trigger-v-3');
+                        await new Promise(r => setTimeout(r, 1000));
+                        await page.screenshot({ path: path.join(workingDir, 'omg_debug_language_clicked.png'), fullPage: true });
+                        console.log('📸 Debug screenshot saved: omg_debug_language_clicked.png');
+                        
+                        // Click English menu item
+                        await new Promise(r => setTimeout(r, 500));
+                        console.log('👆 Debug: Clicking English menu item...');
+                        const englishClicked = await page.evaluate(() => {
+                            const items = Array.from(document.querySelectorAll('div[role="menuitem"]'));
+                            const englishItem = items.find(el => el.textContent.trim().includes('English'));
+                            
+                            if (englishItem) {
+                                englishItem.click();
+                                return true;
+                            }
+                            return false;
+                        });
+                        
+                        if (englishClicked) {
+                            console.log('✅ Debug: Clicked English menu item');
+                            console.log('⏳ Waiting 5s for language switch...');
+                            await new Promise(r => setTimeout(r, 5000)); // Wait for language switch
+                            await page.screenshot({ path: path.join(workingDir, 'omg_debug_english_selected.png'), fullPage: true });
+                        } else {
+                            console.log('⚠️ Debug: English menu item not found');
+                        }
+                    } catch (e) {
+                        console.error('❌ Debug language button click failed:', e.message);
+                    }
                     
                     // 解析日期參數
                     let dateStartParsed = null;
@@ -186,10 +221,25 @@ class ScrapeBrowserOMGDomDetail extends Command
                     if (dateStartParsed || dateEndParsed) {
                          // DEBUG: Click date input, find specific date, and screenshot
                          try {
-                             console.log('👆 Debug: Clicking Start Date input (#v-16-form-item)...');
-                             await page.waitForSelector('#v-16-form-item', { timeout: 5000 });
-                             await page.click('#v-16-form-item');
+                             console.log('👆 Debug: Clicking Start Date input...');
+                             
+                             // 使用 ID 或 Placeholder 尋找，因為 ID "v-16" 可能是動態生成的
+                             const startDateSelector = '#v-16-form-item, input[placeholder="Start date"]';
+                             
+                             try {
+                                 await page.waitForSelector(startDateSelector, { timeout: 5000 });
+                                 await page.click(startDateSelector);
+                                 console.log('✅ Start Date input clicked');
+                             } catch (clickErr) {
+                                 console.error('⚠️ Failed to click Start Date input (' + clickErr.message + '), taking screenshot anyway...');
+                             }
+                             
                              await new Promise(r => setTimeout(r, 1000)); // Wait for picker (if any)
+
+                             // Screenshot after clicking input (User Request)
+                             // 無論點擊是否成功都截圖，以便除錯
+                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_clicked.png'), fullPage: true });
+                             console.log('📸 Debug screenshot saved: omg_debug_start_date_clicked.png');
                              
                              if (dateStartParsed) {
                                  console.log('🔍 Debug: Looking for element with date: ' + dateStartParsed);
@@ -222,6 +272,11 @@ class ScrapeBrowserOMGDomDetail extends Command
                                  if (clickedDate) {
                                      console.log('✅ Debug: Found and clicked date element for ' + dateStartParsed);
                                      
+                                     // Screenshot after choosing date (before OK)
+                                     await new Promise(r => setTimeout(r, 500));
+                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_chosen.png'), fullPage: true });
+                                     console.log('📸 Debug screenshot saved: omg_debug_start_date_chosen.png');
+                                     
                                      // Click OK button
                                      await new Promise(r => setTimeout(r, 500));
                                      const okClicked = await page.evaluate(() => {
@@ -230,7 +285,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                              b.textContent.trim() === 'Ok' || 
                                              b.querySelector('span')?.textContent.trim() === 'Ok'
                                          );
-                                         
                                          if (okBtn) {
                                              okBtn.click();
                                              return true;
@@ -249,8 +303,81 @@ class ScrapeBrowserOMGDomDetail extends Command
                              }
                              
                              await new Promise(r => setTimeout(r, 1000));
-                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_date_selected_ok.png'), fullPage: true });
-                             console.log('📸 Debug screenshot saved: omg_debug_date_selected_ok.png');
+                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_confirmed.png'), fullPage: true });
+                             console.log('📸 Debug screenshot saved: omg_debug_start_date_confirmed.png');
+                             
+                             // --- End Date Handling ---
+                             if (dateEndParsed) {
+                                 console.log('👆 Debug: Clicking End Date input...');
+                                 const endDateSelector = 'input[placeholder="End date"]';
+                                 
+                                 try {
+                                     await page.waitForSelector(endDateSelector, { timeout: 5000 });
+                                     await page.click(endDateSelector);
+                                     console.log('✅ End Date input clicked');
+                                     
+                                     // Screenshot after clicking End Date input
+                                     await new Promise(r => setTimeout(r, 1000));
+                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_clicked.png'), fullPage: true });
+                                     console.log('📸 Debug screenshot saved: omg_debug_end_date_clicked.png');
+                                     
+                                     // Find and click End Date
+                                     console.log('🔍 Debug: Looking for element with date: ' + dateEndParsed);
+                                     const clickedEnd = await page.evaluate((dateStr) => {
+                                         // Same logic as Start Date
+                                         let el = document.querySelector(`td[title="\${dateStr}"]`);
+                                         if (!el) el = document.querySelector(`td[aria-label="\${dateStr}"]`);
+                                         if (!el) {
+                                             const day = parseInt(dateStr.split('-')[2], 10).toString();
+                                             const cells = Array.from(document.querySelectorAll('.ant-picker-cell-inner, .el-date-table__cell'));
+                                             el = cells.find(c => c.textContent.trim() === day);
+                                         }
+                                         
+                                         if (el) {
+                                             el.click();
+                                             return true;
+                                         }
+                                         return false;
+                                     }, dateEndParsed);
+                                     
+                                     if (clickedEnd) {
+                                         console.log('✅ Debug: Found and clicked End Date element');
+                                         
+                                         // Screenshot after choosing End Date (before OK)
+                                         await new Promise(r => setTimeout(r, 500));
+                                         await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_chosen.png'), fullPage: true });
+                                         console.log('📸 Debug screenshot saved: omg_debug_end_date_chosen.png');
+                                         
+                                         // Click OK button (re-use logic)
+                                         await new Promise(r => setTimeout(r, 500));
+                                         const okClicked = await page.evaluate(() => {
+                                             const buttons = Array.from(document.querySelectorAll('button'));
+                                             const okBtn = buttons.find(b => 
+                                                 b.textContent.trim() === 'Ok' || 
+                                                 b.querySelector('span')?.textContent.trim() === 'Ok'
+                                             );
+                                             if (okBtn) {
+                                                 okBtn.click();
+                                                 return true;
+                                             }
+                                             return false;
+                                         });
+                                         
+                                         if (okClicked) console.log('✅ Debug: Clicked OK button for End Date');
+                                         
+                                         await new Promise(r => setTimeout(r, 1000));
+                                         await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_confirmed.png'), fullPage: true });
+                                         console.log('📸 Debug screenshot saved: omg_debug_end_date_confirmed.png');
+                                         
+                                     } else {
+                                         console.log('⚠️ Debug: End Date element not found');
+                                     }
+                                     
+                                 } catch (err) {
+                                     console.error('❌ Error handling End Date:', err.message);
+                                 }
+                             }
+
                          } catch (e) {
                              console.error('❌ Debug interaction failed:', e.message);
                          }
