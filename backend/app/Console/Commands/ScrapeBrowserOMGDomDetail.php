@@ -377,6 +377,120 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      console.error('❌ Error handling End Date:', err.message);
                                  }
                              }
+                             
+                             // --- Platform ID Dropdown Handling ---
+                             console.log('👆 Debug: Clicking Platform ID dropdown...');
+                             try {
+                                 // Use XPath to find the span with title "Platform ID" and get its parent .ant-select-selector
+                                 // This is more robust than evaluate click
+                                 const platformDropdown = await page.waitForFunction(() => {
+                                     const span = document.querySelector('span[title="Platform ID"]');
+                                     return span ? span.closest('.ant-select-selector') : null;
+                                 }, { timeout: 5000 });
+                                 
+                                 if (platformDropdown) {
+                                     await platformDropdown.click();
+                                     console.log('✅ Platform ID dropdown clicked (native)');
+                                 } else {
+                                     console.log('⚠️ Platform ID dropdown selector not found');
+                                 }
+                             } catch (err) {
+                                 console.error('❌ Failed to click Platform ID dropdown:', err.message);
+                             }
+                             
+                             await new Promise(r => setTimeout(r, 1000));
+                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_platform_id_clicked.png'), fullPage: true });
+                             console.log('📸 Debug screenshot saved: omg_debug_platform_id_clicked.png');
+                             
+                             // Select "Player ID"
+                             console.log('👆 Debug: Selecting "Player ID"...');
+                             const playerIdSelected = await page.evaluate(() => {
+                                 // Ant Design dropdown items usually have these classes
+                                 const items = Array.from(document.querySelectorAll('.ant-select-item-option-content, .ant-select-item-option'));
+                                 const target = items.find(el => el.textContent.trim() === 'Player ID');
+                                 if (target) {
+                                     target.click();
+                                     return true;
+                                 }
+                                 return false;
+                             });
+                             
+                             if (playerIdSelected) {
+                                 console.log('✅ "Player ID" selected');
+                             } else {
+                                 console.log('⚠️ "Player ID" option not found');
+                             }
+                             
+                             await new Promise(r => setTimeout(r, 1000));
+                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_player_id_selected.png'), fullPage: true });
+                             console.log('📸 Debug screenshot saved: omg_debug_player_id_selected.png');
+                             
+                             // Fill Player ID
+                             const accountNumber = $accountNumberJs;
+                             if (accountNumber && accountNumber !== 'null') {
+                                 console.log('👆 Debug: Filling Player ID with: ' + accountNumber);
+                                 try {
+                                     const playerInputSelector = 'input[placeholder="Please input Player ID"]';
+                                     await page.waitForSelector(playerInputSelector, { timeout: 5000 });
+                                     
+                                     // Clear input and type
+                                     await page.click(playerInputSelector, { clickCount: 3 });
+                                     await page.keyboard.press('Backspace');
+                                     await page.type(playerInputSelector, accountNumber.replace(/^"|"\$/g, ''));
+                                     console.log('✅ Player ID filled');
+                                     
+                                     await new Promise(r => setTimeout(r, 1000));
+                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_player_id_filled.png'), fullPage: true });
+                                     console.log('📸 Debug screenshot saved: omg_debug_player_id_filled.png');
+                                     
+                                     // Click Search Button (Native)
+                                     console.log('👆 Debug: Clicking Search button (native)...');
+                                     try {
+                                         const searchButton = await page.waitForFunction(() => {
+                                             const buttons = Array.from(document.querySelectorAll('button'));
+                                             return buttons.find(b => 
+                                                 b.textContent.trim() === 'Search' || 
+                                                 b.querySelector('span')?.textContent.trim() === 'Search'
+                                             );
+                                         }, { timeout: 5000 });
+                                         
+                                         if (searchButton) {
+                                             await searchButton.click();
+                                             console.log('✅ Search button clicked (native)');
+                                         } else {
+                                             console.log('⚠️ Search button element not found');
+                                         }
+                                     } catch (err) {
+                                         console.error('❌ Failed to click Search button:', err.message);
+                                     }
+                                     
+                                     // Wait for query/rendering (Smart Wait)
+                                     console.log('⏳ Waiting for loading to finish (max 60s)...');
+                                     try {
+                                        // Wait for spinner to appear and then disappear, or just wait for table rows
+                                        // Strategy: Wait 2s, then wait for .ant-spin-spinning to be GONE
+                                        await new Promise(r => setTimeout(r, 2000));
+                                        
+                                        await page.waitForFunction(() => {
+                                            return !document.querySelector('.ant-spin-spinning');
+                                        }, { timeout: 60000 });
+                                        
+                                        console.log('✅ Loading spinner disappeared');
+                                     } catch (e) {
+                                         console.log('⚠️ Wait for loading finish timed out or failed, proceeding to screenshot...');
+                                     }
+                                     
+                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_fill_wait.png'), fullPage: true });
+                                     console.log('📸 Debug screenshot saved: omg_debug_after_fill_wait.png');
+                                     
+                                 } catch (err) {
+                                     console.error('❌ Failed to fill Player ID:', err.message);
+                                 }
+                             } else {
+                                 console.log('⚠️ No account number provided to fill');
+                             }
+                             
+
 
                          } catch (e) {
                              console.error('❌ Debug interaction failed:', e.message);
