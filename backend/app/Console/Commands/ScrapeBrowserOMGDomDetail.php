@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * 瀏覽器 DOM 內容爬蟲命令 - OMG
@@ -118,6 +119,7 @@ class ScrapeBrowserOMGDomDetail extends Command
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
+        $concurrencyJs = json_encode($concurrency);
 
         $workingDir = storage_path('app/scraped_data');
         $workingDirJs = json_encode($workingDir);
@@ -171,6 +173,153 @@ class ScrapeBrowserOMGDomDetail extends Command
                     });
                      
                     await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    /**
+                     * 提取 vxe-table 表格數據的函數（類似 PGONE 的 extractTableData）
+                     */
+                    const extractTableData = async (pageObject) => {
+                        return await pageObject.evaluate(() => {
+                            try {
+                                // vxe-table 結構：
+                                // .vxe-table--header-wrapper (表頭)
+                                // .vxe-table--body-wrapper (表體)
+                                
+                                let headers = [];
+                                let data = [];
+                                
+                                // 方式1：查找 vxe-table 表頭
+                                let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
+                                
+                                // 方式2：如果找不到，嘗試查找標準 thead
+                                if (headerCells.length === 0) {
+                                    headerCells = Array.from(document.querySelectorAll('thead th'));
+                                }
+                                
+                                // 方式3：如果還是找不到，查找任何包含 vxe 相關類的元素
+                                if (headerCells.length === 0) {
+                                    const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
+                                    if (vxeTable) {
+                                        headerCells = Array.from(vxeTable.querySelectorAll('th .vxe-cell, th'));
+                                    }
+                                }
+                                
+                                if (headerCells.length > 0) {
+                                    headers = headerCells.map(cell => {
+                                        const text = cell.innerText || cell.textContent || '';
+                                        return text.trim();
+                                    }).filter(t => t); // 過濾空值
+                                } else {
+                                    return {
+                                        found: false,
+                                        error: 'No headers found',
+                                        debug: {
+                                            vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
+                                            headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
+                                            theadElements: document.querySelectorAll('thead').length
+                                        }
+                                    };
+                                }
+                                
+                                // 提取資料行
+                                // 方式1：查找 vxe-table 表體行
+                                let rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
+                                
+                                // 方式2：如果找不到，嘗試標準 tr
+                                if (rows.length === 0) {
+                                    rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper tr'));
+                                }
+                                
+                                // 方式3：如果還是找不到，查找任何包含 vxe 相關類的表格行
+                                if (rows.length === 0) {
+                                    const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
+                                    if (vxeTable) {
+                                        rows = Array.from(vxeTable.querySelectorAll('tbody tr, .vxe-body--row'));
+                                    }
+                                }
+                                
+                                // 將資料行轉換為對象數組
+                                const dataRows = rows.map((row, rowIndex) => {
+                                    const rowData = {};
+                                    
+                                    // 查找單元格
+                                    let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
+                                    if (cells.length === 0) {
+                                        cells = Array.from(row.querySelectorAll('td'));
+                                    }
+                                    
+                                    if (headers && headers.length > 0) {
+                                        headers.forEach((header, colIndex) => {
+                                            // 清理字段名（類似 PGONE）
+                                            let cleanHeader = header
+                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
+                                                .replace(/^_+|_+$/g, '');
+                                            
+                                            if (!cleanHeader) {
+                                                cleanHeader = 'column_' + colIndex;
+                                            }
+                                            
+                                            // 確保字段名唯一
+                                            let finalHeader = cleanHeader;
+                                            let counter = 1;
+                                            while (rowData.hasOwnProperty(finalHeader)) {
+                                                finalHeader = cleanHeader + '_' + counter;
+                                                counter++;
+                                            }
+                                            
+                                            // 提取單元格內容
+                                            let cellValue = null;
+                                            if (cells[colIndex]) {
+                                                const cell = cells[colIndex];
+                                                // vxe-table 的內容通常在 .vxe-cell 中
+                                                const contentDiv = cell.querySelector('.vxe-cell');
+                                                if (contentDiv) {
+                                                    cellValue = contentDiv.innerText.trim();
+                                                } else {
+                                                    cellValue = cell.innerText.trim();
+                                                }
+                                            }
+                                            
+                                            rowData[finalHeader] = cellValue;
+                                        });
+                                    } else {
+                                        // 如果沒有表頭，使用索引作為 key
+                                        cells.forEach((cell, colIndex) => {
+                                            const contentDiv = cell.querySelector('.vxe-cell');
+                                            let cellValue = null;
+                                            if (contentDiv) {
+                                                cellValue = contentDiv.innerText.trim();
+                                            } else {
+                                                cellValue = cell ? cell.innerText.trim() : null;
+                                            }
+                                            rowData['column_' + colIndex] = cellValue;
+                                        });
+                                    }
+                                    
+                                    // 添加原始行索引
+                                    rowData._rowIndex = rowIndex;
+                                    
+                                    return rowData;
+                                }).filter(rowData => {
+                                    // 過濾掉小計和總計行（類似 PGONE）
+                                    const firstValue = Object.values(rowData)[0];
+                                    return firstValue !== '小計' && firstValue !== '總計' && firstValue !== 'Subtotal' && firstValue !== 'Total';
+                                });
+                                
+                                return {
+                                    found: true,
+                                    headers: headers,
+                                    headerCount: headers.length,
+                                    rowCount: dataRows.length,
+                                    data: dataRows
+                                };
+                            } catch (e) {
+                                return {
+                                    found: false,
+                                    error: e.toString()
+                                };
+                            }
+                        });
+                    };
 
                     // DEBUG: Click language button
                     try {
@@ -483,11 +632,131 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_fill_wait.png'), fullPage: true });
                                      console.log('📸 Debug screenshot saved: omg_debug_after_fill_wait.png');
                                      
+                                     // --- Scrape Table Data ---
+                                     console.log('📊 Scraping vxe-table data...');
+                                     const tableData = await extractTableData(page);
+                                     
+                                     if (!tableData.found) {
+                                         const errorMsg = tableData.error || 'No table found';
+                                         console.error('❌ ' + errorMsg);
+                                         if (tableData.debug) {
+                                             console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
+                                         }
+                                         
+                                         // 重試一次（類似 PGONE）
+                                         console.log('⏳ Waiting and retrying...');
+                                         await new Promise(resolve => setTimeout(resolve, 2000));
+                                         await page.evaluate(() => {
+                                             window.scrollTo(0, document.body.scrollHeight);
+                                         });
+                                         await new Promise(resolve => setTimeout(resolve, 500));
+                                         await page.evaluate(() => {
+                                             window.scrollTo(0, 0);
+                                         });
+                                         await new Promise(resolve => setTimeout(resolve, 500));
+                                         
+                                         const retryData = await extractTableData(page);
+                                         if (!retryData.found) {
+                                             console.error('❌ Retry also failed: ' + (retryData.error || 'Unknown error'));
+                                         } else {
+                                             console.log('✅ Table found on retry!');
+                                             Object.assign(tableData, retryData);
+                                         }
+                                     } else {
+                                         console.log('✅ Scraped ' + (tableData.rowCount || 0) + ' rows.');
+                                         console.log('✅ Found ' + (tableData.headerCount || 0) + ' headers.');
+                                     }
+                                     
+                                     // Save to file (包含 headers 和 data)
+                                     const dataPath = path.join(workingDir, 'omg_scraped_data.json');
+                                     fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
+                                     console.log('💾 Data saved to: ' + dataPath);
+                                     
+
+                                     
                                  } catch (err) {
                                      console.error('❌ Failed to fill Player ID:', err.message);
                                  }
                              } else {
                                  console.log('⚠️ No account number provided to fill');
+                                 
+                                 // 即使沒有 accountNumber，也嘗試點擊搜索按鈕並爬取數據
+                                 console.log('👆 Debug: Clicking Search button (without Player ID)...');
+                                 try {
+                                     const searchButton = await page.waitForFunction(() => {
+                                         const buttons = Array.from(document.querySelectorAll('button'));
+                                         return buttons.find(b => 
+                                             b.textContent.trim() === 'Search' || 
+                                             b.querySelector('span')?.textContent.trim() === 'Search'
+                                         );
+                                     }, { timeout: 5000 });
+                                     
+                                     if (searchButton) {
+                                         await searchButton.click();
+                                         console.log('✅ Search button clicked (native)');
+                                     } else {
+                                         console.log('⚠️ Search button element not found');
+                                     }
+                                 } catch (err) {
+                                     console.error('❌ Failed to click Search button:', err.message);
+                                 }
+                                 
+                                 // Wait for query/rendering
+                                 console.log('⏳ Waiting for loading to finish (max 60s)...');
+                                 try {
+                                    await new Promise(r => setTimeout(r, 2000));
+                                    
+                                    await page.waitForFunction(() => {
+                                        return !document.querySelector('.ant-spin-spinning');
+                                    }, { timeout: 60000 });
+                                    
+                                    console.log('✅ Loading spinner disappeared');
+                                 } catch (e) {
+                                     console.log('⚠️ Wait for loading finish timed out or failed, proceeding...');
+                                 }
+                                 
+                                 await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_search_wait.png'), fullPage: true });
+                                 console.log('📸 Debug screenshot saved: omg_debug_after_search_wait.png');
+                                 
+                                 // --- Scrape Table Data (even without account number) ---
+                                 console.log('📊 Scraping vxe-table data...');
+                                 const tableData = await extractTableData(page);
+                                 
+                                 if (!tableData.found) {
+                                     const errorMsg = tableData.error || 'No table found';
+                                     console.error('❌ ' + errorMsg);
+                                     if (tableData.debug) {
+                                         console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
+                                     }
+                                     
+                                     // 重試一次
+                                     console.log('⏳ Waiting and retrying...');
+                                     await new Promise(resolve => setTimeout(resolve, 2000));
+                                     await page.evaluate(() => {
+                                         window.scrollTo(0, document.body.scrollHeight);
+                                     });
+                                     await new Promise(resolve => setTimeout(resolve, 500));
+                                     await page.evaluate(() => {
+                                         window.scrollTo(0, 0);
+                                     });
+                                     await new Promise(resolve => setTimeout(resolve, 500));
+                                     
+                                     const retryData = await extractTableData(page);
+                                     if (!retryData.found) {
+                                         console.error('❌ Retry also failed: ' + (retryData.error || 'Unknown error'));
+                                     } else {
+                                         console.log('✅ Table found on retry!');
+                                         Object.assign(tableData, retryData);
+                                     }
+                                 } else {
+                                     console.log('✅ Scraped ' + (tableData.rowCount || 0) + ' rows.');
+                                     console.log('✅ Found ' + (tableData.headerCount || 0) + ' headers.');
+                                 }
+                                 
+                                 // Save to file (包含 headers 和 data)
+                                 const dataPath = path.join(workingDir, 'omg_scraped_data.json');
+                                 fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
+                                 console.log('💾 Data saved to: ' + dataPath);
                              }
                              
 
@@ -495,63 +764,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                          } catch (e) {
                              console.error('❌ Debug interaction failed:', e.message);
                          }
-
-                         console.log('📅 Filling dates...');
-                         await page.evaluate(async (start, end) => {
-                                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-                                
-                                if (start) {
-                                     // 嘗試多種方式尋找 Start Date
-                                     const startInput = document.querySelector('#v-16-form-item') || 
-                                                        document.querySelector('input[placeholder="Start date"]');
-                                     
-                                     if (startInput) {
-                                         console.log('Found start date input');
-                                         // 移除 readonly 屬性以允許填寫
-                                         startInput.removeAttribute('readonly');
-                                         startInput.value = start + ' 00:00:00';
-                                         
-                                         // 觸發事件
-                                         startInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                         startInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                         startInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                                     } else {
-                                         console.log('Start date input not found');
-                                     }
-                                }
-                                
-                                await sleep(500);
-
-                                if (end) {
-                                     // End Date 根據 placeholder 尋找
-                                     const endInput = document.querySelector('input[placeholder="End date"]');
-                                     
-                                     if (endInput) {
-                                         console.log('Found end date input');
-                                         endInput.removeAttribute('readonly');
-                                         endInput.value = end + ' 23:59:59';
-                                         
-                                         endInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                         endInput.dispatchEvent(new Event('change', { bubbles: true }));
-                                         endInput.dispatchEvent(new Event('blur', { bubbles: true }));
-                                     } else {
-                                         console.log('End date input not found');
-                                     }
-                                }
-                         }, dateStartParsed, dateEndParsed);
-                         
-                         // 等待一下讓UI反應
-                         await new Promise(resolve => setTimeout(resolve, 1000));
-                         
-                         // 嘗試點擊搜尋按鈕 (假設有)
-                         console.log('🔍 Clicking search...');
-                         await page.evaluate(() => {
-                             const buttons = Array.from(document.querySelectorAll('button'));
-                             const searchBtn = buttons.find(b => b.textContent.includes('Search') || b.textContent.includes('查询') || b.textContent.includes('搜尋'));
-                             if (searchBtn) searchBtn.click();
-                         });
-                         
-                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
 
                     
@@ -560,12 +772,187 @@ class ScrapeBrowserOMGDomDetail extends Command
                     await page.screenshot({ path: screenshotPath, fullPage: true });
                     console.log('📸 Screenshot saved to: ' + screenshotPath);
                     
-                    // 返回結果(模擬)
-                    return {
-                        success: true,
-                        screenshot: screenshotPath,
-                        data: []
+                    // 讀取爬取的數據（如果有的話）
+                    let scrapedHeaders = [];
+                    let scrapedData = [];
+                    const dataPath = path.join(workingDir, 'omg_scraped_data.json');
+                    try {
+                        if (fs.existsSync(dataPath)) {
+                            const dataContent = fs.readFileSync(dataPath, 'utf8');
+                            const parsedData = JSON.parse(dataContent);
+                            
+                            // 檢查數據格式：可能是新格式 {headers, data} 或舊格式 [data]
+                            if (parsedData && parsedData.headers && parsedData.data) {
+                                scrapedHeaders = parsedData.headers;
+                                scrapedData = parsedData.data;
+                                console.log('✅ Loaded scraped data: ' + scrapedData.length + ' rows, ' + scrapedHeaders.length + ' headers');
+                            } else if (Array.isArray(parsedData)) {
+                                // 舊格式：只有數據數組，需要重新爬取表頭
+                                scrapedData = parsedData;
+                                console.log('⚠️ Old format detected, attempting to scrape headers...');
+                                const tableData = await page.evaluate(() => {
+                                    try {
+                                        let headers = [];
+                                        let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
+                                        if (headerCells.length === 0) {
+                                            headerCells = Array.from(document.querySelectorAll('thead th'));
+                                        }
+                                        if (headerCells.length > 0) {
+                                            headers = headerCells.map(cell => cell.innerText.trim()).filter(t => t);
+                                        }
+                                        return { headers: headers, data: [] };
+                                    } catch (e) {
+                                        return { error: e.toString() };
+                                    }
+                                });
+                                if (tableData && tableData.headers) {
+                                    scrapedHeaders = tableData.headers;
+                                }
+                            } else {
+                                console.log('⚠️ Unknown data format');
+                            }
+                        } else {
+                            console.log('⚠️ No scraped data file found, attempting to scrape now...');
+                            // 如果沒有數據文件，嘗試現在爬取
+                            const tableData = await page.evaluate(() => {
+                                try {
+                                    let headers = [];
+                                    let data = [];
+                                    
+                                    // 嘗試查找表頭
+                                    let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
+                                    
+                                    if (headerCells.length === 0) {
+                                        headerCells = Array.from(document.querySelectorAll('thead th'));
+                                    }
+                                    
+                                    if (headerCells.length > 0) {
+                                        headers = headerCells.map(cell => cell.innerText.trim()).filter(t => t);
+                                        console.log('Found headers (' + headers.length + '):', headers);
+                                    } else {
+                                        console.log('⚠️ No headers found!');
+                                        return { error: 'No headers found' };
+                                    }
+                                    
+                                    // 查找表格行
+                                    let rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
+                                    
+                                    if (rows.length === 0) {
+                                        rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper tr'));
+                                    }
+                                    
+                                    console.log('Found rows: ' + rows.length);
+                                    
+                                    data = rows.map(row => {
+                                        let rowObj = {};
+                                        let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
+                                        if (cells.length === 0) {
+                                            cells = Array.from(row.querySelectorAll('td'));
+                                        }
+                                        
+                                        headers.forEach((header, index) => {
+                                            const cell = cells[index];
+                                            if (cell) {
+                                                const contentDiv = cell.querySelector('.vxe-cell');
+                                                rowObj[header] = contentDiv ? contentDiv.innerText.trim() : cell.innerText.trim();
+                                            } else {
+                                                rowObj[header] = '';
+                                            }
+                                        });
+                                        return rowObj;
+                                    });
+                                    
+                                    return { headers: headers, data: data };
+                                } catch (e) {
+                                    return { error: e.toString() };
+                                }
+                            });
+                            
+                            if (tableData && !tableData.error && tableData.headers && tableData.data) {
+                                scrapedHeaders = tableData.headers;
+                                scrapedData = tableData.data;
+                                // 保存數據（新格式）
+                                fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
+                                console.log('💾 Data saved to: ' + dataPath);
+                            } else if (tableData && tableData.error) {
+                                console.error('❌ Scraping error:', tableData.error);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('❌ Error reading scraped data:', err.message);
+                    }
+                    
+                    // 構建查詢參數對象（使用已存在的變量）
+                    // targetUrl、dateStartParsed、dateEndParsed 已在函數開始處聲明，這裡直接使用
+                    // 只需要解析 accountNumber
+                    const accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs.replace(/^"|"\$/g, '') : null;
+                    
+                    // 獲取當前頁面信息（類似 PGONE）
+                    const pageInfo = await page.evaluate(() => {
+                        return {
+                            title: document.title,
+                            url: window.location.href
+                        };
+                    });
+                    
+                    // 構建表格數據結構（類似 PGONE）
+                    const allTables = [];
+                    let totalDataRows = 0;
+                    
+                    // 如果有爬取的數據，構建表格對象
+                    if (scrapedHeaders.length > 0 && scrapedData.length > 0) {
+                        const tableData = {
+                            found: true,
+                            headers: scrapedHeaders,
+                            headerCount: scrapedHeaders.length,
+                            rowCount: scrapedData.length,
+                            data: scrapedData
+                        };
+                        allTables.push(tableData);
+                        totalDataRows += scrapedData.length;
+                    }
+                    
+                    // 構建 domData 結構（類似 PGONE）
+                    const domData = {
+                        pageInfo: pageInfo,
+                        queryParams: {
+                            date_start: dateStartParsed,
+                            date_end: dateEndParsed,
+                            account_number: accountNumberParsed
+                        },
+                        totalPages: 1,
+                        pages: [{
+                            pageNumber: 1,
+                            tables: allTables
+                        }],
+                        tables: allTables
                     };
+                    
+                    // 計算總資料筆數
+                    let totalRows = 0;
+                    allTables.forEach(table => {
+                        totalRows += table.rowCount || 0;
+                    });
+                    
+                    // 構建最終結果（類似 PGONE）
+                    const result = {
+                        timestamp: new Date().toISOString(),
+                        url: targetUrl,
+                        queryParams: {
+                            date_start: dateStartParsed,
+                            date_end: dateEndParsed,
+                            account_number: accountNumberParsed
+                        },
+                        domData: domData,
+                        success: true
+                    };
+                    
+                    // 將結果保存為 JSON 文件（類似 PGONE）
+                    const resultPath = path.join(workingDir, 'scrape_result.json');
+                    fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
+                    console.log('💾 Results saved to: ' + resultPath);
+                    
+                    return result;
                     
                 } catch (error) {
                     console.error('❌ Error in Puppeteer script:', error);
@@ -595,44 +982,145 @@ class ScrapeBrowserOMGDomDetail extends Command
     }
 
     /**
-     * 執行 Puppeteer 腳本
+     * 執行 Puppeteer 腳本（類似 PGONE）
+     * @param string $scriptPath Puppeteer 腳本文件路徑
+     * @return array|null 返回解析後的結果資料，失敗時返回 null
      */
     private function runPuppeteerScript($scriptPath)
     {
-        $this->info('3. Running Puppeteer script...');
-        $this->info("Script path: {$scriptPath}");
+        $this->info('3. Running browser automation...');
 
-        $process = Process::run("node {$scriptPath}");
+        // 獲取腳本所在目錄，並將工作目錄切換到該目錄（類似 PGONE）
+        $workingDir = dirname($scriptPath);
 
-        if ($process->failed()) {
-            $this->error('❌ Puppeteer script failed');
-            $this->error($process->errorOutput());
+        // 在指定目錄執行 Node.js 腳本（類似 PGONE）
+        $result = Process::path($workingDir)->timeout(6000)->run("node " . basename($scriptPath));
+
+        // 顯示瀏覽器執行的輸出信息
+        $this->line(""); // 空行
+        $this->line("📋 Browser Output:");
+        $this->line($result->output());
+
+        // 檢查執行是否失敗
+        if ($result->failed()) {
+            $this->error("❌ Browser automation failed");
+            $this->line("Error: " . $result->errorOutput());
             return null;
         }
 
-        $output = $process->output();
-        $this->line($output);
+        // 讀取腳本生成的結果文件（類似 PGONE）
+        $resultFile = $workingDir . '/scrape_result.json';
 
-        // 嘗試解析 JSON 輸出
-        preg_match('/\{.*"success":.*\}/s', $output, $matches);
-        if (!empty($matches)) {
-            return json_decode($matches[0], true);
+        if (file_exists($resultFile)) {
+            // 讀取並解析 JSON 文件
+            $content = file_get_contents($resultFile);
+            return json_decode($content, true);
         }
 
+        $this->error("❌ No result file found");
         return null;
     }
 
     /**
-     * 處理爬取到的數據
+     * 處理和保存爬取的資料（類似 PGONE）
+     * @param array $result 爬取的結果資料
      */
     private function processScrapedData($result)
     {
         $this->info('4. Processing scraped data...');
-        if ($result && isset($result['success']) && $result['success']) {
-            $this->info('✅ Scraping completed successfully!');
-            if (isset($result['screenshot'])) {
-                $this->info("Screenshot: {$result['screenshot']}");
+
+        // 檢查爬取是否成功
+        if (!$result || !isset($result['success']) || !$result['success']) {
+            $this->error("❌ Scraping failed: " . ($result['error'] ?? 'Unknown error'));
+            return;
+        }
+
+        // 提取 DOM 資料（類似 PGONE）
+        $domData = $result['domData'] ?? [];
+        
+        // 獲取查詢參數
+        $queryParams = $result['queryParams'] ?? [];
+
+        // 生成時間戳，用於文件名
+        $timestamp = date('Y-m-d_H-i-s');
+
+        // 保存合併後的表格資料到單一 JSON 文件（主要輸出文件）（類似 PGONE）
+        $allData = [];
+        $totalRows = 0;
+        $headers = [];
+        
+        // 優先從 pages 中提取數據（因為數據是按頁面組織的）（類似 PGONE）
+        if (!empty($domData['pages'])) {
+            $this->info('📄 Extracting data from ' . count($domData['pages']) . ' pages...');
+            foreach ($domData['pages'] as $page) {
+                if (!empty($page['tables'])) {
+                    foreach ($page['tables'] as $table) {
+                        if (!empty($table['data'])) {
+                            $pageRowCount = count($table['data']);
+                            
+                            // 將當前表格的所有數據添加到總數組中
+                            $allData = array_merge($allData, $table['data']);
+                            $totalRows += $pageRowCount;
+                            
+                            // 保存表頭（使用第一個表格的表頭）
+                            if (empty($headers) && !empty($table['headers'])) {
+                                $headers = $table['headers'];
+                            }
+                        }
+                    }
+                }
             }
         }
+        
+        // 如果 pages 為空，嘗試從 tables 中提取（類似 PGONE）
+        if (empty($allData) && !empty($domData['tables'])) {
+            foreach ($domData['tables'] as $table) {
+                if (!empty($table['data'])) {
+                    $allData = array_merge($allData, $table['data']);
+                    $totalRows += count($table['data']);
+                    
+                    if (empty($headers) && !empty($table['headers'])) {
+                        $headers = $table['headers'];
+                    }
+                }
+            }
+        }
+        
+        $this->info('📊 Total rows extracted: ' . $totalRows);
+
+        // 初始化合併後的檔案名稱
+        $mergedFileName = null;
+        
+        // 如果有資料，保存合併後的資料（類似 PGONE）
+        if (!empty($allData)) {
+            // 創建合併後的數據結構（類似 PGONE）
+            $mergedData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $result['url'] ?? '',
+                    'queryParams' => $queryParams,
+                    'totalPages' => $domData['totalPages'] ?? 1,
+                    'totalRows' => $totalRows
+                ],
+                'headers' => $headers,
+                'data' => $allData
+            ];
+            
+            // 保存合併後的資料到單一 JSON 檔案（類似 PGONE）
+            $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
+            Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            
+            $this->info("✅ Data saved successfully!");
+            $this->info("📁 File: {$mergedFileName}");
+            $this->info("📊 Total rows: {$totalRows}");
+            $this->info("📋 Headers: " . count($headers));
+        }
+
+        if (!$mergedFileName) {
+            $this->warn("⚠️ No data to save.");
+        }
+
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+        $this->info("✅ Data processing completed!");
     }
 }
