@@ -766,57 +766,238 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     // 額外等待一下，確保數據完全渲染
                                     await new Promise(r => setTimeout(r, 1000));
                                     
-                                    // --- Scrape Table Data ---
-                                    console.log('📊 Scraping vxe-table data...');
-                                    
-                                    // 先檢查表格是否存在
-                                    const tableCheck = await page.evaluate(() => {
-                                        const table = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
-                                        if (table) {
-                                            const rowCount = table.querySelectorAll('tbody tr, .vxe-table--body-wrapper tr, tr').length;
-                                            return { exists: true, rowCount };
+                                    // --- 獲取分頁資訊 ---
+                                    console.log('📄 Getting pagination info...');
+                                    const paginationInfo = await page.evaluate(() => {
+                                        let totalPages = 1;
+                                        let totalRecords = 0;
+                                        
+                                        // 方式1：從 .vxe-pager--total 提取總記錄數
+                                        const totalSpan = document.querySelector('.vxe-pager--total');
+                                        if (totalSpan) {
+                                            const totalText = totalSpan.textContent || totalSpan.innerText || '';
+                                            console.log('📄 Total text:', totalText);
+                                            
+                                            // 提取 "Total 274 records" 中的數字
+                                            const totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
+                                            if (totalMatch && totalMatch[1]) {
+                                                totalRecords = parseInt(totalMatch[1]);
+                                                console.log('📄 Found total records:', totalRecords);
+                                            }
                                         }
-                                        return { exists: false, rowCount: 0 };
+                                        
+                                        // 方式2：從分頁按鈕中找最大頁碼
+                                        const pageButtons = document.querySelectorAll('.vxe-pager--num-btn');
+                                        let maxPageNum = 1;
+                                        if (pageButtons.length > 0) {
+                                            pageButtons.forEach(btn => {
+                                                const text = btn.textContent.trim();
+                                                const pageNum = parseInt(text);
+                                                if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
+                                                    if (pageNum > maxPageNum) {
+                                                        maxPageNum = pageNum;
+                                                    }
+                                                }
+                                            });
+                                            console.log('📄 Max page number from buttons:', maxPageNum);
+                                        }
+                                        
+                                        // 優先使用按鈕中的最大頁碼（更可靠）
+                                        if (maxPageNum > 1) {
+                                            totalPages = maxPageNum;
+                                        } else if (totalRecords > 0) {
+                                            // 如果沒有找到按鈕，嘗試從總記錄數計算（需要知道每頁數量）
+                                            // 查找每頁數量
+                                            let perPage = 50; // 默認值
+                                            const perPageText = document.querySelector('.vxe-pager')?.textContent || '';
+                                            const perPageMatch = perPageText.match(/(\d+)\s*\/\s*page/i);
+                                            if (perPageMatch && perPageMatch[1]) {
+                                                perPage = parseInt(perPageMatch[1]);
+                                            }
+                                            totalPages = Math.ceil(totalRecords / perPage);
+                                            console.log('📄 Calculated total pages from records:', totalPages, '(records:', totalRecords, ', perPage:', perPage + ')');
+                                        }
+                                        
+                                        return {
+                                            totalPages: totalPages,
+                                            totalRecords: totalRecords,
+                                            maxPageFromButtons: maxPageNum
+                                        };
                                     });
-                                    console.log('🔍 Table check:', JSON.stringify(tableCheck));
                                     
-                                    const tableData = await extractTableData(page);
-                                     
-                                     if (!tableData.found) {
-                                         const errorMsg = tableData.error || 'No table found';
-                                         console.error('❌ ' + errorMsg);
-                                         if (tableData.debug) {
-                                             console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
-                                         }
-                                         
-                                         // 重試一次（類似 PGONE）
-                                         console.log('⏳ Waiting and retrying...');
-                                         await new Promise(resolve => setTimeout(resolve, 2000));
-                                         await page.evaluate(() => {
-                                             window.scrollTo(0, document.body.scrollHeight);
-                                         });
-                                         await new Promise(resolve => setTimeout(resolve, 500));
-                                         await page.evaluate(() => {
-                                             window.scrollTo(0, 0);
-                                         });
-                                         await new Promise(resolve => setTimeout(resolve, 500));
-                                         
-                                         const retryData = await extractTableData(page);
-                                         if (!retryData.found) {
-                                             console.error('❌ Retry also failed: ' + (retryData.error || 'Unknown error'));
-                                         } else {
-                                             console.log('✅ Table found on retry!');
-                                             Object.assign(tableData, retryData);
-                                         }
-                                     } else {
-                                         console.log('✅ Scraped ' + (tableData.rowCount || 0) + ' rows.');
-                                         console.log('✅ Found ' + (tableData.headerCount || 0) + ' headers.');
-                                     }
-                                     
-                                     // Save to file (包含 headers 和 data)
-                                     const dataPath = path.join(workingDir, 'omg_scraped_data.json');
-                                     fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
-                                     console.log('💾 Data saved to: ' + dataPath);
+                                    console.log('📄 Pagination info:', JSON.stringify(paginationInfo));
+                                    
+                                    // --- 爬取所有分頁的數據 ---
+                                    const allPagesData = [];
+                                    const scrapedHeaders = [];
+                                    
+                                    // 限制最大頁數，避免無限循環
+                                    const maxPages = Math.min(paginationInfo.totalPages, 100);
+                                    console.log('📄 Will scrape ' + maxPages + ' pages (limited to 100 max)');
+                                    
+                                    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+                                        console.log('\\n📄 [' + new Date().toLocaleTimeString() + '] Scraping page ' + pageNum + '/' + maxPages + '...');
+                                        
+                                        try {
+                                            // 如果不是第一頁，點擊分頁按鈕
+                                            if (pageNum > 1) {
+                                                console.log('👆 Clicking page ' + pageNum + ' button...');
+                                                
+                                                // 添加超時保護
+                                                const pageClickPromise = page.evaluate((targetPage) => {
+                                                    const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
+                                                    const targetBtn = buttons.find(btn => {
+                                                        const text = btn.textContent.trim();
+                                                        return parseInt(text) === targetPage;
+                                                    });
+                                                    
+                                                    if (targetBtn && !targetBtn.classList.contains('is--active')) {
+                                                        targetBtn.click();
+                                                        return true;
+                                                    }
+                                                    return false;
+                                                }, pageNum);
+                                                
+                                                const pageClicked = await Promise.race([
+                                                    pageClickPromise,
+                                                    new Promise((resolve) => setTimeout(() => resolve(false), 5000))
+                                                ]);
+                                                
+                                                if (pageClicked) {
+                                                    console.log('✅ Page ' + pageNum + ' button clicked');
+                                                    
+                                                    // 等待頁面加載（減少等待時間）
+                                                    console.log('⏳ Waiting for page to load...');
+                                                    await new Promise(r => setTimeout(r, 1500));
+                                                    
+                                                    // 等待 loading 消失和數據出現（減少超時時間）
+                                                    try {
+                                                        await Promise.race([
+                                                            page.waitForFunction(() => {
+                                                                const spinners = [
+                                                                    '.ant-spin-spinning',
+                                                                    '.ant-spin',
+                                                                    '[class*="loading"]',
+                                                                    '[class*="spinner"]',
+                                                                    '.vxe-loading'
+                                                                ];
+                                                                const hasLoading = spinners.some(selector => {
+                                                                    const el = document.querySelector(selector);
+                                                                    return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                                                });
+                                                                
+                                                                const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                                                const hasData = hasTable && (
+                                                                    hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                                                    hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                                                    hasTable.querySelectorAll('tr').length > 1
+                                                                );
+                                                                
+                                                                return !hasLoading && hasData;
+                                                            }, { 
+                                                                timeout: 15000,
+                                                                polling: 500
+                                                            }),
+                                                            new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
+                                                        ]);
+                                                        console.log('✅ Page loaded');
+                                                    } catch (e) {
+                                                        console.log('⚠️ Wait for page load timed out, proceeding anyway...');
+                                                    }
+                                                } else {
+                                                    console.log('⚠️ Page ' + pageNum + ' button not found, clicked, or timeout');
+                                                    // 如果找不到按鈕，可能已經是最後一頁，嘗試繼續
+                                                }
+                                            }
+                                            
+                                            // 提取當前頁的數據（添加超時保護）
+                                            console.log('📊 Extracting data from page ' + pageNum + '...');
+                                            const extractPromise = extractTableData(page);
+                                            const tableData = await Promise.race([
+                                                extractPromise,
+                                                new Promise((resolve) => setTimeout(() => resolve({ found: false, error: 'Extract timeout' }), 10000))
+                                            ]);
+                                            
+                                            if (tableData && tableData.found) {
+                                                // 保存表頭（使用第一頁的表頭）
+                                                if (pageNum === 1 && tableData.headers && tableData.headers.length > 0) {
+                                                    scrapedHeaders.push(...tableData.headers);
+                                                }
+                                                
+                                                allPagesData.push({
+                                                    pageNumber: pageNum,
+                                                    headers: tableData.headers || scrapedHeaders,
+                                                    rowCount: tableData.rowCount || 0,
+                                                    data: tableData.data || []
+                                                });
+                                                
+                                                console.log('✅ Page ' + pageNum + ': Scraped ' + (tableData.rowCount || 0) + ' rows');
+                                            } else {
+                                                console.error('❌ Page ' + pageNum + ': Failed to extract data');
+                                                if (tableData && tableData.debug) {
+                                                    console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
+                                                }
+                                                
+                                                // 如果連續3頁都失敗，停止爬取
+                                                if (pageNum > 3 && allPagesData.length === 0) {
+                                                    console.log('⚠️ Too many failed pages, stopping pagination');
+                                                    break;
+                                                }
+                                                
+                                                // 重試一次（快速重試）
+                                                if (pageNum <= 3) {
+                                                    console.log('⏳ Retrying page ' + pageNum + '...');
+                                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                                    const retryData = await Promise.race([
+                                                        extractTableData(page),
+                                                        new Promise((resolve) => setTimeout(() => resolve({ found: false }), 5000))
+                                                    ]);
+                                                    if (retryData && retryData.found) {
+                                                        allPagesData.push({
+                                                            pageNumber: pageNum,
+                                                            headers: retryData.headers || scrapedHeaders,
+                                                            rowCount: retryData.rowCount || 0,
+                                                            data: retryData.data || []
+                                                        });
+                                                        console.log('✅ Page ' + pageNum + ' (retry): Scraped ' + (retryData.rowCount || 0) + ' rows');
+                                                    }
+                                                }
+                                            }
+                                        } catch (err) {
+                                            console.error('❌ Error on page ' + pageNum + ':', err.message);
+                                            // 繼續下一頁，不要因為單頁錯誤而停止
+                                        }
+                                        
+                                        // 頁面間稍作延遲，避免請求過快
+                                        if (pageNum < maxPages) {
+                                            await new Promise(r => setTimeout(r, 300));
+                                        }
+                                    }
+                                    
+                                    // 合併所有頁面的數據
+                                    const scrapedData = [];
+                                    allPagesData.forEach(pageData => {
+                                        if (pageData.data && pageData.data.length > 0) {
+                                            scrapedData.push(...pageData.data);
+                                        }
+                                    });
+                                    
+                                    console.log('\\n✅ Total scraped: ' + scrapedData.length + ' rows from ' + allPagesData.length + ' pages');
+                                    
+                                    // Save to file (包含 headers 和 data)
+                                    const tableData = {
+                                        found: scrapedData.length > 0,
+                                        headers: scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []),
+                                        headerCount: scrapedHeaders.length > 0 ? scrapedHeaders.length : (allPagesData[0]?.headers?.length || 0),
+                                        rowCount: scrapedData.length,
+                                        data: scrapedData,
+                                        pages: allPagesData,
+                                        paginationInfo: paginationInfo
+                                    };
+                                    
+                                    const dataPath = path.join(workingDir, 'omg_scraped_data.json');
+                                    fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
+                                    console.log('💾 Data saved to: ' + dataPath);
                                      
 
                                      
@@ -902,57 +1083,238 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 // 額外等待一下，確保數據完全渲染
                                 await new Promise(r => setTimeout(r, 1000));
                                 
-                                // --- Scrape Table Data (even without account number) ---
-                                console.log('📊 Scraping vxe-table data...');
-                                
-                                // 先檢查表格是否存在
-                                const tableCheck = await page.evaluate(() => {
-                                    const table = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
-                                    if (table) {
-                                        const rowCount = table.querySelectorAll('tbody tr, .vxe-table--body-wrapper tr, tr').length;
-                                        return { exists: true, rowCount };
+                                // --- 獲取分頁資訊 ---
+                                console.log('📄 Getting pagination info...');
+                                const paginationInfo = await page.evaluate(() => {
+                                    let totalPages = 1;
+                                    let totalRecords = 0;
+                                    
+                                    // 方式1：從 .vxe-pager--total 提取總記錄數
+                                    const totalSpan = document.querySelector('.vxe-pager--total');
+                                    if (totalSpan) {
+                                        const totalText = totalSpan.textContent || totalSpan.innerText || '';
+                                        console.log('📄 Total text:', totalText);
+                                        
+                                        // 提取 "Total 274 records" 中的數字
+                                        const totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
+                                        if (totalMatch && totalMatch[1]) {
+                                            totalRecords = parseInt(totalMatch[1]);
+                                            console.log('📄 Found total records:', totalRecords);
+                                        }
                                     }
-                                    return { exists: false, rowCount: 0 };
+                                    
+                                    // 方式2：從分頁按鈕中找最大頁碼
+                                    const pageButtons = document.querySelectorAll('.vxe-pager--num-btn');
+                                    let maxPageNum = 1;
+                                    if (pageButtons.length > 0) {
+                                        pageButtons.forEach(btn => {
+                                            const text = btn.textContent.trim();
+                                            const pageNum = parseInt(text);
+                                            if (!isNaN(pageNum) && pageNum > 0 && pageNum <= 10000) {
+                                                if (pageNum > maxPageNum) {
+                                                    maxPageNum = pageNum;
+                                                }
+                                            }
+                                        });
+                                        console.log('📄 Max page number from buttons:', maxPageNum);
+                                    }
+                                    
+                                    // 優先使用按鈕中的最大頁碼（更可靠）
+                                    if (maxPageNum > 1) {
+                                        totalPages = maxPageNum;
+                                    } else if (totalRecords > 0) {
+                                        // 如果沒有找到按鈕，嘗試從總記錄數計算（需要知道每頁數量）
+                                        // 查找每頁數量
+                                        let perPage = 50; // 默認值
+                                        const perPageText = document.querySelector('.vxe-pager')?.textContent || '';
+                                        const perPageMatch = perPageText.match(/(\d+)\s*\/\s*page/i);
+                                        if (perPageMatch && perPageMatch[1]) {
+                                            perPage = parseInt(perPageMatch[1]);
+                                        }
+                                        totalPages = Math.ceil(totalRecords / perPage);
+                                        console.log('📄 Calculated total pages from records:', totalPages, '(records:', totalRecords, ', perPage:', perPage + ')');
+                                    }
+                                    
+                                    return {
+                                        totalPages: totalPages,
+                                        totalRecords: totalRecords,
+                                        maxPageFromButtons: maxPageNum
+                                    };
                                 });
-                                console.log('🔍 Table check:', JSON.stringify(tableCheck));
                                 
-                                const tableData = await extractTableData(page);
-                                 
-                                 if (!tableData.found) {
-                                     const errorMsg = tableData.error || 'No table found';
-                                     console.error('❌ ' + errorMsg);
-                                     if (tableData.debug) {
-                                         console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
-                                     }
-                                     
-                                     // 重試一次
-                                     console.log('⏳ Waiting and retrying...');
-                                     await new Promise(resolve => setTimeout(resolve, 2000));
-                                     await page.evaluate(() => {
-                                         window.scrollTo(0, document.body.scrollHeight);
-                                     });
-                                     await new Promise(resolve => setTimeout(resolve, 500));
-                                     await page.evaluate(() => {
-                                         window.scrollTo(0, 0);
-                                     });
-                                     await new Promise(resolve => setTimeout(resolve, 500));
-                                     
-                                     const retryData = await extractTableData(page);
-                                     if (!retryData.found) {
-                                         console.error('❌ Retry also failed: ' + (retryData.error || 'Unknown error'));
-                                     } else {
-                                         console.log('✅ Table found on retry!');
-                                         Object.assign(tableData, retryData);
-                                     }
-                                 } else {
-                                     console.log('✅ Scraped ' + (tableData.rowCount || 0) + ' rows.');
-                                     console.log('✅ Found ' + (tableData.headerCount || 0) + ' headers.');
-                                 }
-                                 
-                                 // Save to file (包含 headers 和 data)
-                                 const dataPath = path.join(workingDir, 'omg_scraped_data.json');
-                                 fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
-                                 console.log('💾 Data saved to: ' + dataPath);
+                                console.log('📄 Pagination info:', JSON.stringify(paginationInfo));
+                                
+                                // --- 爬取所有分頁的數據 ---
+                                const allPagesData = [];
+                                const scrapedHeaders = [];
+                                
+                                // 限制最大頁數，避免無限循環
+                                const maxPages = Math.min(paginationInfo.totalPages, 100);
+                                console.log('📄 Will scrape ' + maxPages + ' pages (limited to 100 max)');
+                                
+                                for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+                                    console.log('\\n📄 [' + new Date().toLocaleTimeString() + '] Scraping page ' + pageNum + '/' + maxPages + '...');
+                                    
+                                    try {
+                                        // 如果不是第一頁，點擊分頁按鈕
+                                        if (pageNum > 1) {
+                                            console.log('👆 Clicking page ' + pageNum + ' button...');
+                                            
+                                            // 添加超時保護
+                                            const pageClickPromise = page.evaluate((targetPage) => {
+                                                const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
+                                                const targetBtn = buttons.find(btn => {
+                                                    const text = btn.textContent.trim();
+                                                    return parseInt(text) === targetPage;
+                                                });
+                                                
+                                                if (targetBtn && !targetBtn.classList.contains('is--active')) {
+                                                    targetBtn.click();
+                                                    return true;
+                                                }
+                                                return false;
+                                            }, pageNum);
+                                            
+                                            const pageClicked = await Promise.race([
+                                                pageClickPromise,
+                                                new Promise((resolve) => setTimeout(() => resolve(false), 5000))
+                                            ]);
+                                            
+                                            if (pageClicked) {
+                                                console.log('✅ Page ' + pageNum + ' button clicked');
+                                                
+                                                // 等待頁面加載（減少等待時間）
+                                                console.log('⏳ Waiting for page to load...');
+                                                await new Promise(r => setTimeout(r, 1500));
+                                                
+                                                // 等待 loading 消失和數據出現（減少超時時間）
+                                                try {
+                                                    await Promise.race([
+                                                        page.waitForFunction(() => {
+                                                            const spinners = [
+                                                                '.ant-spin-spinning',
+                                                                '.ant-spin',
+                                                                '[class*="loading"]',
+                                                                '[class*="spinner"]',
+                                                                '.vxe-loading'
+                                                            ];
+                                                            const hasLoading = spinners.some(selector => {
+                                                                const el = document.querySelector(selector);
+                                                                return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                                            });
+                                                            
+                                                            const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                                            const hasData = hasTable && (
+                                                                hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                                                hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                                                hasTable.querySelectorAll('tr').length > 1
+                                                            );
+                                                            
+                                                            return !hasLoading && hasData;
+                                                        }, { 
+                                                            timeout: 15000,
+                                                            polling: 500
+                                                        }),
+                                                        new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
+                                                    ]);
+                                                    console.log('✅ Page loaded');
+                                                } catch (e) {
+                                                    console.log('⚠️ Wait for page load timed out, proceeding anyway...');
+                                                }
+                                            } else {
+                                                console.log('⚠️ Page ' + pageNum + ' button not found, clicked, or timeout');
+                                                // 如果找不到按鈕，可能已經是最後一頁，嘗試繼續
+                                            }
+                                        }
+                                        
+                                        // 提取當前頁的數據（添加超時保護）
+                                        console.log('📊 Extracting data from page ' + pageNum + '...');
+                                        const extractPromise = extractTableData(page);
+                                        const tableData = await Promise.race([
+                                            extractPromise,
+                                            new Promise((resolve) => setTimeout(() => resolve({ found: false, error: 'Extract timeout' }), 10000))
+                                        ]);
+                                        
+                                        if (tableData && tableData.found) {
+                                            // 保存表頭（使用第一頁的表頭）
+                                            if (pageNum === 1 && tableData.headers && tableData.headers.length > 0) {
+                                                scrapedHeaders.push(...tableData.headers);
+                                            }
+                                            
+                                            allPagesData.push({
+                                                pageNumber: pageNum,
+                                                headers: tableData.headers || scrapedHeaders,
+                                                rowCount: tableData.rowCount || 0,
+                                                data: tableData.data || []
+                                            });
+                                            
+                                            console.log('✅ Page ' + pageNum + ': Scraped ' + (tableData.rowCount || 0) + ' rows');
+                                        } else {
+                                            console.error('❌ Page ' + pageNum + ': Failed to extract data');
+                                            if (tableData && tableData.debug) {
+                                                console.error('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
+                                            }
+                                            
+                                            // 如果連續3頁都失敗，停止爬取
+                                            if (pageNum > 3 && allPagesData.length === 0) {
+                                                console.log('⚠️ Too many failed pages, stopping pagination');
+                                                break;
+                                            }
+                                            
+                                            // 重試一次（快速重試）
+                                            if (pageNum <= 3) {
+                                                console.log('⏳ Retrying page ' + pageNum + '...');
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
+                                                const retryData = await Promise.race([
+                                                    extractTableData(page),
+                                                    new Promise((resolve) => setTimeout(() => resolve({ found: false }), 5000))
+                                                ]);
+                                                if (retryData && retryData.found) {
+                                                    allPagesData.push({
+                                                        pageNumber: pageNum,
+                                                        headers: retryData.headers || scrapedHeaders,
+                                                        rowCount: retryData.rowCount || 0,
+                                                        data: retryData.data || []
+                                                    });
+                                                    console.log('✅ Page ' + pageNum + ' (retry): Scraped ' + (retryData.rowCount || 0) + ' rows');
+                                                }
+                                            }
+                                        }
+                                    } catch (err) {
+                                        console.error('❌ Error on page ' + pageNum + ':', err.message);
+                                        // 繼續下一頁，不要因為單頁錯誤而停止
+                                    }
+                                    
+                                    // 頁面間稍作延遲，避免請求過快
+                                    if (pageNum < maxPages) {
+                                        await new Promise(r => setTimeout(r, 300));
+                                    }
+                                }
+                                
+                                // 合併所有頁面的數據
+                                const scrapedData = [];
+                                allPagesData.forEach(pageData => {
+                                    if (pageData.data && pageData.data.length > 0) {
+                                        scrapedData.push(...pageData.data);
+                                    }
+                                });
+                                
+                                console.log('\\n✅ Total scraped: ' + scrapedData.length + ' rows from ' + allPagesData.length + ' pages');
+                                
+                                // Save to file (包含 headers 和 data)
+                                const tableData = {
+                                    found: scrapedData.length > 0,
+                                    headers: scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []),
+                                    headerCount: scrapedHeaders.length > 0 ? scrapedHeaders.length : (allPagesData[0]?.headers?.length || 0),
+                                    rowCount: scrapedData.length,
+                                    data: scrapedData,
+                                    pages: allPagesData,
+                                    paginationInfo: paginationInfo
+                                };
+                                
+                                const dataPath = path.join(workingDir, 'omg_scraped_data.json');
+                                fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
+                                console.log('💾 Data saved to: ' + dataPath);
                              }
                              
 
@@ -971,17 +1333,31 @@ class ScrapeBrowserOMGDomDetail extends Command
                     // 讀取爬取的數據（如果有的話）
                     let scrapedHeaders = [];
                     let scrapedData = [];
+                    let paginationInfo = null;
+                    let allPagesData = [];
                     const dataPath = path.join(workingDir, 'omg_scraped_data.json');
                     try {
                         if (fs.existsSync(dataPath)) {
                             const dataContent = fs.readFileSync(dataPath, 'utf8');
                             const parsedData = JSON.parse(dataContent);
                             
-                            // 檢查數據格式：可能是新格式 {headers, data} 或舊格式 [data]
+                            // 檢查數據格式：可能是新格式 {headers, data, pages, paginationInfo} 或舊格式 [data]
                             if (parsedData && parsedData.headers && parsedData.data) {
                                 scrapedHeaders = parsedData.headers;
                                 scrapedData = parsedData.data;
+                                
+                                // 如果有分頁信息，也讀取
+                                if (parsedData.paginationInfo) {
+                                    paginationInfo = parsedData.paginationInfo;
+                                }
+                                if (parsedData.pages && Array.isArray(parsedData.pages)) {
+                                    allPagesData = parsedData.pages;
+                                }
+                                
                                 console.log('✅ Loaded scraped data: ' + scrapedData.length + ' rows, ' + scrapedHeaders.length + ' headers');
+                                if (paginationInfo) {
+                                    console.log('✅ Loaded pagination info: ' + paginationInfo.totalPages + ' pages, ' + paginationInfo.totalRecords + ' total records');
+                                }
                             } else if (Array.isArray(parsedData)) {
                                 // 舊格式：只有數據數組，需要重新爬取表頭
                                 scrapedData = parsedData;
@@ -1096,6 +1472,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                     let totalDataRows = 0;
                     
                     // 如果有爬取的數據，構建表格對象
+                    // paginationInfo 和 allPagesData 已經在上面讀取數據時設置了
                     if (scrapedHeaders.length > 0 && scrapedData.length > 0) {
                         const tableData = {
                             found: true,
@@ -1109,6 +1486,29 @@ class ScrapeBrowserOMGDomDetail extends Command
                     }
                     
                     // 構建 domData 結構（類似 PGONE）
+                    const totalPages = paginationInfo ? paginationInfo.totalPages : (allPagesData.length > 0 ? allPagesData.length : 1);
+                    
+                    // 如果有分頁數據，構建分頁結構
+                    let pages = [];
+                    if (allPagesData.length > 0) {
+                        pages = allPagesData.map(pageData => ({
+                            pageNumber: pageData.pageNumber,
+                            tables: [{
+                                found: true,
+                                headers: pageData.headers || scrapedHeaders,
+                                headerCount: (pageData.headers || scrapedHeaders).length,
+                                rowCount: pageData.rowCount || 0,
+                                data: pageData.data || []
+                            }]
+                        }));
+                    } else {
+                        // 沒有分頁數據，使用單頁結構
+                        pages = [{
+                            pageNumber: 1,
+                            tables: allTables
+                        }];
+                    }
+                    
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
@@ -1116,12 +1516,10 @@ class ScrapeBrowserOMGDomDetail extends Command
                             date_end: dateEndParsed,
                             account_number: accountNumberParsed
                         },
-                        totalPages: 1,
-                        pages: [{
-                            pageNumber: 1,
-                            tables: allTables
-                        }],
-                        tables: allTables
+                        totalPages: totalPages,
+                        pages: pages,
+                        tables: allTables,
+                        paginationInfo: paginationInfo
                     };
                     
                     // 計算總資料筆數
