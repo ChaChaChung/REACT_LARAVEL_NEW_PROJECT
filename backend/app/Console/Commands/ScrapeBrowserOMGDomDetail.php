@@ -119,7 +119,7 @@ class ScrapeBrowserOMGDomDetail extends Command
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
-        $workingDir = storage_path('app/temp');
+        $workingDir = storage_path('app/scraped_data');
         $workingDirJs = json_encode($workingDir);
 
         // 生成 Puppeteer JavaScript 腳本
