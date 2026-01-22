@@ -183,12 +183,41 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 // vxe-table 結構：
                                 // .vxe-table--header-wrapper (表頭)
                                 // .vxe-table--body-wrapper (表體)
+                                // 或者 table.vxe-table--header (表格本身有這個 class)
                                 
                                 let headers = [];
                                 let data = [];
                                 
-                                // 方式1：查找 vxe-table 表頭
-                                let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
+                                console.log('🔍 Debug extractTableData:');
+                                
+                                // 優先查找 table.vxe-table--header 結構
+                                const headerTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header');
+                                let headerCells = [];
+                                
+                                if (headerTable) {
+                                    console.log('  - Found table.vxe-table--header');
+                                    // 對於 table.vxe-table--header，表頭在 thead 或第一行
+                                    const thead = headerTable.querySelector('thead');
+                                    if (thead) {
+                                        headerCells = Array.from(thead.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
+                                    } else {
+                                        // 如果沒有 thead，查找第一行 tr（可能是表頭行）
+                                        const firstRow = headerTable.querySelector('tr');
+                                        if (firstRow && firstRow.querySelector('th')) {
+                                            headerCells = Array.from(firstRow.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
+                                        }
+                                    }
+                                    // 如果還是找不到，直接在整個表格內查找所有 th
+                                    if (headerCells.length === 0) {
+                                        headerCells = Array.from(headerTable.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
+                                    }
+                                    console.log('  - headerCells from table.vxe-table--header: ' + headerCells.length);
+                                }
+                                
+                                // 方式1：如果還沒找到，查找標準 vxe-table 表頭
+                                if (headerCells.length === 0) {
+                                    headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
+                                }
                                 
                                 // 方式2：如果找不到，嘗試查找標準 thead
                                 if (headerCells.length === 0) {
@@ -203,26 +232,44 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     }
                                 }
                                 
+                                console.log('  - Total headerCells found: ' + headerCells.length);
+                                
                                 if (headerCells.length > 0) {
                                     headers = headerCells.map(cell => {
                                         const text = cell.innerText || cell.textContent || '';
                                         return text.trim();
                                     }).filter(t => t); // 過濾空值
                                 } else {
-                                    return {
-                                        found: false,
-                                        error: 'No headers found',
-                                        debug: {
-                                            vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
-                                            headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
-                                            theadElements: document.querySelectorAll('thead').length
-                                        }
-                                    };
+                                    // 即使沒有表頭，也嘗試提取數據（使用索引作為 key）
+                                    console.log('  - No headers found, will use column indices');
+                                    // 不返回錯誤，繼續提取數據
                                 }
                                 
                                 // 提取資料行
-                                // 方式1：查找 vxe-table 表體行
-                                let rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
+                                let rows = [];
+                                
+                                // 優先從 table.vxe-table--header 提取數據行
+                                if (headerTable) {
+                                    console.log('  - Extracting rows from table.vxe-table--header');
+                                    // 從 tbody 中提取所有 tr
+                                    rows = Array.from(headerTable.querySelectorAll('tbody tr'));
+                                    
+                                    // 如果 tbody 中沒有，查找所有 tr（排除表頭行）
+                                    if (rows.length === 0) {
+                                        const allTrs = Array.from(headerTable.querySelectorAll('tr'));
+                                        // 過濾掉表頭行（包含 th 的行）
+                                        rows = allTrs.filter(tr => {
+                                            const hasTh = tr.querySelector('th');
+                                            return !hasTh; // 只保留不包含 th 的行（數據行）
+                                        });
+                                    }
+                                    console.log('  - rows from table.vxe-table--header: ' + rows.length);
+                                }
+                                
+                                // 方式1：如果還沒找到，查找標準 vxe-table 表體行
+                                if (rows.length === 0) {
+                                    rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
+                                }
                                 
                                 // 方式2：如果找不到，嘗試標準 tr
                                 if (rows.length === 0) {
@@ -237,6 +284,18 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     }
                                 }
                                 
+                                // 方式4：最後嘗試，查找所有 table tbody tr
+                                if (rows.length === 0) {
+                                    rows = Array.from(document.querySelectorAll('table tbody tr'));
+                                    // 過濾掉表頭行
+                                    rows = rows.filter(tr => {
+                                        const hasTh = tr.querySelector('th');
+                                        return !hasTh;
+                                    });
+                                }
+                                
+                                console.log('  - Total rows found: ' + rows.length);
+                                
                                 // 將資料行轉換為對象數組
                                 const dataRows = rows.map((row, rowIndex) => {
                                     const rowData = {};
@@ -245,6 +304,24 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
                                     if (cells.length === 0) {
                                         cells = Array.from(row.querySelectorAll('td'));
+                                    }
+                                    // 如果還是找不到，嘗試查找 .vxe-cell 的父元素
+                                    if (cells.length === 0) {
+                                        const cellElements = Array.from(row.querySelectorAll('.vxe-cell'));
+                                        if (cellElements.length > 0) {
+                                            cells = cellElements.map(cell => {
+                                                // 找到父元素 td 或 th，如果沒有則使用 cell 本身
+                                                let parent = cell.parentElement;
+                                                while (parent && parent !== row && parent.tagName !== 'TD' && parent.tagName !== 'TH') {
+                                                    parent = parent.parentElement;
+                                                }
+                                                return parent && (parent.tagName === 'TD' || parent.tagName === 'TH') ? parent : cell;
+                                            });
+                                        }
+                                    }
+                                    // 最後嘗試：直接查找所有子元素
+                                    if (cells.length === 0) {
+                                        cells = Array.from(row.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
                                     }
                                     
                                     if (headers && headers.length > 0) {
@@ -300,18 +377,38 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     
                                     return rowData;
                                 }).filter(rowData => {
-                                    // 過濾掉小計和總計行（類似 PGONE）
-                                    const firstValue = Object.values(rowData)[0];
+                                    // 過濾掉空行、小計和總計行（類似 PGONE）
+                                    if (!rowData) return false;
+                                    const values = Object.values(rowData).filter(v => v !== null && v !== undefined && v !== '');
+                                    if (values.length === 0) return false;
+                                    const firstValue = values[0];
                                     return firstValue !== '小計' && firstValue !== '總計' && firstValue !== 'Subtotal' && firstValue !== 'Total';
                                 });
                                 
-                                return {
-                                    found: true,
-                                    headers: headers,
-                                    headerCount: headers.length,
-                                    rowCount: dataRows.length,
-                                    data: dataRows
-                                };
+                                console.log('  - dataRows after filtering: ' + dataRows.length);
+                                
+                                // 即使沒有表頭，只要有數據就返回成功
+                                if (dataRows.length > 0 || headers.length > 0) {
+                                    return {
+                                        found: true,
+                                        headers: headers,
+                                        headerCount: headers.length,
+                                        rowCount: dataRows.length,
+                                        data: dataRows
+                                    };
+                                } else {
+                                    return {
+                                        found: false,
+                                        error: 'No data found',
+                                        debug: {
+                                            vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
+                                            headerTableElements: document.querySelectorAll('table[class*="vxe-table--header"]').length,
+                                            headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
+                                            theadElements: document.querySelectorAll('thead').length,
+                                            tbodyTrElements: document.querySelectorAll('table tbody tr').length
+                                        }
+                                    };
+                                }
                             } catch (e) {
                                 return {
                                     found: false,
@@ -613,28 +710,77 @@ class ScrapeBrowserOMGDomDetail extends Command
                                          console.error('❌ Failed to click Search button:', err.message);
                                      }
                                      
-                                     // Wait for query/rendering (Smart Wait)
-                                     console.log('⏳ Waiting for loading to finish (max 60s)...');
-                                     try {
-                                        // Wait for spinner to appear and then disappear, or just wait for table rows
-                                        // Strategy: Wait 2s, then wait for .ant-spin-spinning to be GONE
-                                        await new Promise(r => setTimeout(r, 2000));
-                                        
-                                        await page.waitForFunction(() => {
-                                            return !document.querySelector('.ant-spin-spinning');
-                                        }, { timeout: 60000 });
-                                        
-                                        console.log('✅ Loading spinner disappeared');
-                                     } catch (e) {
-                                         console.log('⚠️ Wait for loading finish timed out or failed, proceeding to screenshot...');
-                                     }
+                                    // Wait for query/rendering (Smart Wait)
+                                    console.log('⏳ Waiting for loading to finish and table data to appear (max 60s)...');
+                                    try {
+                                       // 策略：等待表格出現且有數據，同時檢查 loading 狀態
+                                       await new Promise(r => setTimeout(r, 2000)); // 先等 2 秒讓請求發送
+                                       
+                                       // 等待表格數據出現（更可靠的指標）
+                                       await page.waitForFunction(() => {
+                                           // 檢查多種 loading 指示器
+                                           const spinners = [
+                                               '.ant-spin-spinning',
+                                               '.ant-spin',
+                                               '[class*="loading"]',
+                                               '[class*="spinner"]',
+                                               '.vxe-loading'
+                                           ];
+                                           const hasLoading = spinners.some(selector => {
+                                               const el = document.querySelector(selector);
+                                               return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                           });
+                                           
+                                           // 檢查表格是否出現且有數據
+                                           const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                           const hasData = hasTable && (
+                                               hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                               hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                               hasTable.querySelectorAll('tr').length > 1 // 至少有表頭和一行數據
+                                           );
+                                           
+                                           // 如果沒有 loading 且表格有數據，則完成
+                                           return !hasLoading && hasData;
+                                       }, { 
+                                           timeout: 60000,
+                                           polling: 500 // 每 500ms 檢查一次
+                                       });
+                                       
+                                       console.log('✅ Loading finished and table data appeared');
+                                    } catch (e) {
+                                        console.log('⚠️ Wait for loading finish timed out, checking if table exists anyway...');
+                                        // 即使超時，也檢查表格是否存在
+                                        const tableExists = await page.evaluate(() => {
+                                            return !!document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                        });
+                                        if (tableExists) {
+                                            console.log('✅ Table exists, proceeding...');
+                                        } else {
+                                            console.log('⚠️ Table not found, but proceeding anyway...');
+                                        }
+                                    }
                                      
-                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_fill_wait.png'), fullPage: true });
-                                     console.log('📸 Debug screenshot saved: omg_debug_after_fill_wait.png');
-                                     
-                                     // --- Scrape Table Data ---
-                                     console.log('📊 Scraping vxe-table data...');
-                                     const tableData = await extractTableData(page);
+                                    await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_fill_wait.png'), fullPage: true });
+                                    console.log('📸 Debug screenshot saved: omg_debug_after_fill_wait.png');
+                                    
+                                    // 額外等待一下，確保數據完全渲染
+                                    await new Promise(r => setTimeout(r, 1000));
+                                    
+                                    // --- Scrape Table Data ---
+                                    console.log('📊 Scraping vxe-table data...');
+                                    
+                                    // 先檢查表格是否存在
+                                    const tableCheck = await page.evaluate(() => {
+                                        const table = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                        if (table) {
+                                            const rowCount = table.querySelectorAll('tbody tr, .vxe-table--body-wrapper tr, tr').length;
+                                            return { exists: true, rowCount };
+                                        }
+                                        return { exists: false, rowCount: 0 };
+                                    });
+                                    console.log('🔍 Table check:', JSON.stringify(tableCheck));
+                                    
+                                    const tableData = await extractTableData(page);
                                      
                                      if (!tableData.found) {
                                          const errorMsg = tableData.error || 'No table found';
@@ -701,26 +847,76 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      console.error('❌ Failed to click Search button:', err.message);
                                  }
                                  
-                                 // Wait for query/rendering
-                                 console.log('⏳ Waiting for loading to finish (max 60s)...');
-                                 try {
-                                    await new Promise(r => setTimeout(r, 2000));
-                                    
-                                    await page.waitForFunction(() => {
-                                        return !document.querySelector('.ant-spin-spinning');
-                                    }, { timeout: 60000 });
-                                    
-                                    console.log('✅ Loading spinner disappeared');
-                                 } catch (e) {
-                                     console.log('⚠️ Wait for loading finish timed out or failed, proceeding...');
-                                 }
+                                // Wait for query/rendering
+                                console.log('⏳ Waiting for loading to finish and table data to appear (max 60s)...');
+                                try {
+                                   await new Promise(r => setTimeout(r, 2000)); // 先等 2 秒讓請求發送
+                                   
+                                   // 等待表格數據出現（更可靠的指標）
+                                   await page.waitForFunction(() => {
+                                       // 檢查多種 loading 指示器
+                                       const spinners = [
+                                           '.ant-spin-spinning',
+                                           '.ant-spin',
+                                           '[class*="loading"]',
+                                           '[class*="spinner"]',
+                                           '.vxe-loading'
+                                       ];
+                                       const hasLoading = spinners.some(selector => {
+                                           const el = document.querySelector(selector);
+                                           return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                       });
+                                       
+                                       // 檢查表格是否出現且有數據
+                                       const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                       const hasData = hasTable && (
+                                           hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                           hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                           hasTable.querySelectorAll('tr').length > 1 // 至少有表頭和一行數據
+                                       );
+                                       
+                                       // 如果沒有 loading 且表格有數據，則完成
+                                       return !hasLoading && hasData;
+                                   }, { 
+                                       timeout: 60000,
+                                       polling: 500 // 每 500ms 檢查一次
+                                   });
+                                   
+                                   console.log('✅ Loading finished and table data appeared');
+                                } catch (e) {
+                                    console.log('⚠️ Wait for loading finish timed out, checking if table exists anyway...');
+                                    // 即使超時，也檢查表格是否存在
+                                    const tableExists = await page.evaluate(() => {
+                                        return !!document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                    });
+                                    if (tableExists) {
+                                        console.log('✅ Table exists, proceeding...');
+                                    } else {
+                                        console.log('⚠️ Table not found, but proceeding anyway...');
+                                    }
+                                }
                                  
-                                 await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_search_wait.png'), fullPage: true });
-                                 console.log('📸 Debug screenshot saved: omg_debug_after_search_wait.png');
-                                 
-                                 // --- Scrape Table Data (even without account number) ---
-                                 console.log('📊 Scraping vxe-table data...');
-                                 const tableData = await extractTableData(page);
+                                await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_search_wait.png'), fullPage: true });
+                                console.log('📸 Debug screenshot saved: omg_debug_after_search_wait.png');
+                                
+                                // 額外等待一下，確保數據完全渲染
+                                await new Promise(r => setTimeout(r, 1000));
+                                
+                                // --- Scrape Table Data (even without account number) ---
+                                console.log('📊 Scraping vxe-table data...');
+                                
+                                // 先檢查表格是否存在
+                                const tableCheck = await page.evaluate(() => {
+                                    const table = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                    if (table) {
+                                        const rowCount = table.querySelectorAll('tbody tr, .vxe-table--body-wrapper tr, tr').length;
+                                        return { exists: true, rowCount };
+                                    }
+                                    return { exists: false, rowCount: 0 };
+                                });
+                                console.log('🔍 Table check:', JSON.stringify(tableCheck));
+                                
+                                const tableData = await extractTableData(page);
                                  
                                  if (!tableData.found) {
                                      const errorMsg = tableData.error || 'No table found';
