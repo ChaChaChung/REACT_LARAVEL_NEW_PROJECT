@@ -1556,4 +1556,96 @@ trait HasAgentAuth
             console.log('✅ 1BET login process completed');
         JS;
     }
+
+    /**
+     * 生成 OMG Puppeteer 使用 localStorage 直接登入的程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateOmgPuppeteerLoginInfoCode(string $pageVar = 'page'): string
+    {
+        $domain = env('OMG_AGENT_DOMAIN', '');
+        $loginInfo = env('OMG_AGENT_LOGIN_INFO', '');
+        $lang = env('OMG_AGENT_LANG', '{"value":"en-US"}');
+
+        // 轉義 JavaScript 字符串
+        $domainJs = json_encode($domain);
+        $loginInfoJs = json_encode($loginInfo); // 注意：這裡是 JSON string 的 string，所以 encode 一次變 "string"
+        $langJs = json_encode($lang);
+
+        return <<<JS
+            // 導航到登入頁面
+            let omgTargetUrl = $domainJs;
+            if (!omgTargetUrl.startsWith('http')) {
+                omgTargetUrl = 'https://' + omgTargetUrl;
+            }
+            
+            console.log('🌐 Navigating to login page: ' + omgTargetUrl);
+            await {$pageVar}.goto(omgTargetUrl, {
+                waitUntil: 'networkidle2',
+                timeout: 60000
+            });
+            
+            // 等待頁面載入
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 設置 localStorage
+            await {$pageVar}.evaluate((loginInfoStr, langStr) => {
+                console.log('💾 Setting OMG login info to localStorage...');
+                try {
+                    // OMG_AGENT_LOGIN_INFO 應該是一個 JSON 字符串，我們需要確保它被正確設置
+                    // 根據需求，直接將環境變數的內容當作字串存入 key
+                    if (loginInfoStr) {
+                        localStorage.setItem('vben-web-antd-5.5.0-prod-core-access', loginInfoStr);
+                    }
+                    
+                    if (langStr) {
+                        localStorage.setItem('vben-web-antd-5.5.0-prod-preferences-locale', langStr);
+                    }
+                    
+                    // 觸發 storage 事件 (Authentication)
+                    window.dispatchEvent(new StorageEvent('storage', {
+                        key: 'vben-web-antd-5.5.0-prod-core-access',
+                        storageArea: localStorage,
+                        newValue: loginInfoStr
+                    }));
+
+                    // 觸發 storage 事件 (Language)
+                    if (langStr) {
+                        window.dispatchEvent(new StorageEvent('storage', {
+                            key: 'vben-web-antd-5.5.0-prod-preferences-locale',
+                            storageArea: localStorage,
+                            newValue: langStr
+                        }));
+                    }
+                    
+                    return true;
+                } catch (e) {
+                    console.error('❌ Error setting localStorage:', e.message);
+                    return false;
+                }
+            }, $loginInfoJs, $langJs);
+            
+            // 等待一下讓頁面處理 localStorage 更新
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // 刷新頁面
+            console.log('🔄 Reloading page to apply login info...');
+            await {$pageVar}.reload({
+                waitUntil: 'networkidle2',
+                timeout: 60000
+            });
+            
+            // 等待頁面完全載入
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // 驗證
+            const localStorageSet = await {$pageVar}.evaluate(() => {
+                const info = localStorage.getItem('vben-web-antd-5.5.0-prod-core-access');
+                return info !== null && info !== '';
+            });
+            
+            console.log('✅ OMG login process completed. Success: ' + localStorageSet);
+        JS;
+    }
 }
