@@ -190,59 +190,59 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 
                                 console.log('🔍 Debug extractTableData:');
                                 
-                                // 優先查找 table.vxe-table--header 結構
+                                // 先查找 table.vxe-table--header 結構（用於提取數據行）
                                 const headerTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header');
-                                let headerCells = [];
                                 
-                                if (headerTable) {
-                                    console.log('  - Found table.vxe-table--header');
-                                    // 對於 table.vxe-table--header，表頭在 thead 或第一行
-                                    const thead = headerTable.querySelector('thead');
-                                    if (thead) {
-                                        headerCells = Array.from(thead.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
-                                    } else {
-                                        // 如果沒有 thead，查找第一行 tr（可能是表頭行）
-                                        const firstRow = headerTable.querySelector('tr');
-                                        if (firstRow && firstRow.querySelector('th')) {
-                                            headerCells = Array.from(firstRow.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
-                                        }
-                                    }
-                                    // 如果還是找不到，直接在整個表格內查找所有 th
-                                    if (headerCells.length === 0) {
-                                        headerCells = Array.from(headerTable.querySelectorAll('th .vxe-cell, .vxe-header--column .vxe-cell, th'));
-                                    }
-                                    console.log('  - headerCells from table.vxe-table--header: ' + headerCells.length);
-                                }
+                                // 提取表頭（使用簡單直接的方法，類似備用邏輯）
+                                let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
                                 
-                                // 方式1：如果還沒找到，查找標準 vxe-table 表頭
-                                if (headerCells.length === 0) {
-                                    headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
-                                }
-                                
-                                // 方式2：如果找不到，嘗試查找標準 thead
                                 if (headerCells.length === 0) {
                                     headerCells = Array.from(document.querySelectorAll('thead th'));
                                 }
                                 
-                                // 方式3：如果還是找不到，查找任何包含 vxe 相關類的元素
+                                // 如果還是找不到，嘗試從 headerTable 中查找
+                                if (headerCells.length === 0 && headerTable) {
+                                    const thead = headerTable.querySelector('thead');
+                                    if (thead) {
+                                        const thElements = Array.from(thead.querySelectorAll('th'));
+                                        headerCells = thElements.map(th => {
+                                            const vxeCell = th.querySelector('.vxe-cell');
+                                            return vxeCell || th;
+                                        });
+                                    } else {
+                                        const thElements = Array.from(headerTable.querySelectorAll('th'));
+                                        headerCells = thElements.map(th => {
+                                            const vxeCell = th.querySelector('.vxe-cell');
+                                            return vxeCell || th;
+                                        });
+                                    }
+                                }
+                                
+                                // 如果還是找不到，查找任何包含 vxe 相關類的元素
                                 if (headerCells.length === 0) {
                                     const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
                                     if (vxeTable) {
-                                        headerCells = Array.from(vxeTable.querySelectorAll('th .vxe-cell, th'));
+                                        const thElements = Array.from(vxeTable.querySelectorAll('th'));
+                                        headerCells = thElements.map(th => {
+                                            const vxeCell = th.querySelector('.vxe-cell');
+                                            return vxeCell || th;
+                                        });
                                     }
                                 }
                                 
                                 console.log('  - Total headerCells found: ' + headerCells.length);
                                 
                                 if (headerCells.length > 0) {
+                                    // 提取表頭文本（簡單直接，不進行去重處理，因為備用邏輯也沒有去重）
                                     headers = headerCells.map(cell => {
                                         const text = cell.innerText || cell.textContent || '';
                                         return text.trim();
                                     }).filter(t => t); // 過濾空值
+                                    
+                                    console.log('  - Headers extracted: ' + headers.length);
                                 } else {
                                     // 即使沒有表頭，也嘗試提取數據（使用索引作為 key）
                                     console.log('  - No headers found, will use column indices');
-                                    // 不返回錯誤，繼續提取數據
                                 }
                                 
                                 // 提取資料行
@@ -269,11 +269,13 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 // 方式1：如果還沒找到，查找標準 vxe-table 表體行
                                 if (rows.length === 0) {
                                     rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
+                                    console.log('  - rows from .vxe-body--row: ' + rows.length);
                                 }
                                 
                                 // 方式2：如果找不到，嘗試標準 tr
                                 if (rows.length === 0) {
                                     rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper tr'));
+                                    console.log('  - rows from .vxe-table--body-wrapper tr: ' + rows.length);
                                 }
                                 
                                 // 方式3：如果還是找不到，查找任何包含 vxe 相關類的表格行
@@ -281,6 +283,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
                                     if (vxeTable) {
                                         rows = Array.from(vxeTable.querySelectorAll('tbody tr, .vxe-body--row'));
+                                        console.log('  - rows from vxeTable: ' + rows.length);
                                     }
                                 }
                                 
@@ -292,83 +295,67 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         const hasTh = tr.querySelector('th');
                                         return !hasTh;
                                     });
+                                    console.log('  - rows from table tbody tr: ' + rows.length);
                                 }
                                 
                                 console.log('  - Total rows found: ' + rows.length);
                                 
-                                // 將資料行轉換為對象數組
+                                // 將資料行轉換為對象數組（使用簡單直接的方法，類似備用邏輯）
                                 const dataRows = rows.map((row, rowIndex) => {
                                     const rowData = {};
                                     
-                                    // 查找單元格
+                                    // 查找單元格 - 優先使用 .vxe-body--column，然後 td
                                     let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
                                     if (cells.length === 0) {
                                         cells = Array.from(row.querySelectorAll('td'));
                                     }
+                                    
                                     // 如果還是找不到，嘗試查找 .vxe-cell 的父元素
                                     if (cells.length === 0) {
                                         const cellElements = Array.from(row.querySelectorAll('.vxe-cell'));
                                         if (cellElements.length > 0) {
                                             cells = cellElements.map(cell => {
-                                                // 找到父元素 td 或 th，如果沒有則使用 cell 本身
+                                                // 找到父元素 td，如果沒有則使用 cell 本身
                                                 let parent = cell.parentElement;
-                                                while (parent && parent !== row && parent.tagName !== 'TD' && parent.tagName !== 'TH') {
+                                                while (parent && parent !== row && parent.tagName !== 'TD') {
                                                     parent = parent.parentElement;
                                                 }
-                                                return parent && (parent.tagName === 'TD' || parent.tagName === 'TH') ? parent : cell;
+                                                return parent && parent.tagName === 'TD' ? parent : cell;
                                             });
                                         }
                                     }
-                                    // 最後嘗試：直接查找所有子元素
+                                    
+                                    // 最後嘗試：直接查找所有子元素中的 td
                                     if (cells.length === 0) {
-                                        cells = Array.from(row.children).filter(el => el.tagName === 'TD' || el.tagName === 'TH');
+                                        cells = Array.from(row.children).filter(el => el.tagName === 'TD');
+                                    }
+                                    
+                                    if (rowIndex < 3) { // 只記錄前3行的詳細信息
+                                        console.log('  - Row ' + rowIndex + ': Found ' + cells.length + ' cells, ' + headers.length + ' headers');
                                     }
                                     
                                     if (headers && headers.length > 0) {
-                                        headers.forEach((header, colIndex) => {
-                                            // 清理字段名（類似 PGONE）
-                                            let cleanHeader = header
-                                                .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-                                                .replace(/^_+|_+$/g, '');
-                                            
-                                            if (!cleanHeader) {
-                                                cleanHeader = 'column_' + colIndex;
-                                            }
-                                            
-                                            // 確保字段名唯一
-                                            let finalHeader = cleanHeader;
-                                            let counter = 1;
-                                            while (rowData.hasOwnProperty(finalHeader)) {
-                                                finalHeader = cleanHeader + '_' + counter;
-                                                counter++;
-                                            }
-                                            
-                                            // 提取單元格內容
-                                            let cellValue = null;
-                                            if (cells[colIndex]) {
-                                                const cell = cells[colIndex];
-                                                // vxe-table 的內容通常在 .vxe-cell 中
+                                        // 直接使用 header 文本作為 key，不進行字段名清理（類似備用邏輯）
+                                        headers.forEach((header, index) => {
+                                            const cell = cells[index];
+                                            if (cell) {
                                                 const contentDiv = cell.querySelector('.vxe-cell');
-                                                if (contentDiv) {
-                                                    cellValue = contentDiv.innerText.trim();
-                                                } else {
-                                                    cellValue = cell.innerText.trim();
-                                                }
+                                                rowData[header] = contentDiv ? (contentDiv.innerText || contentDiv.textContent || '').trim() : (cell.innerText || cell.textContent || '').trim();
+                                            } else {
+                                                rowData[header] = '';
                                             }
-                                            
-                                            rowData[finalHeader] = cellValue;
                                         });
                                     } else {
                                         // 如果沒有表頭，使用索引作為 key
                                         cells.forEach((cell, colIndex) => {
                                             const contentDiv = cell.querySelector('.vxe-cell');
-                                            let cellValue = null;
+                                            let cellValue = '';
                                             if (contentDiv) {
-                                                cellValue = contentDiv.innerText.trim();
+                                                cellValue = (contentDiv.innerText || contentDiv.textContent || '').trim();
                                             } else {
-                                                cellValue = cell ? cell.innerText.trim() : null;
+                                                cellValue = cell ? (cell.innerText || cell.textContent || '').trim() : '';
                                             }
-                                            rowData['column_' + colIndex] = cellValue;
+                                            rowData['column_' + colIndex] = cellValue || '';
                                         });
                                     }
                                     
@@ -379,7 +366,11 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 }).filter(rowData => {
                                     // 過濾掉空行、小計和總計行（類似 PGONE）
                                     if (!rowData) return false;
-                                    const values = Object.values(rowData).filter(v => v !== null && v !== undefined && v !== '');
+                                    // 排除 _rowIndex 字段，只檢查實際數據值
+                                    const values = Object.entries(rowData)
+                                        .filter(([key]) => key !== '_rowIndex')
+                                        .map(([, value]) => value)
+                                        .filter(v => v !== null && v !== undefined && v !== '');
                                     if (values.length === 0) return false;
                                     const firstValue = values[0];
                                     return firstValue !== '小計' && firstValue !== '總計' && firstValue !== 'Subtotal' && firstValue !== 'Total';
@@ -387,28 +378,38 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 
                                 console.log('  - dataRows after filtering: ' + dataRows.length);
                                 
-                                // 即使沒有表頭，只要有數據就返回成功
-                                if (dataRows.length > 0 || headers.length > 0) {
-                                    return {
-                                        found: true,
-                                        headers: headers,
-                                        headerCount: headers.length,
-                                        rowCount: dataRows.length,
-                                        data: dataRows
+                                // 如果沒有數據，返回詳細的調試信息
+                                if (dataRows.length === 0) {
+                                    const debugInfo = {
+                                        headerTableFound: !!headerTable,
+                                        headerCellsCount: headerCells.length,
+                                        headersCount: headers.length,
+                                        rowsFound: rows.length,
+                                        vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
+                                        headerTableElements: document.querySelectorAll('table[class*="vxe-table--header"]').length,
+                                        headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
+                                        bodyWrappers: document.querySelectorAll('.vxe-table--body-wrapper').length,
+                                        theadElements: document.querySelectorAll('thead').length,
+                                        tbodyTrElements: document.querySelectorAll('table tbody tr').length,
+                                        bodyRowElements: document.querySelectorAll('.vxe-body--row').length
                                     };
-                                } else {
+                                    console.log('  - Debug info:', JSON.stringify(debugInfo));
+                                    
                                     return {
                                         found: false,
                                         error: 'No data found',
-                                        debug: {
-                                            vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
-                                            headerTableElements: document.querySelectorAll('table[class*="vxe-table--header"]').length,
-                                            headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
-                                            theadElements: document.querySelectorAll('thead').length,
-                                            tbodyTrElements: document.querySelectorAll('table tbody tr').length
-                                        }
+                                        debug: debugInfo
                                     };
                                 }
+                                
+                                // 即使沒有表頭，只要有數據就返回成功
+                                return {
+                                    found: true,
+                                    headers: headers,
+                                    headerCount: headers.length,
+                                    rowCount: dataRows.length,
+                                    data: dataRows
+                                };
                             } catch (e) {
                                 return {
                                     found: false,
@@ -778,11 +779,25 @@ class ScrapeBrowserOMGDomDetail extends Command
                                             const totalText = totalSpan.textContent || totalSpan.innerText || '';
                                             console.log('📄 Total text:', totalText);
                                             
-                                            // 提取 "Total 274 records" 中的數字
-                                            const totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
+                                            // 提取英文 "Total 274 records" 中的數字
+                                            let totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
                                             if (totalMatch && totalMatch[1]) {
                                                 totalRecords = parseInt(totalMatch[1]);
-                                                console.log('📄 Found total records:', totalRecords);
+                                                console.log('📄 Found total records (English):', totalRecords);
+                                            } else {
+                                                // 提取中文 "共 274 条记录" 中的數字
+                                                totalMatch = totalText.match(/共\s*(\d+)\s*条记录/i);
+                                                if (totalMatch && totalMatch[1]) {
+                                                    totalRecords = parseInt(totalMatch[1]);
+                                                    console.log('📄 Found total records (Chinese):', totalRecords);
+                                                } else {
+                                                    // 嘗試提取任何數字
+                                                    const numberMatch = totalText.match(/(\d+)/);
+                                                    if (numberMatch && numberMatch[1]) {
+                                                        totalRecords = parseInt(numberMatch[1]);
+                                                        console.log('📄 Found total records (generic):', totalRecords);
+                                                    }
+                                                }
                                             }
                                         }
                                         
@@ -843,70 +858,115 @@ class ScrapeBrowserOMGDomDetail extends Command
                                             if (pageNum > 1) {
                                                 console.log('👆 Clicking page ' + pageNum + ' button...');
                                                 
-                                                // 添加超時保護
-                                                const pageClickPromise = page.evaluate((targetPage) => {
-                                                    const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
-                                                    const targetBtn = buttons.find(btn => {
-                                                        const text = btn.textContent.trim();
-                                                        return parseInt(text) === targetPage;
-                                                    });
-                                                    
-                                                    if (targetBtn && !targetBtn.classList.contains('is--active')) {
-                                                        targetBtn.click();
-                                                        return true;
-                                                    }
-                                                    return false;
-                                                }, pageNum);
+                                                // 智能分頁導航：先嘗試直接點擊目標頁碼，如果找不到則點擊"下一頁"
+                                                let pageNavigated = false;
+                                                let attempts = 0;
+                                                const maxAttempts = 20; // 最多嘗試20次（防止無限循環）
                                                 
-                                                const pageClicked = await Promise.race([
-                                                    pageClickPromise,
-                                                    new Promise((resolve) => setTimeout(() => resolve(false), 5000))
-                                                ]);
-                                                
-                                                if (pageClicked) {
-                                                    console.log('✅ Page ' + pageNum + ' button clicked');
+                                                while (!pageNavigated && attempts < maxAttempts) {
+                                                    attempts++;
                                                     
-                                                    // 等待頁面加載（減少等待時間）
-                                                    console.log('⏳ Waiting for page to load...');
-                                                    await new Promise(r => setTimeout(r, 1500));
+                                                    const navigationResult = await page.evaluate((targetPage) => {
+                                                        // 先檢查當前是否已經在目標頁面
+                                                        const activeBtn = document.querySelector('.vxe-pager--num-btn.is--active');
+                                                        if (activeBtn) {
+                                                            const activePageText = activeBtn.textContent.trim();
+                                                            const activePageNum = parseInt(activePageText);
+                                                            if (activePageNum === targetPage) {
+                                                                return { success: true, message: 'Already on target page' };
+                                                            }
+                                                        }
+                                                        
+                                                        // 嘗試直接點擊目標頁碼按鈕
+                                                        const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
+                                                        const targetBtn = buttons.find(btn => {
+                                                            const text = btn.textContent.trim();
+                                                            return parseInt(text) === targetPage;
+                                                        });
+                                                        
+                                                        if (targetBtn && !targetBtn.classList.contains('is--active')) {
+                                                            targetBtn.click();
+                                                            return { success: true, message: 'Clicked target page button directly' };
+                                                        }
+                                                        
+                                                        // 如果找不到目標頁碼按鈕，嘗試點擊"下一頁"按鈕
+                                                        const nextBtn = document.querySelector('.vxe-pager--btn-next:not(.is--disabled), .vxe-pager--next-btn:not(.is--disabled), button[aria-label*="next" i], button[aria-label*="下一頁" i]');
+                                                        if (nextBtn && !nextBtn.disabled && !nextBtn.classList.contains('is--disabled')) {
+                                                            nextBtn.click();
+                                                            return { success: true, message: 'Clicked next page button' };
+                                                        }
+                                                        
+                                                        return { success: false, message: 'Target page button not found and next button unavailable' };
+                                                    }, pageNum);
                                                     
-                                                    // 等待 loading 消失和數據出現（減少超時時間）
-                                                    try {
-                                                        await Promise.race([
-                                                            page.waitForFunction(() => {
-                                                                const spinners = [
-                                                                    '.ant-spin-spinning',
-                                                                    '.ant-spin',
-                                                                    '[class*="loading"]',
-                                                                    '[class*="spinner"]',
-                                                                    '.vxe-loading'
-                                                                ];
-                                                                const hasLoading = spinners.some(selector => {
-                                                                    const el = document.querySelector(selector);
-                                                                    return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
-                                                                });
-                                                                
-                                                                const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
-                                                                const hasData = hasTable && (
-                                                                    hasTable.querySelectorAll('tbody tr').length > 0 ||
-                                                                    hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
-                                                                    hasTable.querySelectorAll('tr').length > 1
-                                                                );
-                                                                
-                                                                return !hasLoading && hasData;
-                                                            }, { 
-                                                                timeout: 15000,
-                                                                polling: 500
-                                                            }),
-                                                            new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
-                                                        ]);
-                                                        console.log('✅ Page loaded');
-                                                    } catch (e) {
-                                                        console.log('⚠️ Wait for page load timed out, proceeding anyway...');
+                                                    if (navigationResult.success) {
+                                                        console.log('✅ Navigation: ' + navigationResult.message);
+                                                        
+                                                        // 等待頁面加載
+                                                        await new Promise(r => setTimeout(r, 1500));
+                                                        
+                                                        // 檢查是否已經到達目標頁面
+                                                        const currentPageCheck = await page.evaluate((targetPage) => {
+                                                            const activeBtn = document.querySelector('.vxe-pager--num-btn.is--active');
+                                                            if (activeBtn) {
+                                                                const activePageText = activeBtn.textContent.trim();
+                                                                const activePageNum = parseInt(activePageText);
+                                                                return activePageNum === targetPage;
+                                                            }
+                                                            return false;
+                                                        }, pageNum);
+                                                        
+                                                        if (currentPageCheck) {
+                                                            pageNavigated = true;
+                                                            console.log('✅ Successfully navigated to page ' + pageNum);
+                                                        } else {
+                                                            // 如果還沒到達目標頁面，繼續嘗試
+                                                            console.log('⏳ Not yet on page ' + pageNum + ', continuing navigation...');
+                                                        }
+                                                    } else {
+                                                        console.log('⚠️ ' + navigationResult.message);
+                                                        // 如果找不到按鈕，可能已經是最後一頁或目標頁碼不存在
+                                                        break;
                                                     }
-                                                } else {
-                                                    console.log('⚠️ Page ' + pageNum + ' button not found, clicked, or timeout');
-                                                    // 如果找不到按鈕，可能已經是最後一頁，嘗試繼續
+                                                }
+                                                
+                                                if (!pageNavigated) {
+                                                    console.log('⚠️ Failed to navigate to page ' + pageNum + ' after ' + attempts + ' attempts');
+                                                }
+                                                
+                                                // 等待 loading 消失和數據出現
+                                                try {
+                                                    await Promise.race([
+                                                        page.waitForFunction(() => {
+                                                            const spinners = [
+                                                                '.ant-spin-spinning',
+                                                                '.ant-spin',
+                                                                '[class*="loading"]',
+                                                                '[class*="spinner"]',
+                                                                '.vxe-loading'
+                                                            ];
+                                                            const hasLoading = spinners.some(selector => {
+                                                                const el = document.querySelector(selector);
+                                                                return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                                            });
+                                                            
+                                                            const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                                            const hasData = hasTable && (
+                                                                hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                                                hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                                                hasTable.querySelectorAll('tr').length > 1
+                                                            );
+                                                            
+                                                            return !hasLoading && hasData;
+                                                        }, { 
+                                                            timeout: 15000,
+                                                            polling: 500
+                                                        }),
+                                                        new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
+                                                    ]);
+                                                    console.log('✅ Page loaded');
+                                                } catch (e) {
+                                                    console.log('⚠️ Wait for page load timed out, proceeding anyway...');
                                                 }
                                             }
                                             
@@ -1095,11 +1155,25 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         const totalText = totalSpan.textContent || totalSpan.innerText || '';
                                         console.log('📄 Total text:', totalText);
                                         
-                                        // 提取 "Total 274 records" 中的數字
-                                        const totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
+                                        // 提取英文 "Total 274 records" 中的數字
+                                        let totalMatch = totalText.match(/total\s+(\d+)\s+records?/i);
                                         if (totalMatch && totalMatch[1]) {
                                             totalRecords = parseInt(totalMatch[1]);
-                                            console.log('📄 Found total records:', totalRecords);
+                                            console.log('📄 Found total records (English):', totalRecords);
+                                        } else {
+                                            // 提取中文 "共 274 条记录" 中的數字
+                                            totalMatch = totalText.match(/共\s*(\d+)\s*条记录/i);
+                                            if (totalMatch && totalMatch[1]) {
+                                                totalRecords = parseInt(totalMatch[1]);
+                                                console.log('📄 Found total records (Chinese):', totalRecords);
+                                            } else {
+                                                // 嘗試提取任何數字
+                                                const numberMatch = totalText.match(/(\d+)/);
+                                                if (numberMatch && numberMatch[1]) {
+                                                    totalRecords = parseInt(numberMatch[1]);
+                                                    console.log('📄 Found total records (generic):', totalRecords);
+                                                }
+                                            }
                                         }
                                     }
                                     
@@ -1160,70 +1234,115 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         if (pageNum > 1) {
                                             console.log('👆 Clicking page ' + pageNum + ' button...');
                                             
-                                            // 添加超時保護
-                                            const pageClickPromise = page.evaluate((targetPage) => {
-                                                const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
-                                                const targetBtn = buttons.find(btn => {
-                                                    const text = btn.textContent.trim();
-                                                    return parseInt(text) === targetPage;
-                                                });
-                                                
-                                                if (targetBtn && !targetBtn.classList.contains('is--active')) {
-                                                    targetBtn.click();
-                                                    return true;
-                                                }
-                                                return false;
-                                            }, pageNum);
+                                            // 智能分頁導航：先嘗試直接點擊目標頁碼，如果找不到則點擊"下一頁"
+                                            let pageNavigated = false;
+                                            let attempts = 0;
+                                            const maxAttempts = 20; // 最多嘗試20次（防止無限循環）
                                             
-                                            const pageClicked = await Promise.race([
-                                                pageClickPromise,
-                                                new Promise((resolve) => setTimeout(() => resolve(false), 5000))
-                                            ]);
-                                            
-                                            if (pageClicked) {
-                                                console.log('✅ Page ' + pageNum + ' button clicked');
+                                            while (!pageNavigated && attempts < maxAttempts) {
+                                                attempts++;
                                                 
-                                                // 等待頁面加載（減少等待時間）
-                                                console.log('⏳ Waiting for page to load...');
-                                                await new Promise(r => setTimeout(r, 1500));
+                                                const navigationResult = await page.evaluate((targetPage) => {
+                                                    // 先檢查當前是否已經在目標頁面
+                                                    const activeBtn = document.querySelector('.vxe-pager--num-btn.is--active');
+                                                    if (activeBtn) {
+                                                        const activePageText = activeBtn.textContent.trim();
+                                                        const activePageNum = parseInt(activePageText);
+                                                        if (activePageNum === targetPage) {
+                                                            return { success: true, message: 'Already on target page' };
+                                                        }
+                                                    }
+                                                    
+                                                    // 嘗試直接點擊目標頁碼按鈕
+                                                    const buttons = Array.from(document.querySelectorAll('.vxe-pager--num-btn'));
+                                                    const targetBtn = buttons.find(btn => {
+                                                        const text = btn.textContent.trim();
+                                                        return parseInt(text) === targetPage;
+                                                    });
+                                                    
+                                                    if (targetBtn && !targetBtn.classList.contains('is--active')) {
+                                                        targetBtn.click();
+                                                        return { success: true, message: 'Clicked target page button directly' };
+                                                    }
+                                                    
+                                                    // 如果找不到目標頁碼按鈕，嘗試點擊"下一頁"按鈕
+                                                    const nextBtn = document.querySelector('.vxe-pager--btn-next:not(.is--disabled), .vxe-pager--next-btn:not(.is--disabled), button[aria-label*="next" i], button[aria-label*="下一頁" i]');
+                                                    if (nextBtn && !nextBtn.disabled && !nextBtn.classList.contains('is--disabled')) {
+                                                        nextBtn.click();
+                                                        return { success: true, message: 'Clicked next page button' };
+                                                    }
+                                                    
+                                                    return { success: false, message: 'Target page button not found and next button unavailable' };
+                                                }, pageNum);
                                                 
-                                                // 等待 loading 消失和數據出現（減少超時時間）
-                                                try {
-                                                    await Promise.race([
-                                                        page.waitForFunction(() => {
-                                                            const spinners = [
-                                                                '.ant-spin-spinning',
-                                                                '.ant-spin',
-                                                                '[class*="loading"]',
-                                                                '[class*="spinner"]',
-                                                                '.vxe-loading'
-                                                            ];
-                                                            const hasLoading = spinners.some(selector => {
-                                                                const el = document.querySelector(selector);
-                                                                return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
-                                                            });
-                                                            
-                                                            const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
-                                                            const hasData = hasTable && (
-                                                                hasTable.querySelectorAll('tbody tr').length > 0 ||
-                                                                hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
-                                                                hasTable.querySelectorAll('tr').length > 1
-                                                            );
-                                                            
-                                                            return !hasLoading && hasData;
-                                                        }, { 
-                                                            timeout: 15000,
-                                                            polling: 500
-                                                        }),
-                                                        new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
-                                                    ]);
-                                                    console.log('✅ Page loaded');
-                                                } catch (e) {
-                                                    console.log('⚠️ Wait for page load timed out, proceeding anyway...');
+                                                if (navigationResult.success) {
+                                                    console.log('✅ Navigation: ' + navigationResult.message);
+                                                    
+                                                    // 等待頁面加載
+                                                    await new Promise(r => setTimeout(r, 1500));
+                                                    
+                                                    // 檢查是否已經到達目標頁面
+                                                    const currentPageCheck = await page.evaluate((targetPage) => {
+                                                        const activeBtn = document.querySelector('.vxe-pager--num-btn.is--active');
+                                                        if (activeBtn) {
+                                                            const activePageText = activeBtn.textContent.trim();
+                                                            const activePageNum = parseInt(activePageText);
+                                                            return activePageNum === targetPage;
+                                                        }
+                                                        return false;
+                                                    }, pageNum);
+                                                    
+                                                    if (currentPageCheck) {
+                                                        pageNavigated = true;
+                                                        console.log('✅ Successfully navigated to page ' + pageNum);
+                                                    } else {
+                                                        // 如果還沒到達目標頁面，繼續嘗試
+                                                        console.log('⏳ Not yet on page ' + pageNum + ', continuing navigation...');
+                                                    }
+                                                } else {
+                                                    console.log('⚠️ ' + navigationResult.message);
+                                                    // 如果找不到按鈕，可能已經是最後一頁或目標頁碼不存在
+                                                    break;
                                                 }
-                                            } else {
-                                                console.log('⚠️ Page ' + pageNum + ' button not found, clicked, or timeout');
-                                                // 如果找不到按鈕，可能已經是最後一頁，嘗試繼續
+                                            }
+                                            
+                                            if (!pageNavigated) {
+                                                console.log('⚠️ Failed to navigate to page ' + pageNum + ' after ' + attempts + ' attempts');
+                                            }
+                                            
+                                            // 等待 loading 消失和數據出現
+                                            try {
+                                                await Promise.race([
+                                                    page.waitForFunction(() => {
+                                                        const spinners = [
+                                                            '.ant-spin-spinning',
+                                                            '.ant-spin',
+                                                            '[class*="loading"]',
+                                                            '[class*="spinner"]',
+                                                            '.vxe-loading'
+                                                        ];
+                                                        const hasLoading = spinners.some(selector => {
+                                                            const el = document.querySelector(selector);
+                                                            return el && (el.offsetParent !== null || window.getComputedStyle(el).display !== 'none');
+                                                        });
+                                                        
+                                                        const hasTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header, .vxe-table, [class*="vxe-table"]');
+                                                        const hasData = hasTable && (
+                                                            hasTable.querySelectorAll('tbody tr').length > 0 ||
+                                                            hasTable.querySelectorAll('.vxe-table--body-wrapper tr').length > 0 ||
+                                                            hasTable.querySelectorAll('tr').length > 1
+                                                        );
+                                                        
+                                                        return !hasLoading && hasData;
+                                                    }, { 
+                                                        timeout: 15000,
+                                                        polling: 500
+                                                    }),
+                                                    new Promise((resolve) => setTimeout(() => resolve(), 10000)) // 最多等10秒
+                                                ]);
+                                                console.log('✅ Page loaded');
+                                            } catch (e) {
+                                                console.log('⚠️ Wait for page load timed out, proceeding anyway...');
                                             }
                                         }
                                         
