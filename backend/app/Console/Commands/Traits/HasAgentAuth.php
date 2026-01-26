@@ -587,7 +587,6 @@ trait HasAgentAuth
             
             while (!loginFormFound && refreshAttempts < maxRefreshAttempts) {
                 if (refreshAttempts > 0) {
-                    console.log('⚠️  Login form not found, refreshing page (attempt ' + refreshAttempts + '/' + maxRefreshAttempts + ')...');
                     await {$pageVar}.reload({ waitUntil: 'domcontentloaded', timeout: 15000 });
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
@@ -626,19 +625,12 @@ trait HasAgentAuth
                 
                 if (formCheck.hasAccountInput && formCheck.hasPasswordInput) {
                     loginFormFound = true;
-                    console.log('✅ Login form found (account: ' + formCheck.hasAccountInput + ', password: ' + formCheck.hasPasswordInput + ', button: ' + formCheck.hasLoginButton + ')');
                 } else {
-                    console.log('⚠️  Login form incomplete (account: ' + formCheck.hasAccountInput + ', password: ' + formCheck.hasPasswordInput + ', button: ' + formCheck.hasLoginButton + ')');
                     refreshAttempts++;
                 }
             }
             
-            if (!loginFormFound) {
-                console.log('❌ Failed to find login form after ' + maxRefreshAttempts + ' refresh attempts');
-            }
-            
             // 步驟 1: 查找並填入帳號 input（不標記）
-            console.log('🔍 Step 1: Looking for account input field...');
             const accountInputFound = await {$pageVar}.evaluate((accountValue) => {
                 // 查找 input 框：placeholder="Please enter account number" 且 class="el-input__inner"
                 const input = document.querySelector('input.el-input__inner[placeholder="Please enter account number"]');
@@ -664,29 +656,8 @@ trait HasAgentAuth
                 return { found: false };
             }, accountParsed);
             
-            if (accountInputFound.found) {
-                console.log('✅ Account input field found!');
-                console.log('   Placeholder: ' + accountInputFound.placeholder);
-                if (accountParsed && accountParsed !== null && accountParsed !== '') {
-                    console.log('   Account filled: ' + accountParsed);
-                }
-            } else {
-                console.log('⚠️  Account input field not found with placeholder "Please enter account number"');
-            }
-            
             // 等待一下讓輸入完成
             await new Promise(resolve => setTimeout(resolve, 500));
-            
-            // 截圖 2: 填入帳號後
-            if ($workingDirJs && $workingDirJs !== 'null') {
-                console.log('📸 Step 1: Taking screenshot after account filled...');
-                const screenshot1Path = path.join($workingDirJs, '1bet_step1_account_filled.png');
-                await {$pageVar}.screenshot({
-                    path: screenshot1Path,
-                    fullPage: true
-                });
-                console.log('✅ Screenshot saved: ' + screenshot1Path);
-            }
             
             // 解析密碼參數
             let passwordParsed = null;
@@ -698,8 +669,7 @@ trait HasAgentAuth
                 passwordParsed = $passwordJs !== 'null' ? $passwordJs.replace(/^"|"\$/g, '') : null;
             }
             
-            // 步驟 2: 查找並填入密碼（不改樣式，避免 1BET 防篡改偵測導致表單被清空 bodyLen=0）
-            console.log('🔍 Step 2: Looking for password input field...');
+            // 步驟 2: 查找並填入密碼
             const passwordInputFound = await {$pageVar}.evaluate((passwordValue) => {
                 const input = document.querySelector('input.el-input__inner[placeholder="password"]');
                 if (input) {
@@ -714,45 +684,10 @@ trait HasAgentAuth
                 return { found: false };
             }, passwordParsed);
             
-            if (passwordInputFound.found) {
-                console.log('✅ Password input field found and filled!');
-                console.log('   Placeholder: ' + passwordInputFound.placeholder);
-                if (passwordParsed && passwordParsed !== null && passwordParsed !== '') {
-                    console.log('   Password filled: ' + (passwordInputFound.value ? 'Yes' : 'No'));
-                }
-                await new Promise(resolve => setTimeout(resolve, 100));
-            } else {
-                console.log('⚠️  Password input field not found with placeholder "password"');
-                // 嘗試查找其他可能的選擇器
-                const alternativeInput = await {$pageVar}.evaluate(() => {
-                    const passwordInputs = document.querySelectorAll('input[type="password"].el-input__inner');
-                    if (passwordInputs.length > 0) {
-                        return {
-                            found: true,
-                            count: passwordInputs.length,
-                            placeholders: Array.from(passwordInputs).map(inp => inp.placeholder).filter(p => p)
-                        };
-                    }
-                    return { found: false };
-                });
-                
-                if (alternativeInput.found) {
-                    console.log('   Found ' + alternativeInput.count + ' password input(s) with class el-input__inner');
-                    if (alternativeInput.placeholders.length > 0) {
-                        console.log('   Available placeholders: ' + alternativeInput.placeholders.join(', '));
-                    }
-                }
-            }
-            
-            // 步驟 3: 點擊登錄按鈕（填完密碼後儘快點，attempt 0 在 100ms 後即試，減少表單被清空 bodyLen=0 前就完成）
-            console.log('🔍 Step 3: Looking for login button...');
+            // 步驟 3: 點擊登錄按鈕
             let loginButtonClicked = { clicked: false };
             for (let attempt = 0; attempt < 3; attempt++) {
                 if (attempt === 1) {
-                    if ($workingDirJs && $workingDirJs !== 'null') {
-                        console.log('📸 Step 2: Taking screenshot after password (retry path)...');
-                        await {$pageVar}.screenshot({ path: path.join($workingDirJs, '1bet_step2_password_filled.png'), fullPage: true });
-                    }
                     await new Promise(resolve => setTimeout(resolve, 400));
                     await {$pageVar}.waitForSelector('button, a.btn-login, a[class*="btn-login"], a.el-button--primary, input[type="submit"]', { timeout: 6000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 300));
@@ -760,84 +695,11 @@ trait HasAgentAuth
                         const all = Array.from(document.querySelectorAll('button, a.btn-login, a[class*="btn-login"], a.el-button--primary'));
                         return all.map(btn => ({ text: btn.textContent.trim(), className: btn.className, visible: window.getComputedStyle(btn).display !== 'none' && btn.offsetParent !== null }));
                     });
-                    console.log('   Found ' + buttonDebugInfo.length + ' button(s) on page (retry)');
                 }
                 loginButtonClicked = await {$pageVar}.evaluate(() => {
-                // 方法 1: 優先查找完整選擇器
+                // 查找完整選擇器
                 let button = document.querySelector('button.el-button.btn-login.el-button--primary.el-button--small');
                 
-                // 方法 2: 查找 btn-login 類
-                if (!button) {
-                    button = document.querySelector('button.btn-login');
-                }
-                
-                // 方法 3: 查找包含 btn-login 的按鈕
-                if (!button) {
-                    const buttons = Array.from(document.querySelectorAll('button[class*="btn-login"]'));
-                    if (buttons.length > 0) {
-                        button = buttons[0];
-                    }
-                }
-                // 方法 3b: 可能是 a 標籤（Element UI 的 el-button 有時渲染為 a）
-                if (!button) {
-                    button = document.querySelector('a.btn-login') || document.querySelector('a[class*="btn-login"]');
-                }
-                // 方法 3c: a.el-button--primary（僅一個時視為登錄）
-                if (!button) {
-                    const as = Array.from(document.querySelectorAll('a.el-button--primary'));
-                    if (as.length === 1) button = as[0];
-                }
-                // 方法 3d: input[type="submit"]
-                if (!button) {
-                    button = document.querySelector('input[type="submit"]');
-                }
-                // 方法 4: 通過文本查找 "登录"（檢查按鈕文本和 span 文本）
-                if (!button) {
-                    const allButtons = Array.from(document.querySelectorAll('button.el-button, button[type="button"]'));
-                    button = allButtons.find(btn => {
-                        const text = btn.textContent.trim();
-                        const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
-                        return text === '登录' || text === '登入' || text === 'Login' ||
-                               spanText === '登录' || spanText === '登入' || spanText === 'Login';
-                    });
-                }
-                
-                // 方法 5: 查找任何包含 "登录" 文本的按鈕
-                if (!button) {
-                    const allButtons = Array.from(document.querySelectorAll('button'));
-                    button = allButtons.find(btn => {
-                        const text = btn.textContent.trim();
-                        const spanText = btn.querySelector('span') ? btn.querySelector('span').textContent.trim() : '';
-                        return text.includes('登录') || text.includes('登入') || text.includes('Login') ||
-                               spanText.includes('登录') || spanText.includes('登入') || spanText.includes('Login');
-                    });
-                }
-                
-                // 方法 6: 查找 primary 類型的按鈕（通常是登錄按鈕）
-                if (!button) {
-                    const primaryButtons = Array.from(document.querySelectorAll('button.el-button--primary'));
-                    if (primaryButtons.length > 0) {
-                        button = primaryButtons[0];
-                    }
-                }
-                // 方法 6b: 在 a.el-button 中依文本查找 login/登录/登入
-                if (!button) {
-                    const all = Array.from(document.querySelectorAll('a.el-button, a[class*="el-button"]'));
-                    button = all.find(function(el) {
-                        var t = (el.textContent || '').trim();
-                        var s = (el.querySelector('span') ? (el.querySelector('span').textContent || '') : '').trim();
-                        return t === '登录' || t === '登入' || t === 'Login' || t === 'login' || s === '登录' || s === '登入' || s === 'Login' || t.includes('登录') || t.includes('登入') || t.toLowerCase().includes('login');
-                    });
-                }
-                // 方法 6c: div/span.el-button（Element UI 有時用 div/span 當按鈕）
-                if (!button) {
-                    const all = Array.from(document.querySelectorAll('div.el-button, span.el-button, div[class*="el-button"], [role="button"]'));
-                    button = all.find(function(el) {
-                        var t = (el.textContent || '').trim();
-                        var s = (el.querySelector('span') ? (el.querySelector('span').textContent || '') : '').trim();
-                        return t === '登录' || t === '登入' || t === 'Login' || t === 'login' || s === '登录' || s === '登入' || s === 'Login' || t.includes('登录') || t.includes('登入') || t.toLowerCase().includes('login');
-                    });
-                }
                 if (button) {
                     // 檢查按鈕是否可見
                     const style = window.getComputedStyle(button);
@@ -847,7 +709,6 @@ trait HasAgentAuth
                                     button.offsetParent !== null;
                     
                     if (!isVisible) {
-                        console.log('   Button found but not visible');
                         return { clicked: false, reason: 'not_visible', buttonText: button.textContent.trim() };
                     }
                     
@@ -872,22 +733,9 @@ trait HasAgentAuth
             }
             if (loginButtonClicked.clicked) {
                 console.log('✅ Login button clicked!');
-                console.log('   Button text: ' + loginButtonClicked.text);
-                console.log('   Button class: ' + loginButtonClicked.className);
                 
                 // 等待一下讓點擊生效
                 await new Promise(resolve => setTimeout(resolve, 500));
-                
-                // 截圖 4: 點擊登錄按鈕後（登錄處理前）
-                if ($workingDirJs && $workingDirJs !== 'null') {
-                    console.log('📸 Step 3: Taking screenshot after login button clicked...');
-                    const screenshot3Path = path.join($workingDirJs, '1bet_step3_login_clicked.png');
-                    await {$pageVar}.screenshot({
-                        path: screenshot3Path,
-                        fullPage: true
-                    });
-                    console.log('✅ Screenshot saved: ' + screenshot3Path);
-                }
                 
                 // 記錄點擊前的 URL
                 const urlBeforeLogin = {$pageVar}.url();
@@ -1063,28 +911,8 @@ trait HasAgentAuth
                                                  bodyText.includes('Not allowed')
                         };
                     });
-                    console.log('   After retry: hasContent=' + pageContent.hasContent + ' bodyTextLength=' + pageContent.bodyTextLength);
-                    
-                    // 再次檢查是否被重定向到 disable-devtool
-                    if (pageContent.isDisableDevtoolPage) {
-                        console.log('⚠️ Still on disable-devtool page after retry');
-                        console.log('   URL: ' + pageContent.url);
-                    }
                 }
-                console.log('   Page title: ' + pageContent.title);
-                console.log('   Body text length: ' + pageContent.bodyTextLength);
-                console.log('   Has content: ' + pageContent.hasContent);
-                console.log('   Has security check: ' + pageContent.hasSecurityCheck);
-                console.log('   Is disable-devtool page: ' + pageContent.isDisableDevtoolPage);
-                
                 if (pageContent.hasSecurityCheck || pageContent.isDisableDevtoolPage) {
-                    if (pageContent.isDisableDevtoolPage) {
-                        console.log('⚠️  Detected disable-devtool block page');
-                    } else {
-                        console.log('⚠️  Detected security check page: "What Are You Looking For"');
-                    }
-                    console.log('   Waiting for security check to complete...');
-                    
                     // 等待安全驗證完成（最多等待 10 秒）
                     let securityCheckPassed = false;
                     for (let i = 0; i < 10; i++) {
@@ -1108,8 +936,6 @@ trait HasAgentAuth
                         
                         // 如果檢測到 disable-devtool 頁面，立即嘗試恢復
                         if (checkStatus.isDisableDevtoolPage) {
-                            console.log('   Still on disable-devtool page (title: ' + checkStatus.title + '), attempting recovery...');
-                            
                             // 嘗試導航到重定向 URL
                             let recoveryUrl = null;
                             try {
@@ -1122,7 +948,6 @@ trait HasAgentAuth
                             
                             if (recoveryUrl && recoveryUrl !== null && recoveryUrl !== '') {
                                 try {
-                                    console.log('   Forcing navigation to: ' + recoveryUrl);
                                     await {$pageVar}.goto(recoveryUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
                                     await new Promise(resolve => setTimeout(resolve, 2000));
                                     
@@ -1158,13 +983,6 @@ trait HasAgentAuth
                             console.log('✅ Security check passed, URL: ' + checkStatus.url);
                             break;
                         }
-                        
-                        console.log('   Still on security check page, waiting... (' + (i + 1) + '/10)');
-                    }
-                    
-                    if (!securityCheckPassed) {
-                        console.log('⚠️  Security check did not complete automatically');
-                        console.log('   Final URL: ' + pageContent.url);
                     }
                 }
                 
@@ -1185,20 +1003,8 @@ trait HasAgentAuth
                     redirectUrlParsed = $redirectUrlJs !== 'null' ? $redirectUrlJs.replace(/^"|"\$/g, '') : null;
                 }
                 
-                // 如果檢測到安全驗證頁面、disable-devtool 頁面或黑畫面，且有重定向 URL，直接跳轉
-                if ((pageContent.hasSecurityCheck || pageContent.isDisableDevtoolPage || isBlackScreen) && redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
-                    if (pageContent.isDisableDevtoolPage) {
-                        console.log('🔄 Disable-devtool block detected, redirecting to specified URL: ' + redirectUrlParsed);
-                    } else {
-                        console.log('🔄 Security check or black screen detected, redirecting to specified URL: ' + redirectUrlParsed);
-                    }
-                } else if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
-                    console.log('🔄 Redirecting to specified URL: ' + redirectUrlParsed);
-                }
-                
                 if (redirectUrlParsed && redirectUrlParsed !== null && redirectUrlParsed !== '') {
                     try {
-                        console.log('🔄 Using JavaScript to navigate (avoiding detection)...');
                         // 在 Node 端判斷：同 origin 且目標有 hash 時，只改 location.hash，避免整頁重載、減少觸發 anti-devtool
                         // 黑屏時 pageContent.url 常為空，改優先用 page.url() 取得目前 URL，避免 new URL('') 拋錯導致誤走 full nav
                         let hashPart = null;
@@ -1254,11 +1060,6 @@ trait HasAgentAuth
                             };
                         });
                         
-                        console.log('   Redirected URL: ' + redirectPageContent.url);
-                        console.log('   Redirected page title: ' + redirectPageContent.title);
-                        console.log('   Redirected page body text length: ' + redirectPageContent.bodyTextLength);
-                        console.log('   Redirected page has content: ' + redirectPageContent.hasContent);
-                        
                         // 檢查是否被重定向到反開發者工具頁面
                         if (redirectPageContent.url.includes('disable-devtool') || 
                             redirectPageContent.url.includes('theajack.github.io') ||
@@ -1289,17 +1090,6 @@ trait HasAgentAuth
                     }
                 } else if (isBlackScreen) {
                     console.log('⚠️  Black screen detected but no redirect URL configured');
-                }
-                
-                // 截圖 5: 登錄完成後（或重定向後）
-                if ($workingDirJs && $workingDirJs !== 'null') {
-                    console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
-                    const screenshot4Path = path.join($workingDirJs, '1bet_step4_login_completed.png');
-                    await {$pageVar}.screenshot({
-                        path: screenshot4Path,
-                        fullPage: true
-                    });
-                    console.log('✅ Screenshot saved: ' + screenshot4Path);
                 }
             } else {
                 console.log('⚠️  Login button not found');
@@ -1366,17 +1156,7 @@ trait HasAgentAuth
                     
                     if (clicked) {
                         await new Promise(resolve => setTimeout(resolve, 500));
-                        
-                        if ($workingDirJs && $workingDirJs !== 'null') {
-                            console.log('📸 Step 3: Taking screenshot after login button clicked...');
-                            const screenshot3Path = path.join($workingDirJs, '1bet_step3_login_clicked.png');
-                            await {$pageVar}.screenshot({
-                                path: screenshot3Path,
-                                fullPage: true
-                            });
-                            console.log('✅ Screenshot saved: ' + screenshot3Path);
-                        }
-                        
+                         
                         const urlBeforeLogin = {$pageVar}.url();
                         console.log('   URL before login: ' + urlBeforeLogin);
                         
@@ -1535,15 +1315,6 @@ trait HasAgentAuth
                             }
                         } else if (isBlackScreen) {
                             console.log('⚠️  Black screen detected but no redirect URL configured');
-                        }
-                        if ($workingDirJs && $workingDirJs !== 'null') {
-                            console.log('📸 Step 4: Taking screenshot after login completed (or redirected)...');
-                            const screenshot4Path = path.join($workingDirJs, '1bet_step4_login_completed.png');
-                            await {$pageVar}.screenshot({
-                                path: screenshot4Path,
-                                fullPage: true
-                            });
-                            console.log('✅ Screenshot saved: ' + screenshot4Path);
                         }
                     } else {
                         console.log('   ⚠️  Could not click button using Puppeteer methods');

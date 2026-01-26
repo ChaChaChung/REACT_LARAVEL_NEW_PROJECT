@@ -325,8 +325,7 @@ async function run() {
                 };
             } catch (e) {}
         }, $langJs);
-
-        console.log('🔐 Starting 1BET login process...');
+        
         await page.goto($domainJs, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         // Perform login
