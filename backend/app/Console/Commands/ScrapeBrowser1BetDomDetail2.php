@@ -711,20 +711,28 @@ async function run() {
         
         console.log('📊 Total rows extracted: ' + allData.length + ' from ' + pageNum + ' page(s)');
         
-        console.log('📊 Total rows extracted: ' + allData.length + ' from ' + pageNum + ' page(s)');
-        
-        const tableData = {
-            found: allData.length > 0,
-            data: allData,
+        // 構建類似 OMG 的資料結構
+        const timestamp = new Date().toISOString();
+        const mergedData = {
+            metadata: {
+                timestamp: timestamp,
+                url: targetUrl,
+                queryParams: {
+                    date_start: $dateStartJs || null,
+                    date_end: $dateEndJs || null,
+                    account_number: $accountNumberJs || null
+                },
+                totalPages: pageNum,
+                totalRows: allData.length
+            },
             headers: headers,
-            totalPages: pageNum,
-            totalRows: allData.length
+            data: allData
         };
 
         // 直接將資料寫入檔案，避免記憶體問題
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const dataFilePath = path.join(workingDir, '1bet_data_' + timestamp + '.json');
-        fs.writeFileSync(dataFilePath, JSON.stringify(tableData, null, 2));
+        const fileTimestamp = timestamp.replace(/[:.]/g, '-').slice(0, 19);
+        const dataFilePath = path.join(workingDir, '1bet_data_' + fileTimestamp + '.json');
+        fs.writeFileSync(dataFilePath, JSON.stringify(mergedData, null, 2));
         console.log('💾 Data saved to: ' + dataFilePath);
 
         // 輸出精簡的 JSON 結果供 PHP 解析（不包含完整資料）
@@ -732,6 +740,12 @@ async function run() {
             status: 'success',
             screenshots: screenshots,
             dataFile: dataFilePath,
+            url: targetUrl,
+            queryParams: {
+                date_start: $dateStartJs || null,
+                date_end: $dateEndJs || null,
+                account_number: $accountNumberJs || null
+            },
             summary: {
                 totalRows: allData.length,
                 totalPages: pageNum,
@@ -838,14 +852,36 @@ JS;
 
     private function processScrapedData($result)
     {
+        // 顯示查詢參數（類似 OMG）
+        $queryParams = $result['queryParams'] ?? [];
+        if (!empty($queryParams)) {
+            $this->info('📋 Query Parameters:');
+            if (!empty($queryParams['date_start'])) {
+                $this->info("   - Date Start: {$queryParams['date_start']}");
+            }
+            if (!empty($queryParams['date_end'])) {
+                $this->info("   - Date End: {$queryParams['date_end']}");
+            }
+            if (!empty($queryParams['account_number'])) {
+                $this->info("   - Account Number: {$queryParams['account_number']}");
+            }
+        }
+        
+        // 顯示 URL
+        if (!empty($result['url'])) {
+            $this->info("🔗 URL: {$result['url']}");
+        }
+        
         // 新格式：資料已經由 Node.js 直接寫入檔案
         if (isset($result['dataFile'])) {
             $dataFile = $result['dataFile'];
             $summary = $result['summary'] ?? [];
             $rowCount = $summary['totalRows'] ?? 0;
             $totalPages = $summary['totalPages'] ?? 1;
+            $headers = $summary['headers'] ?? [];
             
             $this->info("✅ Scraped {$rowCount} rows from {$totalPages} page(s)");
+            $this->info("📊 Headers: " . count($headers));
             $this->info("💾 Data file: {$dataFile}");
         } 
         // 舊格式：資料在 tableData 中
