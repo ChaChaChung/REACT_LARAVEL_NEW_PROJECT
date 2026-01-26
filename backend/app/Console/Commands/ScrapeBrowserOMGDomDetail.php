@@ -320,65 +320,104 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 
                                 console.log('  - Total rows found: ' + rows.length);
                                 
-                                // ========== 3. 提取單元格資料 ==========
-                                const dataRows = rows.map((row, rowIndex) => {
-                                    const rowData = {};
-                                    
-                                    // 查找單元格
+                                // ========== 3. 檢測固定列區域 ==========
+                                const leftWrapper = document.querySelector('.vxe-table--fixed-left-wrapper');
+                                const rightWrapper = document.querySelector('.vxe-table--fixed-right-wrapper');
+                                
+                                // 從固定列區域提取行
+                                let leftRows = [];
+                                let rightRows = [];
+                                
+                                if (leftWrapper) {
+                                    leftRows = Array.from(leftWrapper.querySelectorAll('.vxe-body--row'));
+                                    if (leftRows.length === 0) {
+                                        leftRows = Array.from(leftWrapper.querySelectorAll('tbody tr')).filter(tr => !tr.querySelector('th'));
+                                    }
+                                    console.log('  - Left fixed rows: ' + leftRows.length);
+                                }
+                                
+                                if (rightWrapper) {
+                                    rightRows = Array.from(rightWrapper.querySelectorAll('.vxe-body--row'));
+                                    if (rightRows.length === 0) {
+                                        rightRows = Array.from(rightWrapper.querySelectorAll('tbody tr')).filter(tr => !tr.querySelector('th'));
+                                    }
+                                    console.log('  - Right fixed rows: ' + rightRows.length);
+                                }
+                                
+                                // 提取單元格內容的輔助函數
+                                const extractCellText = (cell) => {
+                                    if (!cell) return '';
+                                    const vxeCell = cell.querySelector('.vxe-cell');
+                                    if (vxeCell) {
+                                        return (vxeCell.innerText || vxeCell.textContent || '').trim();
+                                    }
+                                    if (cell.classList && cell.classList.contains('vxe-cell')) {
+                                        return (cell.innerText || cell.textContent || '').trim();
+                                    }
+                                    return (cell.innerText || cell.textContent || '').trim();
+                                };
+                                
+                                // 從行中提取 cells 的輔助函數
+                                const extractCellsFromRow = (row) => {
+                                    if (!row) return [];
                                     let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
                                     if (cells.length === 0) {
                                         cells = Array.from(row.querySelectorAll('td'));
                                     }
+                                    return cells;
+                                };
+                                
+                                // 計算左側和右側固定列的數量
+                                const leftCellCount = leftRows.length > 0 ? extractCellsFromRow(leftRows[0]).length : 0;
+                                const rightCellCount = rightRows.length > 0 ? extractCellsFromRow(rightRows[0]).length : 0;
+                                console.log('  - Left fixed columns: ' + leftCellCount);
+                                console.log('  - Right fixed columns: ' + rightCellCount);
+                                
+                                // ========== 4. 提取單元格資料（用固定列的值替換空值）==========
+                                const dataRows = rows.map((row, rowIndex) => {
+                                    const rowData = {};
                                     
-                                    // 如果還是找不到，嘗試 .vxe-cell 元素本身
-                                    if (cells.length === 0) {
-                                        cells = Array.from(row.querySelectorAll('.vxe-cell'));
-                                    }
+                                    // 從中間區域提取 cells（這是主要資料，包含所有欄位但固定列的值可能是空的）
+                                    const bodyCells = extractCellsFromRow(row);
                                     
-                                    // 最後嘗試：直接查找所有子元素中的 td
-                                    if (cells.length === 0) {
-                                        cells = Array.from(row.children).filter(el => el.tagName === 'TD');
-                                    }
+                                    // 從左側固定列提取 cells
+                                    const leftCells = leftRows[rowIndex] ? extractCellsFromRow(leftRows[rowIndex]) : [];
+                                    
+                                    // 從右側固定列提取 cells
+                                    const rightCells = rightRows[rowIndex] ? extractCellsFromRow(rightRows[rowIndex]) : [];
                                     
                                     if (rowIndex < 3) {
-                                        console.log('  - Row ' + rowIndex + ': Found ' + cells.length + ' cells, ' + headers.length + ' headers');
-                                        // 輸出前3個單元格的內容用於調試
-                                        const sampleCells = cells.slice(0, 3).map(c => {
-                                            const vxeCell = c.querySelector('.vxe-cell');
-                                            const text = vxeCell ? vxeCell.innerText : c.innerText;
-                                            return (text || '').trim().substring(0, 20);
-                                        });
-                                        console.log('  - Sample cell values: ' + JSON.stringify(sampleCells));
+                                        console.log('  - Row ' + rowIndex + ': body=' + bodyCells.length + ', left=' + leftCells.length + ', right=' + rightCells.length + ', headers=' + headers.length);
+                                        const leftValues = leftCells.map(c => extractCellText(c));
+                                        console.log('    Left cell values: ' + JSON.stringify(leftValues));
                                     }
-                                    
-                                    // 提取單元格內容
-                                    const extractCellText = (cell) => {
-                                        if (!cell) return '';
-                                        
-                                        // 優先從 .vxe-cell 提取
-                                        const vxeCell = cell.querySelector('.vxe-cell');
-                                        if (vxeCell) {
-                                            return (vxeCell.innerText || vxeCell.textContent || '').trim();
-                                        }
-                                        
-                                        // 如果 cell 本身就是 .vxe-cell
-                                        if (cell.classList && cell.classList.contains('vxe-cell')) {
-                                            return (cell.innerText || cell.textContent || '').trim();
-                                        }
-                                        
-                                        // 直接取 cell 的內容
-                                        return (cell.innerText || cell.textContent || '').trim();
-                                    };
                                     
                                     if (headers && headers.length > 0) {
                                         // 使用 headers 作為 key
                                         headers.forEach((header, index) => {
-                                            const cell = cells[index];
-                                            rowData[header] = extractCellText(cell);
+                                            let cellValue = '';
+                                            
+                                            // 先從 body cells 取值
+                                            if (bodyCells[index]) {
+                                                cellValue = extractCellText(bodyCells[index]);
+                                            }
+                                            
+                                            // 如果是前幾個欄位且值為空，從左側固定列取值
+                                            if ((!cellValue || cellValue === '') && index < leftCellCount && leftCells[index]) {
+                                                cellValue = extractCellText(leftCells[index]);
+                                            }
+                                            
+                                            // 如果是最後幾個欄位且值為空，從右側固定列取值
+                                            const rightStartIndex = headers.length - rightCellCount;
+                                            if ((!cellValue || cellValue === '') && index >= rightStartIndex && rightCells[index - rightStartIndex]) {
+                                                cellValue = extractCellText(rightCells[index - rightStartIndex]);
+                                            }
+                                            
+                                            rowData[header] = cellValue;
                                         });
                                     } else {
                                         // 如果沒有表頭，使用索引作為 key
-                                        cells.forEach((cell, colIndex) => {
+                                        bodyCells.forEach((cell, colIndex) => {
                                             rowData['column_' + colIndex] = extractCellText(cell);
                                         });
                                     }
