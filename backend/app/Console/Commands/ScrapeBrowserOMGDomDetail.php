@@ -377,7 +377,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 const dataRows = rows.map((row, rowIndex) => {
                                     const rowData = {};
                                     
-                                    // 從中間區域提取 cells（這是主要資料，包含所有欄位但固定列的值可能是空的）
+                                    // 從中間區域提取 cells（這是主要資料，bodyCells 包含所有欄位）
                                     const bodyCells = extractCellsFromRow(row);
                                     
                                     // 從左側固定列提取 cells
@@ -389,33 +389,33 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     if (rowIndex < 3) {
                                         console.log('  - Row ' + rowIndex + ': body=' + bodyCells.length + ', left=' + leftCells.length + ', right=' + rightCells.length + ', headers=' + headers.length);
                                         const leftValues = leftCells.map(c => extractCellText(c));
+                                        const bodyFirstValues = bodyCells.slice(0, 5).map(c => extractCellText(c));
                                         console.log('    Left cell values: ' + JSON.stringify(leftValues));
+                                        console.log('    Body first 5 values: ' + JSON.stringify(bodyFirstValues));
                                     }
                                     
                                     if (headers && headers.length > 0) {
                                         // 使用 headers 作為 key
                                         headers.forEach((header, index) => {
-                                            let cellValue = '';
+                                            // 先從 bodyCells 取值（直接按 index 對應）
+                                            let cellValue = bodyCells[index] ? extractCellText(bodyCells[index]) : '';
                                             
-                                            // 判斷這個欄位應該從哪個區域取值
-                                            // 前 N 個欄位從左側固定列取（N = leftCellCount）
-                                            // 最後 M 個欄位從右側固定列取（M = rightCellCount）
-                                            // 中間的欄位從 body cells 取（但要跳過 body 中的前 N 個佔位符）
-                                            
+                                            // 如果是左側固定列的位置，且值為空或 bodyCells 數量不足，從左側固定列覆蓋
                                             if (index < leftCellCount && leftCells[index]) {
-                                                // 前幾個欄位：強制從左側固定列取值
-                                                cellValue = extractCellText(leftCells[index]);
-                                            } else if (index >= headers.length - rightCellCount && rightCellCount > 0) {
-                                                // 最後幾個欄位：強制從右側固定列取值
+                                                const leftValue = extractCellText(leftCells[index]);
+                                                if (leftValue || !cellValue) {
+                                                    cellValue = leftValue;
+                                                }
+                                            }
+                                            
+                                            // 如果是右側固定列的位置，且值為空或需要覆蓋，從右側固定列覆蓋
+                                            if (index >= headers.length - rightCellCount && rightCellCount > 0) {
                                                 const rightIndex = index - (headers.length - rightCellCount);
                                                 if (rightCells[rightIndex]) {
-                                                    cellValue = extractCellText(rightCells[rightIndex]);
-                                                }
-                                            } else {
-                                                // 中間的欄位：從 body cells 取值（跳過前 leftCellCount 個佔位符）
-                                                const bodyIndex = index - leftCellCount;
-                                                if (bodyCells[bodyIndex]) {
-                                                    cellValue = extractCellText(bodyCells[bodyIndex]);
+                                                    const rightValue = extractCellText(rightCells[rightIndex]);
+                                                    if (rightValue || !cellValue) {
+                                                        cellValue = rightValue;
+                                                    }
                                                 }
                                             }
                                             
@@ -876,26 +876,42 @@ class ScrapeBrowserOMGDomDetail extends Command
                                             console.log('📄 Max page number from buttons:', maxPageNum);
                                         }
                                         
-                                        // 優先使用按鈕中的最大頁碼（更可靠）
-                                        if (maxPageNum > 1) {
-                                            totalPages = maxPageNum;
-                                        } else if (totalRecords > 0) {
-                                            // 如果沒有找到按鈕，嘗試從總記錄數計算（需要知道每頁數量）
-                                            // 查找每頁數量
-                                            let perPage = 50; // 默認值
+                                        // 獲取每頁數量
+                                        let perPage = 50; // 默認值
+                                        // 嘗試從下拉選單獲取每頁數量
+                                        const sizeSelector = document.querySelector('.vxe-pager--sizes-select, .vxe-pager--sizes select, .vxe-select');
+                                        if (sizeSelector) {
+                                            const sizeText = sizeSelector.textContent || sizeSelector.value || '';
+                                            const sizeMatch = sizeText.match(/(\d+)/);
+                                            if (sizeMatch && sizeMatch[1]) {
+                                                perPage = parseInt(sizeMatch[1]);
+                                                console.log('📄 Found per page from selector:', perPage);
+                                            }
+                                        }
+                                        // 嘗試從分頁文字獲取
+                                        if (perPage === 50) {
                                             const perPageText = document.querySelector('.vxe-pager')?.textContent || '';
                                             const perPageMatch = perPageText.match(/(\d+)\s*\/\s*page/i);
                                             if (perPageMatch && perPageMatch[1]) {
                                                 perPage = parseInt(perPageMatch[1]);
+                                                console.log('📄 Found per page from text:', perPage);
                                             }
+                                        }
+                                        
+                                        // 優先使用總記錄數計算頁數（因為按鈕可能只顯示部分頁碼）
+                                        if (totalRecords > 0) {
                                             totalPages = Math.ceil(totalRecords / perPage);
                                             console.log('📄 Calculated total pages from records:', totalPages, '(records:', totalRecords, ', perPage:', perPage + ')');
+                                        } else if (maxPageNum > 1) {
+                                            // 如果沒有總記錄數，使用按鈕中的最大頁碼
+                                            totalPages = maxPageNum;
                                         }
                                         
                                         return {
                                             totalPages: totalPages,
                                             totalRecords: totalRecords,
-                                            maxPageFromButtons: maxPageNum
+                                            maxPageFromButtons: maxPageNum,
+                                            perPage: perPage
                                         };
                                     });
                                     
@@ -1238,26 +1254,42 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         console.log('📄 Max page number from buttons:', maxPageNum);
                                     }
                                     
-                                    // 優先使用按鈕中的最大頁碼（更可靠）
-                                    if (maxPageNum > 1) {
-                                        totalPages = maxPageNum;
-                                    } else if (totalRecords > 0) {
-                                        // 如果沒有找到按鈕，嘗試從總記錄數計算（需要知道每頁數量）
-                                        // 查找每頁數量
-                                        let perPage = 50; // 默認值
+                                    // 獲取每頁數量
+                                    let perPage = 50; // 默認值
+                                    // 嘗試從下拉選單獲取每頁數量
+                                    const sizeSelector = document.querySelector('.vxe-pager--sizes-select, .vxe-pager--sizes select, .vxe-select');
+                                    if (sizeSelector) {
+                                        const sizeText = sizeSelector.textContent || sizeSelector.value || '';
+                                        const sizeMatch = sizeText.match(/(\d+)/);
+                                        if (sizeMatch && sizeMatch[1]) {
+                                            perPage = parseInt(sizeMatch[1]);
+                                            console.log('📄 Found per page from selector:', perPage);
+                                        }
+                                    }
+                                    // 嘗試從分頁文字獲取
+                                    if (perPage === 50) {
                                         const perPageText = document.querySelector('.vxe-pager')?.textContent || '';
                                         const perPageMatch = perPageText.match(/(\d+)\s*\/\s*page/i);
                                         if (perPageMatch && perPageMatch[1]) {
                                             perPage = parseInt(perPageMatch[1]);
+                                            console.log('📄 Found per page from text:', perPage);
                                         }
+                                    }
+                                    
+                                    // 優先使用總記錄數計算頁數（因為按鈕可能只顯示部分頁碼）
+                                    if (totalRecords > 0) {
                                         totalPages = Math.ceil(totalRecords / perPage);
                                         console.log('📄 Calculated total pages from records:', totalPages, '(records:', totalRecords, ', perPage:', perPage + ')');
+                                    } else if (maxPageNum > 1) {
+                                        // 如果沒有總記錄數，使用按鈕中的最大頁碼
+                                        totalPages = maxPageNum;
                                     }
                                     
                                     return {
                                         totalPages: totalPages,
                                         totalRecords: totalRecords,
-                                        maxPageFromButtons: maxPageNum
+                                        maxPageFromButtons: maxPageNum,
+                                        perPage: perPage
                                     };
                                 });
                                 
@@ -1499,7 +1531,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                     // 構建查詢參數對象（使用已存在的變量）
                     // targetUrl、dateStartParsed、dateEndParsed 已在函數開始處聲明，這裡直接使用
                     // 只需要解析 accountNumber
-                    const accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs.replace(/^"|"\$/g, '') : null;
+                    const accountNumberParsed = ($accountNumberJs && $accountNumberJs !== 'null') ? String($accountNumberJs).replace(/^"|"\$/g, '') : null;
                     
                     // 獲取當前頁面信息（類似 PGONE）
                     const pageInfo = await page.evaluate(() => {
