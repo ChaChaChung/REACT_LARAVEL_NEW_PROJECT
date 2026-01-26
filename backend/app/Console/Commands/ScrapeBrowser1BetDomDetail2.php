@@ -130,7 +130,7 @@ const workingDir = $workingDirJs;
 if (!fs.existsSync(workingDir)) fs.mkdirSync(workingDir, { recursive: true });
 
 async function run() {
-    console.log('🚀 Starting Puppeteer...');
+    console.log('🚀 Starting 1BET scraper...');
     const browser = await puppeteer.launch({
         headless: 'new',
         args: [
@@ -146,25 +146,15 @@ async function run() {
 
     try {
         const page = await browser.newPage();
-        
-        // Listen to console from page (只顯示重要訊息)
-        page.on('console', msg => {
-            const text = msg.text();
-            // 只顯示包含 🛡️ 或錯誤相關的訊息
-            if (text.includes('🛡️') || text.includes('Error') || text.includes('error') || text.includes('DEVTOOL')) {
-                console.log('PAGE:', text);
-            }
-        });
 
-        // 🛡️ Disable Debugger via CDP
+        // 🛡️ Disable Debugger via CDP (silent)
         try {
             const client = await page.target().createCDPSession();
             await client.send('Debugger.enable');
             await client.send('Debugger.setBreakpointsActive', { active: false });
             await client.send('Debugger.setSkipAllPauses', { skip: true });
-            console.log('🛡️ CDP Debugger disabled (with setSkipAllPauses)');
         } catch (e) {
-            console.log('⚠️ Failed to disable debugger via CDP:', e.message);
+            // Silent fail
         }
 
         await page.setViewport({ width: 1920, height: 1080 });
@@ -184,10 +174,8 @@ async function run() {
             
             if (isDisableDevtool) {
                 if (request.isNavigationRequest()) {
-                    console.log('🛡️ Blocked navigation to disable-devtool');
                     request.respond({ status: 204, body: '' });
                 } else {
-                    console.log('🛡️ Blocked script request to disable-devtool: ' + url);
                     request.respond({
                         status: 200,
                         contentType: 'text/javascript',
@@ -207,8 +195,8 @@ async function run() {
             Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
 
             // 🛡️ Prevent window closure and blank redirects
-            window.close = function() { console.log('🛡️ Prevented window.close()'); };
-            window.open = function() { console.log('🛡️ Prevented window.open()'); return null; };
+            window.close = function() { };
+            window.open = function() { return null; };
             
             // Language injection
             try {
@@ -290,7 +278,6 @@ async function run() {
                     set: function(value) {
                         if ((this === document.body || this === document.documentElement) && 
                             (value === '' || value === ' ' || value.length < 10)) {
-                            console.log('🛡️ Blocked attempt to clear page content');
                             return;
                         }
                         return originalInnerHTMLDescriptor.set.call(this, value);
@@ -339,28 +326,23 @@ async function run() {
             } catch (e) {}
         }, $langJs);
 
-        console.log('🌐 Navigating to login page: ' + $domainJs);
+        console.log('🔐 Starting 1BET login process...');
         await page.goto($domainJs, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
         // Perform login
-        console.log('🔐 Starting login process...');
         try {
             $loginCode
         } catch (loginError) {
-            console.log('⚠️ Login process error (might be okay if navigated):', loginError.message);
+            // Silent - might be okay if navigated
         }
 
         const targetUrl = $redirectUrlJs;
         const currentUrl = page.url();
-        console.log('🔍 Current URL: ' + currentUrl);
         if (!currentUrl.includes('#/gameOrder') && currentUrl !== targetUrl) {
             console.log('🌐 Navigating to target URL: ' + targetUrl);
-            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => console.log('⚠️ Navigation to target URL warning:', e.message));
-        } else {
-            console.log('✅ Already at target URL or similar');
+            await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => {});
         }
         
-        console.log('⏳ Waiting for page stability...');
         await new Promise(r => setTimeout(r, 5000));
 
         // Initialize screenshots list
@@ -370,9 +352,8 @@ async function run() {
             try {
                 await page.screenshot({ path: scPath, fullPage: true });
                 screenshots[name] = scPath;
-                console.log('✅ Screenshot saved: ' + scPath);
             } catch (e) {
-                console.log('⚠️ Failed to take screenshot ' + name + ':', e.message);
+                // Silent fail
             }
         };
 
@@ -381,11 +362,9 @@ async function run() {
         let fillAttempts = 0;
         while (!formFilled && fillAttempts < 3) {
             fillAttempts++;
-            console.log(`📝 Filling search form (attempt \${fillAttempts})...`);
             
             try {
                 if (page.url() === 'about:blank') {
-                    console.log('❌ Page is about:blank, reloading...');
                     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
                     await new Promise(r => setTimeout(r, 3000));
                 }
@@ -393,7 +372,6 @@ async function run() {
                 // Account Number
                 const accountNumber = $accountNumberJs;
                 if (accountNumber && accountNumber !== 'null') {
-                    console.log('👤 Filling account number: ' + accountNumber);
                     const accInput = await page.waitForSelector('input[placeholder="Please enter player account"]', { timeout: 10000 });
                     await accInput.focus();
                     await page.keyboard.down('Control');
@@ -407,7 +385,6 @@ async function run() {
                 const dateStart = $dateStartJs;
                 const dateEnd = $dateEndJs;
                 if ((dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null')) {
-                    console.log('📅 Filling date range: ' + dateStart + ' to ' + dateEnd);
                     const datePicker = await page.waitForSelector('input.el-range-input[placeholder="Start date time"], .el-date-editor--datetimerange', { timeout: 10000 });
                     await datePicker.click();
                     await new Promise(r => setTimeout(r, 2000));
@@ -436,7 +413,6 @@ async function run() {
                     }
 
                     // Click OK
-                    console.log('🖱️ Clicking OK on date picker...');
                     await page.evaluate(() => {
                         const okBtn = Array.from(document.querySelectorAll('button.el-button')).find(b => b.textContent.trim() === 'OK');
                         if (okBtn) okBtn.click();
@@ -445,20 +421,16 @@ async function run() {
                 }
 
                 formFilled = true;
-                console.log('✅ Form filled successfully');
             } catch (e) {
-                console.log(`⚠️ Form filling error (attempt \${fillAttempts}):`, e.message);
                 if (e.message.includes('destroyed') || e.message.includes('navigation')) {
                     await new Promise(r => setTimeout(r, 2000));
                 } else {
-                    // If it's not a navigation error, taking a break anyway
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
         }
 
         // Query
-        console.log('🔍 Clicking Query button...');
         try {
             await page.evaluate(() => {
                 const queryBtn = Array.from(document.querySelectorAll('button.el-button--primary')).find(b => {
@@ -469,14 +441,11 @@ async function run() {
             });
             await new Promise(r => setTimeout(r, 5000));
         } catch (e) {
-            console.log('⚠️ Query button click error:', e.message);
+            // Silent fail
         }
 
         // Take final screenshot
         await registerScreenshot('final', '1bet_final.png');
-
-        // 📊 提取所有分頁的資料
-        console.log('📊 Extracting table data (with pagination)...');
         
         // 取得表頭（只需要一次）
         const headers = await page.evaluate(() => {
@@ -629,29 +598,20 @@ async function run() {
         
         // 先取得分頁資訊
         const paginationInfo = await getPaginationInfo();
-        console.log('📄 Pagination info:');
-        console.log('   Found pagination: ' + paginationInfo.found);
-        console.log('   Total records: ' + paginationInfo.totalRecords);
-        console.log('   Per page: ' + paginationInfo.perPage);
-        console.log('   Estimated pages: ' + paginationInfo.totalPages);
-        console.log('   Has next button: ' + paginationInfo.hasNextBtn);
-        console.log('   Next button disabled: ' + paginationInfo.nextBtnDisabled);
         
         // 如果找到總記錄數，計算預期頁數
         const expectedPages = paginationInfo.totalRecords > 0 
             ? Math.ceil(paginationInfo.totalRecords / paginationInfo.perPage) 
             : maxPages;
         
+        // 類似 OMG 的輸出格式
+        console.log('📄 Scraping ' + expectedPages + ' pages (' + paginationInfo.totalRecords + ' records)...');
+        
         let consecutiveEmptyPages = 0;
         const maxConsecutiveEmpty = 3;
-        const maxRetries = 3; // 單頁重試次數
+        const maxRetries = 3;
         
         while (pageNum <= Math.min(maxPages, expectedPages + 5)) {
-            // 每 100 頁顯示一次進度（減少輸出量）
-            if (pageNum === 1 || pageNum % 100 === 0) {
-                console.log('📄 Page ' + pageNum + '/' + expectedPages + ' - collected ' + allData.length + ' rows');
-            }
-            
             // 提取當前頁資料（含重試機制）
             let pageData = [];
             let retryCount = 0;
@@ -660,28 +620,34 @@ async function run() {
                 pageData = await extractPageData();
                 
                 if (pageData.length > 0) {
-                    break; // 成功取得資料
+                    break;
                 }
                 
                 retryCount++;
                 if (retryCount < maxRetries) {
-                    // 等待後重試
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
             
             if (pageData.length === 0) {
                 consecutiveEmptyPages++;
-                console.log('⚠️ No data on page ' + pageNum + ' after ' + maxRetries + ' retries (empty streak: ' + consecutiveEmptyPages + ')');
                 
                 if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
-                    console.log('⚠️ Too many consecutive empty pages, stopping...');
+                    console.log('⚠️ Too many failed pages, stopping pagination');
                     break;
                 }
-            } else {
-                if (retryCount > 0) {
-                    console.log('🔄 Page ' + pageNum + ' succeeded after ' + retryCount + ' retry(s)');
+                
+                // 重試機制（類似 OMG）
+                if (pageNum <= 3) {
+                    console.log('⏳ Retrying page ' + pageNum + '...');
+                    await new Promise(r => setTimeout(r, 1000));
+                    pageData = await extractPageData();
+                    if (pageData.length > 0) {
+                        consecutiveEmptyPages = 0;
+                        allData = allData.concat(pageData);
+                    }
                 }
+            } else {
                 consecutiveEmptyPages = 0;
                 allData = allData.concat(pageData);
             }
@@ -689,14 +655,12 @@ async function run() {
             // 檢查是否有下一頁
             const canGoNext = await hasNextPage();
             if (!canGoNext) {
-                console.log('✅ Reached last page (page ' + pageNum + ')');
                 break;
             }
             
             // 點擊下一頁
             const clicked = await clickNextPage();
             if (!clicked) {
-                console.log('⚠️ Failed to click next page, stopping...');
                 break;
             }
             
@@ -704,12 +668,12 @@ async function run() {
             
             // 每 200 頁休息一下，避免被檢測
             if (pageNum % 200 === 0) {
-                console.log('💤 Break at page ' + pageNum + '...');
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
         
-        console.log('📊 Total rows extracted: ' + allData.length + ' from ' + pageNum + ' page(s)');
+        // 類似 OMG 的總結輸出
+        console.log('\\n✅ Total scraped: ' + allData.length + ' rows from ' + pageNum + ' pages');
         
         // 構建類似 OMG 的資料結構
         const timestamp = new Date().toISOString();
@@ -733,7 +697,10 @@ async function run() {
         const fileTimestamp = timestamp.replace(/[:.]/g, '-').slice(0, 19);
         const dataFilePath = path.join(workingDir, '1bet_data_' + fileTimestamp + '.json');
         fs.writeFileSync(dataFilePath, JSON.stringify(mergedData, null, 2));
-        console.log('💾 Data saved to: ' + dataFilePath);
+        
+        // 類似 OMG 的資訊輸出
+        console.log('✅ Using scraped data: ' + allData.length + ' rows, ' + headers.length + ' headers');
+        console.log('📸 Screenshot saved to: ' + (screenshots['final'] || 'N/A'));
 
         // 輸出精簡的 JSON 結果供 PHP 解析（不包含完整資料）
         console.log(JSON.stringify({
@@ -754,12 +721,10 @@ async function run() {
         }));
 
     } catch (error) {
-        console.error('❌ Script Error:', error.message);
-        // Take error screenshot
+        console.error('❌ Error:', error.message);
         try {
             const errorScreenshot = path.join(workingDir, '1bet_error.png');
             await page.screenshot({ path: errorScreenshot, fullPage: true });
-            console.log('📸 Error screenshot saved: ' + errorScreenshot);
         } catch (e) {}
         process.exit(1);
     } finally {
