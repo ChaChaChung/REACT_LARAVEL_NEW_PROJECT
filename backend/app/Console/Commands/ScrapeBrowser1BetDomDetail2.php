@@ -142,8 +142,14 @@ async function run() {
     try {
         const page = await browser.newPage();
         
-        // Listen to console from page
-        page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+        // Listen to console from page (只顯示重要訊息)
+        page.on('console', msg => {
+            const text = msg.text();
+            // 只顯示包含 🛡️ 或錯誤相關的訊息
+            if (text.includes('🛡️') || text.includes('Error') || text.includes('error') || text.includes('DEVTOOL')) {
+                console.log('PAGE:', text);
+            }
+        });
 
         // 🛡️ Disable Debugger via CDP
         try {
@@ -490,6 +496,7 @@ async function run() {
             return { found: false, error: e.message };
         });
 
+        // 輸出 JSON 結果供 PHP 解析
         console.log(JSON.stringify({
             status: 'success',
             screenshots: screenshots,
@@ -529,19 +536,26 @@ JS;
         $process = Process::timeout(300)->run(['node', $scriptPath]);
 
         $output = $process->output();
+        
+        // 解析最後一行的 JSON（不印出）
+        $lines = explode("\n", trim($output));
+        $lastLine = end($lines);
+        $result = json_decode($lastLine, true);
+        
+        // 只印出非 JSON 的行（過濾掉最後的 JSON 資料）
         if (!empty($output)) {
-            $this->line($output);
+            $linesToPrint = array_slice($lines, 0, -1); // 移除最後一行（JSON）
+            foreach ($linesToPrint as $line) {
+                if (!empty(trim($line))) {
+                    $this->line($line);
+                }
+            }
         }
 
         if ($process->failed()) {
             $this->error('❌ Puppeteer execution failed: ' . $process->errorOutput());
             return null;
         }
-
-        // 解析最後一行的 JSON
-        $lines = explode("\n", trim($output));
-        $lastLine = end($lines);
-        $result = json_decode($lastLine, true);
 
         if (!$result || !isset($result['status']) || $result['status'] !== 'success') {
             $this->error('❌ Failed to parse result from script');
@@ -568,6 +582,7 @@ JS;
     private function processScrapedData($result)
     {
         $this->info('✅ Scraped ' . count($result['tableData']['data']) . ' rows of data');
-        // 這裡可以根據需求存入資料庫
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+        $this->info("✅ Data processing completed!");
     }
 }
