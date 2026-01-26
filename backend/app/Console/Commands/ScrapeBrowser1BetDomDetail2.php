@@ -473,34 +473,249 @@ async function run() {
         // Take final screenshot
         await registerScreenshot('final', '1bet_final.png');
 
-        // Extract Data
-        console.log('📊 Extracting table data...');
-        const tableData = await page.evaluate(() => {
-            const bodyTable = document.querySelector('.el-table__body');
+        // 📊 提取所有分頁的資料
+        console.log('📊 Extracting table data (with pagination)...');
+        
+        // 取得表頭（只需要一次）
+        const headers = await page.evaluate(() => {
             const headerTable = document.querySelector('.el-table__header');
-            if (!bodyTable) return { found: false };
-
-            const headers = Array.from(headerTable?.querySelectorAll('th') || []).map(th => th.textContent.trim());
-            const rows = Array.from(bodyTable.querySelectorAll('tr')).map(tr => {
-                const cells = Array.from(tr.querySelectorAll('td'));
-                const rowData = {};
-                cells.forEach((td, i) => {
-                    const key = headers[i] || `col_\${i}`;
-                    rowData[key] = td.textContent.trim();
-                });
-                return rowData;
-            });
-            return { found: true, data: rows };
-        }).catch(e => {
-            console.log('⚠️ Data extraction error:', e.message);
-            return { found: false, error: e.message };
+            if (!headerTable) return [];
+            return Array.from(headerTable.querySelectorAll('th')).map(th => th.textContent.trim());
         });
+        
+        // 提取單頁資料的函數
+        const extractPageData = async () => {
+            return await page.evaluate(() => {
+                const bodyTable = document.querySelector('.el-table__body');
+                if (!bodyTable) return [];
+                
+                const headerTable = document.querySelector('.el-table__header');
+                const headers = Array.from(headerTable?.querySelectorAll('th') || []).map(th => th.textContent.trim());
+                
+                return Array.from(bodyTable.querySelectorAll('tr')).map(tr => {
+                    const cells = Array.from(tr.querySelectorAll('td'));
+                    const rowData = {};
+                    cells.forEach((td, i) => {
+                        const key = headers[i] || 'col_' + i;
+                        rowData[key] = td.textContent.trim();
+                    });
+                    return rowData;
+                }).filter(row => Object.keys(row).length > 0); // 過濾空行
+            });
+        };
+        
+        // 取得分頁資訊（包含偵錯）
+        const getPaginationInfo = async () => {
+            return await page.evaluate(() => {
+                // 嘗試多種選擇器找分頁元件
+                const paginationBox = document.querySelector('.pagination-box') || 
+                                      document.querySelector('.el-pagination') ||
+                                      document.querySelector('[class*="pagination"]');
+                
+                if (!paginationBox) {
+                    return { found: false, currentPage: 1, totalPages: 1, totalRecords: 0, perPage: 10 };
+                }
+                
+                // 偵錯：列出分頁元件的 HTML 結構
+                const paginationHTML = paginationBox.innerHTML.substring(0, 500);
+                
+                // 嘗試找到總記錄數
+                let totalRecords = 0;
+                const totalEl = paginationBox.querySelector('.el-pagination__total, [class*="total"]');
+                if (totalEl) {
+                    const match = totalEl.textContent.match(/\\d+/);
+                    if (match) totalRecords = parseInt(match[0]);
+                }
+                
+                // 嘗試找到每頁筆數
+                let perPage = 10;
+                const sizeEl = paginationBox.querySelector('.el-pagination__sizes, [class*="sizes"]');
+                if (sizeEl) {
+                    const match = sizeEl.textContent.match(/\\d+/);
+                    if (match) perPage = parseInt(match[0]);
+                }
+                
+                // 計算總頁數
+                const totalPages = totalRecords > 0 ? Math.ceil(totalRecords / perPage) : 1;
+                
+                // 找當前頁
+                let currentPage = 1;
+                const activeEl = paginationBox.querySelector('.el-pager li.active, .el-pager li.is-active, .number.active, [class*="active"]');
+                if (activeEl) {
+                    const num = parseInt(activeEl.textContent);
+                    if (!isNaN(num)) currentPage = num;
+                }
+                
+                // 找下一頁按鈕
+                const nextBtn = paginationBox.querySelector('.btn-next') || 
+                               paginationBox.querySelector('.el-pagination__next') ||
+                               paginationBox.querySelector('button.btn-next') ||
+                               paginationBox.querySelector('[class*="next"]');
+                const hasNextBtn = !!nextBtn;
+                const nextBtnDisabled = nextBtn ? (nextBtn.disabled || nextBtn.classList.contains('disabled') || nextBtn.classList.contains('is-disabled')) : true;
+                
+                return { 
+                    found: true, 
+                    currentPage, 
+                    totalPages, 
+                    totalRecords, 
+                    perPage,
+                    hasNextBtn,
+                    nextBtnDisabled,
+                    paginationHTML
+                };
+            });
+        };
+        
+        // 檢查是否有下一頁
+        const hasNextPage = async () => {
+            return await page.evaluate(() => {
+                const paginationBox = document.querySelector('.pagination-box') || 
+                                      document.querySelector('.el-pagination') ||
+                                      document.querySelector('[class*="pagination"]');
+                if (!paginationBox) return false;
+                
+                // 嘗試多種選擇器
+                const nextBtn = paginationBox.querySelector('.btn-next') || 
+                               paginationBox.querySelector('.el-pagination__next') ||
+                               paginationBox.querySelector('button.btn-next') ||
+                               paginationBox.querySelector('[class*="next"]:not([class*="prev"])');
+                
+                if (!nextBtn) return false;
+                
+                // 檢查是否被禁用
+                const isDisabled = nextBtn.disabled || 
+                                  nextBtn.classList.contains('disabled') || 
+                                  nextBtn.classList.contains('is-disabled') ||
+                                  nextBtn.getAttribute('disabled') !== null;
+                
+                return !isDisabled;
+            });
+        };
+        
+        // 點擊下一頁
+        const clickNextPage = async () => {
+            const clicked = await page.evaluate(() => {
+                const paginationBox = document.querySelector('.pagination-box') || 
+                                      document.querySelector('.el-pagination') ||
+                                      document.querySelector('[class*="pagination"]');
+                if (!paginationBox) return false;
+                
+                const nextBtn = paginationBox.querySelector('.btn-next') || 
+                               paginationBox.querySelector('.el-pagination__next') ||
+                               paginationBox.querySelector('button.btn-next') ||
+                               paginationBox.querySelector('[class*="next"]:not([class*="prev"])');
+                
+                if (nextBtn && !nextBtn.disabled) {
+                    nextBtn.click();
+                    return true;
+                }
+                return false;
+            });
+            
+            if (clicked) {
+                // 等待資料載入（減少等待時間加快速度）
+                await new Promise(r => setTimeout(r, 800));
+            }
+            return clicked;
+        };
+        
+        // 開始分頁爬取
+        let allData = [];
+        let pageNum = 1;
+        const maxPages = 600; // 安全限制，最多爬 600 頁（足夠 4813 筆，每頁 10 筆 = 482 頁）
+        
+        // 先取得分頁資訊
+        const paginationInfo = await getPaginationInfo();
+        console.log('📄 Pagination info:');
+        console.log('   Found pagination: ' + paginationInfo.found);
+        console.log('   Total records: ' + paginationInfo.totalRecords);
+        console.log('   Per page: ' + paginationInfo.perPage);
+        console.log('   Estimated pages: ' + paginationInfo.totalPages);
+        console.log('   Has next button: ' + paginationInfo.hasNextBtn);
+        console.log('   Next button disabled: ' + paginationInfo.nextBtnDisabled);
+        
+        // 如果找到總記錄數，計算預期頁數
+        const expectedPages = paginationInfo.totalRecords > 0 
+            ? Math.ceil(paginationInfo.totalRecords / paginationInfo.perPage) 
+            : maxPages;
+        
+        let consecutiveEmptyPages = 0;
+        const maxConsecutiveEmpty = 3;
+        
+        while (pageNum <= Math.min(maxPages, expectedPages + 5)) {
+            // 每 100 頁顯示一次進度（減少輸出量）
+            if (pageNum === 1 || pageNum % 100 === 0) {
+                console.log('📄 Page ' + pageNum + '/' + expectedPages + ' - collected ' + allData.length + ' rows');
+            }
+            
+            // 提取當前頁資料
+            const pageData = await extractPageData();
+            
+            if (pageData.length === 0) {
+                consecutiveEmptyPages++;
+                console.log('⚠️ No data found on page ' + pageNum + ' (empty count: ' + consecutiveEmptyPages + ')');
+                
+                if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
+                    console.log('⚠️ Too many consecutive empty pages, stopping...');
+                    break;
+                }
+            } else {
+                consecutiveEmptyPages = 0;
+                allData = allData.concat(pageData);
+            }
+            
+            // 檢查是否有下一頁
+            const canGoNext = await hasNextPage();
+            if (!canGoNext) {
+                console.log('✅ Reached last page (page ' + pageNum + ')');
+                break;
+            }
+            
+            // 點擊下一頁
+            const clicked = await clickNextPage();
+            if (!clicked) {
+                console.log('⚠️ Failed to click next page, stopping...');
+                break;
+            }
+            
+            pageNum++;
+            
+            // 每 200 頁休息一下，避免被檢測
+            if (pageNum % 200 === 0) {
+                console.log('💤 Break at page ' + pageNum + '...');
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+        
+        console.log('📊 Total rows extracted: ' + allData.length + ' from ' + pageNum + ' page(s)');
+        
+        console.log('📊 Total rows extracted: ' + allData.length + ' from ' + pageNum + ' page(s)');
+        
+        const tableData = {
+            found: allData.length > 0,
+            data: allData,
+            headers: headers,
+            totalPages: pageNum,
+            totalRows: allData.length
+        };
 
-        // 輸出 JSON 結果供 PHP 解析
+        // 直接將資料寫入檔案，避免記憶體問題
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const dataFilePath = path.join(workingDir, '1bet_data_' + timestamp + '.json');
+        fs.writeFileSync(dataFilePath, JSON.stringify(tableData, null, 2));
+        console.log('💾 Data saved to: ' + dataFilePath);
+
+        // 輸出精簡的 JSON 結果供 PHP 解析（不包含完整資料）
         console.log(JSON.stringify({
             status: 'success',
             screenshots: screenshots,
-            tableData: tableData
+            dataFile: dataFilePath,
+            summary: {
+                totalRows: allData.length,
+                totalPages: pageNum,
+                headers: headers
+            }
         }));
 
     } catch (error) {
@@ -532,37 +747,53 @@ JS;
     private function runPuppeteerScript($scriptPath)
     {
         $this->info('3. Executing Puppeteer script...');
-        // 增加超時時間至 300 秒，因為 Puppeteer 登入與導航較耗時
-        $process = Process::timeout(300)->run(['node', $scriptPath]);
-
-        $output = $process->output();
         
-        // 解析最後一行的 JSON（不印出）
-        $lines = explode("\n", trim($output));
-        $lastLine = end($lines);
-        $result = json_decode($lastLine, true);
+        // 增加超時時間至 1800 秒（30 分鐘），因為需要爬取多頁資料
+        $process = Process::timeout(1800)->path(dirname($scriptPath));
         
-        // 只印出非 JSON 的行（過濾掉最後的 JSON 資料）
-        if (!empty($output)) {
-            $linesToPrint = array_slice($lines, 0, -1); // 移除最後一行（JSON）
-            foreach ($linesToPrint as $line) {
-                if (!empty(trim($line))) {
-                    $this->line($line);
+        // 即時輸出，讓使用者看到進度（只保留最後幾行找 JSON）
+        $lastLines = [];
+        $maxLastLines = 10;
+        
+        $result = $process->run(['node', basename($scriptPath)], function ($type, $output) use (&$lastLines, $maxLastLines) {
+            // 即時顯示輸出
+            $lines = explode("\n", $output);
+            foreach ($lines as $line) {
+                $trimmedLine = trim($line);
+                if (!empty($trimmedLine)) {
+                    // 不顯示 JSON 結果行
+                    if (!str_starts_with($trimmedLine, '{"status"')) {
+                        $this->line($trimmedLine);
+                    }
+                    // 只保留最後幾行
+                    $lastLines[] = $trimmedLine;
+                    if (count($lastLines) > $maxLastLines) {
+                        array_shift($lastLines);
+                    }
                 }
             }
-        }
+        });
 
-        if ($process->failed()) {
-            $this->error('❌ Puppeteer execution failed: ' . $process->errorOutput());
+        if ($result->failed()) {
+            $this->error('❌ Puppeteer execution failed: ' . $result->errorOutput());
             return null;
         }
 
-        if (!$result || !isset($result['status']) || $result['status'] !== 'success') {
+        // 從最後幾行中找到 JSON 結果
+        $jsonResult = null;
+        for ($i = count($lastLines) - 1; $i >= 0; $i--) {
+            if (str_starts_with($lastLines[$i], '{"status"')) {
+                $jsonResult = json_decode($lastLines[$i], true);
+                break;
+            }
+        }
+
+        if (!$jsonResult || !isset($jsonResult['status']) || $jsonResult['status'] !== 'success') {
             $this->error('❌ Failed to parse result from script');
             return null;
         }
 
-        return $result;
+        return $jsonResult;
     }
 
     /**
@@ -581,7 +812,31 @@ JS;
 
     private function processScrapedData($result)
     {
-        $this->info('✅ Scraped ' . count($result['tableData']['data']) . ' rows of data');
+        // 新格式：資料已經由 Node.js 直接寫入檔案
+        if (isset($result['dataFile'])) {
+            $dataFile = $result['dataFile'];
+            $summary = $result['summary'] ?? [];
+            $rowCount = $summary['totalRows'] ?? 0;
+            $totalPages = $summary['totalPages'] ?? 1;
+            
+            $this->info("✅ Scraped {$rowCount} rows from {$totalPages} page(s)");
+            $this->info("💾 Data file: {$dataFile}");
+        } 
+        // 舊格式：資料在 tableData 中
+        elseif (isset($result['tableData'])) {
+            $tableData = $result['tableData'];
+            $rowCount = count($tableData['data'] ?? []);
+            $totalPages = $tableData['totalPages'] ?? 1;
+            
+            $this->info("✅ Scraped {$rowCount} rows from {$totalPages} page(s)");
+            
+            // 儲存資料到 JSON 檔案
+            $timestamp = date('Y-m-d_H-i-s');
+            $fileName = "scraped_data/1bet_data_{$timestamp}.json";
+            Storage::put($fileName, json_encode($tableData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("💾 Data saved to: storage/app/{$fileName}");
+        }
+        
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
