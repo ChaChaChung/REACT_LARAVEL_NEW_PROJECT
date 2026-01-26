@@ -549,6 +549,12 @@ class ScrapeBrowserOMGDomDetail extends Command
                     } catch (e) {
                          console.error('Date parsing error', e);
                     }
+                    
+                    // 全域變數用於保存爬取結果
+                    let globalScrapedData = [];
+                    let globalScrapedHeaders = [];
+                    let globalPaginationInfo = null;
+                    let globalAllPagesData = [];
 
                     // 填入日期
                     if (dateStartParsed || dateEndParsed) {
@@ -1097,23 +1103,12 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     
                                     console.log('\\n✅ Total scraped: ' + scrapedData.length + ' rows from ' + allPagesData.length + ' pages');
                                     
-                                    // Save to file (包含 headers 和 data)
-                                    const tableData = {
-                                        found: scrapedData.length > 0,
-                                        headers: scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []),
-                                        headerCount: scrapedHeaders.length > 0 ? scrapedHeaders.length : (allPagesData[0]?.headers?.length || 0),
-                                        rowCount: scrapedData.length,
-                                        data: scrapedData,
-                                        pages: allPagesData,
-                                        paginationInfo: paginationInfo
-                                    };
+                                    // 保存到全域變數
+                                    globalScrapedData = scrapedData;
+                                    globalScrapedHeaders = scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []);
+                                    globalPaginationInfo = paginationInfo;
+                                    globalAllPagesData = allPagesData;
                                     
-                                    const dataPath = path.join(workingDir, 'omg_scraped_data.json');
-                                    fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
-                                    console.log('💾 Data saved to: ' + dataPath);
-                                     
-
-                                     
                                  } catch (err) {
                                      console.error('❌ Failed to fill Player ID:', err.message);
                                  }
@@ -1470,20 +1465,11 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 
                                 console.log('\\n✅ Total scraped: ' + scrapedData.length + ' rows from ' + allPagesData.length + ' pages');
                                 
-                                // Save to file (包含 headers 和 data)
-                                const tableData = {
-                                    found: scrapedData.length > 0,
-                                    headers: scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []),
-                                    headerCount: scrapedHeaders.length > 0 ? scrapedHeaders.length : (allPagesData[0]?.headers?.length || 0),
-                                    rowCount: scrapedData.length,
-                                    data: scrapedData,
-                                    pages: allPagesData,
-                                    paginationInfo: paginationInfo
-                                };
-                                
-                                const dataPath = path.join(workingDir, 'omg_scraped_data.json');
-                                fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
-                                console.log('💾 Data saved to: ' + dataPath);
+                                // 保存到全域變數
+                                globalScrapedData = scrapedData;
+                                globalScrapedHeaders = scrapedHeaders.length > 0 ? scrapedHeaders : (allPagesData[0]?.headers || []);
+                                globalPaginationInfo = paginationInfo;
+                                globalAllPagesData = allPagesData;
                              }
                              
 
@@ -1499,128 +1485,15 @@ class ScrapeBrowserOMGDomDetail extends Command
                     await page.screenshot({ path: screenshotPath, fullPage: true });
                     console.log('📸 Screenshot saved to: ' + screenshotPath);
                     
-                    // 讀取爬取的數據（如果有的話）
-                    let scrapedHeaders = [];
-                    let scrapedData = [];
-                    let paginationInfo = null;
-                    let allPagesData = [];
-                    const dataPath = path.join(workingDir, 'omg_scraped_data.json');
-                    try {
-                        if (fs.existsSync(dataPath)) {
-                            const dataContent = fs.readFileSync(dataPath, 'utf8');
-                            const parsedData = JSON.parse(dataContent);
-                            
-                            // 檢查數據格式：可能是新格式 {headers, data, pages, paginationInfo} 或舊格式 [data]
-                            if (parsedData && parsedData.headers && parsedData.data) {
-                                scrapedHeaders = parsedData.headers;
-                                scrapedData = parsedData.data;
-                                
-                                // 如果有分頁信息，也讀取
-                                if (parsedData.paginationInfo) {
-                                    paginationInfo = parsedData.paginationInfo;
-                                }
-                                if (parsedData.pages && Array.isArray(parsedData.pages)) {
-                                    allPagesData = parsedData.pages;
-                                }
-                                
-                                console.log('✅ Loaded scraped data: ' + scrapedData.length + ' rows, ' + scrapedHeaders.length + ' headers');
-                                if (paginationInfo) {
-                                    console.log('✅ Loaded pagination info: ' + paginationInfo.totalPages + ' pages, ' + paginationInfo.totalRecords + ' total records');
-                                }
-                            } else if (Array.isArray(parsedData)) {
-                                // 舊格式：只有數據數組，需要重新爬取表頭
-                                scrapedData = parsedData;
-                                console.log('⚠️ Old format detected, attempting to scrape headers...');
-                                const tableData = await page.evaluate(() => {
-                                    try {
-                                        let headers = [];
-                                        let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
-                                        if (headerCells.length === 0) {
-                                            headerCells = Array.from(document.querySelectorAll('thead th'));
-                                        }
-                                        if (headerCells.length > 0) {
-                                            headers = headerCells.map(cell => cell.innerText.trim()).filter(t => t);
-                                        }
-                                        return { headers: headers, data: [] };
-                                    } catch (e) {
-                                        return { error: e.toString() };
-                                    }
-                                });
-                                if (tableData && tableData.headers) {
-                                    scrapedHeaders = tableData.headers;
-                                }
-                            } else {
-                                console.log('⚠️ Unknown data format');
-                            }
-                        } else {
-                            console.log('⚠️ No scraped data file found, attempting to scrape now...');
-                            // 如果沒有數據文件，嘗試現在爬取
-                            const tableData = await page.evaluate(() => {
-                                try {
-                                    let headers = [];
-                                    let data = [];
-                                    
-                                    // 嘗試查找表頭
-                                    let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
-                                    
-                                    if (headerCells.length === 0) {
-                                        headerCells = Array.from(document.querySelectorAll('thead th'));
-                                    }
-                                    
-                                    if (headerCells.length > 0) {
-                                        headers = headerCells.map(cell => cell.innerText.trim()).filter(t => t);
-                                        console.log('Found headers (' + headers.length + '):', headers);
-                                    } else {
-                                        console.log('⚠️ No headers found!');
-                                        return { error: 'No headers found' };
-                                    }
-                                    
-                                    // 查找表格行
-                                    let rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
-                                    
-                                    if (rows.length === 0) {
-                                        rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper tr'));
-                                    }
-                                    
-                                    console.log('Found rows: ' + rows.length);
-                                    
-                                    data = rows.map(row => {
-                                        let rowObj = {};
-                                        let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
-                                        if (cells.length === 0) {
-                                            cells = Array.from(row.querySelectorAll('td'));
-                                        }
-                                        
-                                        headers.forEach((header, index) => {
-                                            const cell = cells[index];
-                                            if (cell) {
-                                                const contentDiv = cell.querySelector('.vxe-cell');
-                                                rowObj[header] = contentDiv ? contentDiv.innerText.trim() : cell.innerText.trim();
-                                            } else {
-                                                rowObj[header] = '';
-                                            }
-                                        });
-                                        return rowObj;
-                                    });
-                                    
-                                    return { headers: headers, data: data };
-                                } catch (e) {
-                                    return { error: e.toString() };
-                                }
-                            });
-                            
-                            if (tableData && !tableData.error && tableData.headers && tableData.data) {
-                                scrapedHeaders = tableData.headers;
-                                scrapedData = tableData.data;
-                                // 保存數據（新格式）
-                                fs.writeFileSync(dataPath, JSON.stringify(tableData, null, 2));
-                                console.log('💾 Data saved to: ' + dataPath);
-                            } else if (tableData && tableData.error) {
-                                console.error('❌ Scraping error:', tableData.error);
-                            }
-                        }
-                    } catch (err) {
-                        console.error('❌ Error reading scraped data:', err.message);
+                    // 使用全域變數中的爬取數據
+                    const scrapedHeaders = globalScrapedHeaders;
+                    const scrapedData = globalScrapedData;
+                    const paginationInfo = globalPaginationInfo;
+                    const allPagesData = globalAllPagesData;
+                    
+                    console.log('✅ Using scraped data: ' + scrapedData.length + ' rows, ' + scrapedHeaders.length + ' headers');
+                    if (paginationInfo) {
+                        console.log('✅ Pagination info: ' + paginationInfo.totalPages + ' pages, ' + paginationInfo.totalRecords + ' total records');
                     }
                     
                     // 構建查詢參數對象（使用已存在的變量）
@@ -1710,11 +1583,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                         success: true
                     };
                     
-                    // 將結果保存為 JSON 文件（類似 PGONE）
-                    const resultPath = path.join(workingDir, 'scrape_result.json');
-                    fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
-                    console.log('💾 Results saved to: ' + resultPath);
-                    
                     return result;
                     
                 } catch (error) {
@@ -1764,6 +1632,11 @@ class ScrapeBrowserOMGDomDetail extends Command
         $this->line("📋 Browser Output:");
         // $this->line($result->output());
 
+        // 執行完成後刪除腳本檔案
+        if (file_exists($scriptPath)) {
+            unlink($scriptPath);
+        }
+
         // 檢查執行是否失敗
         if ($result->failed()) {
             $this->error("❌ Browser automation failed");
@@ -1771,16 +1644,22 @@ class ScrapeBrowserOMGDomDetail extends Command
             return null;
         }
 
-        // 讀取腳本生成的結果文件（類似 PGONE）
-        $resultFile = $workingDir . '/scrape_result.json';
-
-        if (file_exists($resultFile)) {
-            // 讀取並解析 JSON 文件
-            $content = file_get_contents($resultFile);
-            return json_decode($content, true);
+        // 從 stdout 讀取 JSON 結果（最後一行應該是 JSON）
+        $output = $result->output();
+        $lines = explode("\n", trim($output));
+        
+        // 從最後一行開始找有效的 JSON
+        for ($i = count($lines) - 1; $i >= 0; $i--) {
+            $line = trim($lines[$i]);
+            if (!empty($line) && $line[0] === '{') {
+                $decoded = json_decode($line, true);
+                if ($decoded !== null) {
+                    return $decoded;
+                }
+            }
         }
 
-        $this->error("❌ No result file found");
+        $this->error("❌ No valid JSON result found in output");
         return null;
     }
 
