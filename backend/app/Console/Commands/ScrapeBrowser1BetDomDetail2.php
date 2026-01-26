@@ -614,8 +614,8 @@ async function run() {
             });
             
             if (clicked) {
-                // 等待資料載入（減少等待時間加快速度）
-                await new Promise(r => setTimeout(r, 800));
+                // 等待資料載入
+                await new Promise(r => setTimeout(r, 1000));
             }
             return clicked;
         };
@@ -642,6 +642,7 @@ async function run() {
         
         let consecutiveEmptyPages = 0;
         const maxConsecutiveEmpty = 3;
+        const maxRetries = 3; // 單頁重試次數
         
         while (pageNum <= Math.min(maxPages, expectedPages + 5)) {
             // 每 100 頁顯示一次進度（減少輸出量）
@@ -649,18 +650,36 @@ async function run() {
                 console.log('📄 Page ' + pageNum + '/' + expectedPages + ' - collected ' + allData.length + ' rows');
             }
             
-            // 提取當前頁資料
-            const pageData = await extractPageData();
+            // 提取當前頁資料（含重試機制）
+            let pageData = [];
+            let retryCount = 0;
+            
+            while (retryCount < maxRetries) {
+                pageData = await extractPageData();
+                
+                if (pageData.length > 0) {
+                    break; // 成功取得資料
+                }
+                
+                retryCount++;
+                if (retryCount < maxRetries) {
+                    // 等待後重試
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
             
             if (pageData.length === 0) {
                 consecutiveEmptyPages++;
-                console.log('⚠️ No data found on page ' + pageNum + ' (empty count: ' + consecutiveEmptyPages + ')');
+                console.log('⚠️ No data on page ' + pageNum + ' after ' + maxRetries + ' retries (empty streak: ' + consecutiveEmptyPages + ')');
                 
                 if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
                     console.log('⚠️ Too many consecutive empty pages, stopping...');
                     break;
                 }
             } else {
+                if (retryCount > 0) {
+                    console.log('🔄 Page ' + pageNum + ' succeeded after ' + retryCount + ' retry(s)');
+                }
                 consecutiveEmptyPages = 0;
                 allData = allData.concat(pageData);
             }
