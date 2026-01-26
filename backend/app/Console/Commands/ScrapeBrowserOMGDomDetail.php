@@ -181,49 +181,51 @@ class ScrapeBrowserOMGDomDetail extends Command
                         return await pageObject.evaluate(() => {
                             try {
                                 // vxe-table 結構：
-                                // .vxe-table--header-wrapper (表頭)
-                                // .vxe-table--body-wrapper (表體)
-                                // 或者 table.vxe-table--header (表格本身有這個 class)
+                                // .vxe-table--header-wrapper (表頭) - 只用於提取 headers
+                                // .vxe-table--body-wrapper (表體) - 用於提取資料行
+                                // vxe-table 可能有多個區域（左固定、中間滾動、右固定）
                                 
                                 let headers = [];
                                 let data = [];
                                 
                                 console.log('🔍 Debug extractTableData:');
                                 
-                                // 先查找 table.vxe-table--header 結構（用於提取數據行）
-                                const headerTable = document.querySelector('table[class*="vxe-table--header"], table.vxe-table--header');
+                                // ========== 1. 提取表頭 ==========
+                                // 優先從 body wrapper 中的第一個表格提取 headers（更準確）
+                                const bodyWrapper = document.querySelector('.vxe-table--body-wrapper');
+                                let headerCells = [];
                                 
-                                // 提取表頭（使用簡單直接的方法，類似備用邏輯）
-                                let headerCells = Array.from(document.querySelectorAll('.vxe-table--header-wrapper th .vxe-cell, .vxe-header--column .vxe-cell'));
-                                
-                                if (headerCells.length === 0) {
-                                    headerCells = Array.from(document.querySelectorAll('thead th'));
-                                }
-                                
-                                // 如果還是找不到，嘗試從 headerTable 中查找
-                                if (headerCells.length === 0 && headerTable) {
-                                    const thead = headerTable.querySelector('thead');
-                                    if (thead) {
-                                        const thElements = Array.from(thead.querySelectorAll('th'));
-                                        headerCells = thElements.map(th => {
-                                            const vxeCell = th.querySelector('.vxe-cell');
-                                            return vxeCell || th;
-                                        });
-                                    } else {
-                                        const thElements = Array.from(headerTable.querySelectorAll('th'));
-                                        headerCells = thElements.map(th => {
-                                            const vxeCell = th.querySelector('.vxe-cell');
-                                            return vxeCell || th;
-                                        });
+                                if (bodyWrapper) {
+                                    // 從 body wrapper 的表格中提取表頭（如果有的話）
+                                    const bodyTable = bodyWrapper.querySelector('table');
+                                    if (bodyTable) {
+                                        const thead = bodyTable.querySelector('thead');
+                                        if (thead) {
+                                            headerCells = Array.from(thead.querySelectorAll('th')).map(th => {
+                                                const vxeCell = th.querySelector('.vxe-cell');
+                                                return vxeCell || th;
+                                            });
+                                        }
                                     }
                                 }
                                 
-                                // 如果還是找不到，查找任何包含 vxe 相關類的元素
+                                // 如果 body wrapper 沒有表頭，從 header wrapper 提取
                                 if (headerCells.length === 0) {
-                                    const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
-                                    if (vxeTable) {
-                                        const thElements = Array.from(vxeTable.querySelectorAll('th'));
-                                        headerCells = thElements.map(th => {
+                                    const headerWrapper = document.querySelector('.vxe-table--header-wrapper');
+                                    if (headerWrapper) {
+                                        // 只從第一個 header wrapper 提取（避免重複）
+                                        headerCells = Array.from(headerWrapper.querySelectorAll('th .vxe-cell'));
+                                        if (headerCells.length === 0) {
+                                            headerCells = Array.from(headerWrapper.querySelectorAll('th'));
+                                        }
+                                    }
+                                }
+                                
+                                // 備用：從任何 thead 提取
+                                if (headerCells.length === 0) {
+                                    const firstThead = document.querySelector('thead');
+                                    if (firstThead) {
+                                        headerCells = Array.from(firstThead.querySelectorAll('th')).map(th => {
                                             const vxeCell = th.querySelector('.vxe-cell');
                                             return vxeCell || th;
                                         });
@@ -233,96 +235,104 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 console.log('  - Total headerCells found: ' + headerCells.length);
                                 
                                 if (headerCells.length > 0) {
-                                    // 提取表頭文本（簡單直接，不進行去重處理，因為備用邏輯也沒有去重）
-                                    headers = headerCells.map(cell => {
+                                    // 提取表頭文本並去重
+                                    const rawHeaders = headerCells.map(cell => {
                                         const text = cell.innerText || cell.textContent || '';
                                         return text.trim();
                                     }).filter(t => t); // 過濾空值
                                     
-                                    console.log('  - Headers extracted: ' + headers.length);
+                                    // 去重 headers（保留順序，只保留第一次出現的）
+                                    const seenHeaders = new Set();
+                                    headers = rawHeaders.filter(header => {
+                                        if (seenHeaders.has(header)) {
+                                            return false;
+                                        }
+                                        seenHeaders.add(header);
+                                        return true;
+                                    });
+                                    
+                                    console.log('  - Raw headers: ' + rawHeaders.length + ', After dedup: ' + headers.length);
                                 } else {
-                                    // 即使沒有表頭，也嘗試提取數據（使用索引作為 key）
                                     console.log('  - No headers found, will use column indices');
                                 }
                                 
-                                // 提取資料行
+                                // ========== 2. 提取資料行 ==========
                                 let rows = [];
                                 
-                                // 優先從 table.vxe-table--header 提取數據行
-                                if (headerTable) {
-                                    console.log('  - Extracting rows from table.vxe-table--header');
-                                    // 從 tbody 中提取所有 tr
-                                    rows = Array.from(headerTable.querySelectorAll('tbody tr'));
+                                // 方式1：優先從 .vxe-table--body-wrapper 提取（這才是資料區域）
+                                if (bodyWrapper) {
+                                    // 優先查找 .vxe-body--row
+                                    rows = Array.from(bodyWrapper.querySelectorAll('.vxe-body--row'));
+                                    console.log('  - rows from .vxe-table--body-wrapper .vxe-body--row: ' + rows.length);
                                     
-                                    // 如果 tbody 中沒有，查找所有 tr（排除表頭行）
+                                    // 如果沒有，嘗試 tbody tr
                                     if (rows.length === 0) {
-                                        const allTrs = Array.from(headerTable.querySelectorAll('tr'));
-                                        // 過濾掉表頭行（包含 th 的行）
-                                        rows = allTrs.filter(tr => {
-                                            const hasTh = tr.querySelector('th');
-                                            return !hasTh; // 只保留不包含 th 的行（數據行）
-                                        });
+                                        rows = Array.from(bodyWrapper.querySelectorAll('tbody tr'));
+                                        console.log('  - rows from .vxe-table--body-wrapper tbody tr: ' + rows.length);
                                     }
-                                    console.log('  - rows from table.vxe-table--header: ' + rows.length);
+                                    
+                                    // 如果還是沒有，嘗試 table tr（排除表頭行）
+                                    if (rows.length === 0) {
+                                        rows = Array.from(bodyWrapper.querySelectorAll('table tr')).filter(tr => {
+                                            return !tr.querySelector('th');
+                                        });
+                                        console.log('  - rows from .vxe-table--body-wrapper table tr: ' + rows.length);
+                                    }
                                 }
                                 
-                                // 方式1：如果還沒找到，查找標準 vxe-table 表體行
-                                if (rows.length === 0) {
-                                    rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper .vxe-body--row'));
-                                    console.log('  - rows from .vxe-body--row: ' + rows.length);
-                                }
-                                
-                                // 方式2：如果找不到，嘗試標準 tr
-                                if (rows.length === 0) {
-                                    rows = Array.from(document.querySelectorAll('.vxe-table--body-wrapper tr'));
-                                    console.log('  - rows from .vxe-table--body-wrapper tr: ' + rows.length);
-                                }
-                                
-                                // 方式3：如果還是找不到，查找任何包含 vxe 相關類的表格行
+                                // 方式2：查找 vxe-table 容器中的 body row
                                 if (rows.length === 0) {
                                     const vxeTable = document.querySelector('.vxe-table, [class*="vxe-table"]');
                                     if (vxeTable) {
-                                        rows = Array.from(vxeTable.querySelectorAll('tbody tr, .vxe-body--row'));
-                                        console.log('  - rows from vxeTable: ' + rows.length);
+                                        rows = Array.from(vxeTable.querySelectorAll('.vxe-body--row'));
+                                        console.log('  - rows from .vxe-table .vxe-body--row: ' + rows.length);
                                     }
                                 }
                                 
-                                // 方式4：最後嘗試，查找所有 table tbody tr
+                                // 方式3：查找 table.vxe-table--body 中的行
                                 if (rows.length === 0) {
-                                    rows = Array.from(document.querySelectorAll('table tbody tr'));
-                                    // 過濾掉表頭行
-                                    rows = rows.filter(tr => {
-                                        const hasTh = tr.querySelector('th');
-                                        return !hasTh;
-                                    });
-                                    console.log('  - rows from table tbody tr: ' + rows.length);
+                                    const bodyTable = document.querySelector('table.vxe-table--body, table[class*="vxe-table--body"]');
+                                    if (bodyTable) {
+                                        rows = Array.from(bodyTable.querySelectorAll('tbody tr'));
+                                        console.log('  - rows from table.vxe-table--body: ' + rows.length);
+                                    }
+                                }
+                                
+                                // 方式4：最後嘗試，查找所有 table tbody tr（排除表頭表格）
+                                if (rows.length === 0) {
+                                    const allTables = Array.from(document.querySelectorAll('table'));
+                                    for (const table of allTables) {
+                                        // 跳過表頭表格
+                                        if (table.className && table.className.includes('header')) {
+                                            continue;
+                                        }
+                                        const tbody = table.querySelector('tbody');
+                                        if (tbody) {
+                                            const trs = Array.from(tbody.querySelectorAll('tr')).filter(tr => !tr.querySelector('th'));
+                                            if (trs.length > 0) {
+                                                rows = trs;
+                                                console.log('  - rows from fallback table tbody: ' + rows.length);
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
                                 
                                 console.log('  - Total rows found: ' + rows.length);
                                 
-                                // 將資料行轉換為對象數組（使用簡單直接的方法，類似備用邏輯）
+                                // ========== 3. 提取單元格資料 ==========
                                 const dataRows = rows.map((row, rowIndex) => {
                                     const rowData = {};
                                     
-                                    // 查找單元格 - 優先使用 .vxe-body--column，然後 td
+                                    // 查找單元格
                                     let cells = Array.from(row.querySelectorAll('.vxe-body--column'));
                                     if (cells.length === 0) {
                                         cells = Array.from(row.querySelectorAll('td'));
                                     }
                                     
-                                    // 如果還是找不到，嘗試查找 .vxe-cell 的父元素
+                                    // 如果還是找不到，嘗試 .vxe-cell 元素本身
                                     if (cells.length === 0) {
-                                        const cellElements = Array.from(row.querySelectorAll('.vxe-cell'));
-                                        if (cellElements.length > 0) {
-                                            cells = cellElements.map(cell => {
-                                                // 找到父元素 td，如果沒有則使用 cell 本身
-                                                let parent = cell.parentElement;
-                                                while (parent && parent !== row && parent.tagName !== 'TD') {
-                                                    parent = parent.parentElement;
-                                                }
-                                                return parent && parent.tagName === 'TD' ? parent : cell;
-                                            });
-                                        }
+                                        cells = Array.from(row.querySelectorAll('.vxe-cell'));
                                     }
                                     
                                     // 最後嘗試：直接查找所有子元素中的 td
@@ -330,32 +340,46 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         cells = Array.from(row.children).filter(el => el.tagName === 'TD');
                                     }
                                     
-                                    if (rowIndex < 3) { // 只記錄前3行的詳細信息
+                                    if (rowIndex < 3) {
                                         console.log('  - Row ' + rowIndex + ': Found ' + cells.length + ' cells, ' + headers.length + ' headers');
+                                        // 輸出前3個單元格的內容用於調試
+                                        const sampleCells = cells.slice(0, 3).map(c => {
+                                            const vxeCell = c.querySelector('.vxe-cell');
+                                            const text = vxeCell ? vxeCell.innerText : c.innerText;
+                                            return (text || '').trim().substring(0, 20);
+                                        });
+                                        console.log('  - Sample cell values: ' + JSON.stringify(sampleCells));
                                     }
                                     
+                                    // 提取單元格內容
+                                    const extractCellText = (cell) => {
+                                        if (!cell) return '';
+                                        
+                                        // 優先從 .vxe-cell 提取
+                                        const vxeCell = cell.querySelector('.vxe-cell');
+                                        if (vxeCell) {
+                                            return (vxeCell.innerText || vxeCell.textContent || '').trim();
+                                        }
+                                        
+                                        // 如果 cell 本身就是 .vxe-cell
+                                        if (cell.classList && cell.classList.contains('vxe-cell')) {
+                                            return (cell.innerText || cell.textContent || '').trim();
+                                        }
+                                        
+                                        // 直接取 cell 的內容
+                                        return (cell.innerText || cell.textContent || '').trim();
+                                    };
+                                    
                                     if (headers && headers.length > 0) {
-                                        // 直接使用 header 文本作為 key，不進行字段名清理（類似備用邏輯）
+                                        // 使用 headers 作為 key
                                         headers.forEach((header, index) => {
                                             const cell = cells[index];
-                                            if (cell) {
-                                                const contentDiv = cell.querySelector('.vxe-cell');
-                                                rowData[header] = contentDiv ? (contentDiv.innerText || contentDiv.textContent || '').trim() : (cell.innerText || cell.textContent || '').trim();
-                                            } else {
-                                                rowData[header] = '';
-                                            }
+                                            rowData[header] = extractCellText(cell);
                                         });
                                     } else {
                                         // 如果沒有表頭，使用索引作為 key
                                         cells.forEach((cell, colIndex) => {
-                                            const contentDiv = cell.querySelector('.vxe-cell');
-                                            let cellValue = '';
-                                            if (contentDiv) {
-                                                cellValue = (contentDiv.innerText || contentDiv.textContent || '').trim();
-                                            } else {
-                                                cellValue = cell ? (cell.innerText || cell.textContent || '').trim() : '';
-                                            }
-                                            rowData['column_' + colIndex] = cellValue || '';
+                                            rowData['column_' + colIndex] = extractCellText(cell);
                                         });
                                     }
                                     
@@ -364,8 +388,31 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     
                                     return rowData;
                                 }).filter(rowData => {
-                                    // 過濾掉空行、小計和總計行（類似 PGONE）
+                                    // 過濾掉空行、小計和總計行
                                     if (!rowData) return false;
+                                    
+                                    // 過濾掉 header 行（值完全匹配 headers 的數據行）
+                                    if (headers && headers.length > 0) {
+                                        const rowValues = Object.entries(rowData)
+                                            .filter(([key]) => key !== '_rowIndex')
+                                            .map(([, value]) => value ? String(value).trim() : '');
+                                        
+                                        if (rowValues.length === headers.length) {
+                                            let isHeaderRow = true;
+                                            for (let i = 0; i < headers.length; i++) {
+                                                const header = String(headers[i]).trim();
+                                                const rowValue = rowValues[i] || '';
+                                                if (rowValue !== header) {
+                                                    isHeaderRow = false;
+                                                    break;
+                                                }
+                                            }
+                                            if (isHeaderRow) {
+                                                return false;
+                                            }
+                                        }
+                                    }
+                                    
                                     // 排除 _rowIndex 字段，只檢查實際數據值
                                     const values = Object.entries(rowData)
                                         .filter(([key]) => key !== '_rowIndex')
@@ -381,17 +428,15 @@ class ScrapeBrowserOMGDomDetail extends Command
                                 // 如果沒有數據，返回詳細的調試信息
                                 if (dataRows.length === 0) {
                                     const debugInfo = {
-                                        headerTableFound: !!headerTable,
                                         headerCellsCount: headerCells.length,
                                         headersCount: headers.length,
                                         rowsFound: rows.length,
+                                        bodyWrapperFound: !!bodyWrapper,
                                         vxeTableElements: document.querySelectorAll('.vxe-table, [class*="vxe-table"]').length,
-                                        headerTableElements: document.querySelectorAll('table[class*="vxe-table--header"]').length,
                                         headerWrappers: document.querySelectorAll('.vxe-table--header-wrapper').length,
                                         bodyWrappers: document.querySelectorAll('.vxe-table--body-wrapper').length,
-                                        theadElements: document.querySelectorAll('thead').length,
-                                        tbodyTrElements: document.querySelectorAll('table tbody tr').length,
-                                        bodyRowElements: document.querySelectorAll('.vxe-body--row').length
+                                        bodyRowElements: document.querySelectorAll('.vxe-body--row').length,
+                                        tbodyTrElements: document.querySelectorAll('tbody tr').length
                                     };
                                     console.log('  - Debug info:', JSON.stringify(debugInfo));
                                     
@@ -402,7 +447,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                     };
                                 }
                                 
-                                // 即使沒有表頭，只要有數據就返回成功
                                 return {
                                     found: true,
                                     headers: headers,
@@ -1769,16 +1813,45 @@ class ScrapeBrowserOMGDomDetail extends Command
                 if (!empty($page['tables'])) {
                     foreach ($page['tables'] as $table) {
                         if (!empty($table['data'])) {
-                            $pageRowCount = count($table['data']);
-                            
-                            // 將當前表格的所有數據添加到總數組中
-                            $allData = array_merge($allData, $table['data']);
-                            $totalRows += $pageRowCount;
-                            
                             // 保存表頭（使用第一個表格的表頭）
                             if (empty($headers) && !empty($table['headers'])) {
                                 $headers = $table['headers'];
                             }
+                            
+                            // 過濾掉 header 行（值完全匹配 headers 的數據行）
+                            $filteredData = array_filter($table['data'], function($row) use ($headers) {
+                                if (empty($headers) || !is_array($row)) {
+                                    return true; // 如果沒有 headers 或 row 不是數組，保留該行
+                                }
+                                
+                                // 檢查該行的值是否完全匹配 headers 數組
+                                $rowValues = array_values(array_filter($row, function($key) {
+                                    return $key !== '_rowIndex'; // 排除 _rowIndex 字段
+                                }, ARRAY_FILTER_USE_KEY));
+                                
+                                // 如果行的值數組與 headers 數組完全匹配，則認為這是 header 行
+                                if (count($rowValues) === count($headers)) {
+                                    $isHeaderRow = true;
+                                    foreach ($headers as $index => $header) {
+                                        $rowValue = $rowValues[$index] ?? '';
+                                        if (trim($rowValue) !== trim($header)) {
+                                            $isHeaderRow = false;
+                                            break;
+                                        }
+                                    }
+                                    if ($isHeaderRow) {
+                                        return false; // 過濾掉 header 行
+                                    }
+                                }
+                                
+                                return true; // 保留數據行
+                            });
+                            
+                            $pageRowCount = count($filteredData);
+                            
+                            // 將過濾後的數據添加到總數組中
+                            $allData = array_merge($allData, array_values($filteredData));
+                            $totalRows += $pageRowCount;
                         }
                     }
                 }
@@ -1789,12 +1862,42 @@ class ScrapeBrowserOMGDomDetail extends Command
         if (empty($allData) && !empty($domData['tables'])) {
             foreach ($domData['tables'] as $table) {
                 if (!empty($table['data'])) {
-                    $allData = array_merge($allData, $table['data']);
-                    $totalRows += count($table['data']);
-                    
+                    // 保存表頭（使用第一個表格的表頭）
                     if (empty($headers) && !empty($table['headers'])) {
                         $headers = $table['headers'];
                     }
+                    
+                    // 過濾掉 header 行（值完全匹配 headers 的數據行）
+                    $filteredData = array_filter($table['data'], function($row) use ($headers) {
+                        if (empty($headers) || !is_array($row)) {
+                            return true; // 如果沒有 headers 或 row 不是數組，保留該行
+                        }
+                        
+                        // 檢查該行的值是否完全匹配 headers 數組
+                        $rowValues = array_values(array_filter($row, function($key) {
+                            return $key !== '_rowIndex'; // 排除 _rowIndex 字段
+                        }, ARRAY_FILTER_USE_KEY));
+                        
+                        // 如果行的值數組與 headers 數組完全匹配，則認為這是 header 行
+                        if (count($rowValues) === count($headers)) {
+                            $isHeaderRow = true;
+                            foreach ($headers as $index => $header) {
+                                $rowValue = $rowValues[$index] ?? '';
+                                if (trim($rowValue) !== trim($header)) {
+                                    $isHeaderRow = false;
+                                    break;
+                                }
+                            }
+                            if ($isHeaderRow) {
+                                return false; // 過濾掉 header 行
+                            }
+                        }
+                        
+                        return true; // 保留數據行
+                    });
+                    
+                    $allData = array_merge($allData, array_values($filteredData));
+                    $totalRows += count($filteredData);
                 }
             }
         }
