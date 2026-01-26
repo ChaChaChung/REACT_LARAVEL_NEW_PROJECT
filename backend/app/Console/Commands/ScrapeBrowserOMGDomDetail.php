@@ -397,20 +397,26 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         headers.forEach((header, index) => {
                                             let cellValue = '';
                                             
-                                            // 先從 body cells 取值
-                                            if (bodyCells[index]) {
-                                                cellValue = extractCellText(bodyCells[index]);
-                                            }
+                                            // 判斷這個欄位應該從哪個區域取值
+                                            // 前 N 個欄位從左側固定列取（N = leftCellCount）
+                                            // 最後 M 個欄位從右側固定列取（M = rightCellCount）
+                                            // 中間的欄位從 body cells 取（但要跳過 body 中的前 N 個佔位符）
                                             
-                                            // 如果是前幾個欄位且值為空，從左側固定列取值
-                                            if ((!cellValue || cellValue === '') && index < leftCellCount && leftCells[index]) {
+                                            if (index < leftCellCount && leftCells[index]) {
+                                                // 前幾個欄位：強制從左側固定列取值
                                                 cellValue = extractCellText(leftCells[index]);
-                                            }
-                                            
-                                            // 如果是最後幾個欄位且值為空，從右側固定列取值
-                                            const rightStartIndex = headers.length - rightCellCount;
-                                            if ((!cellValue || cellValue === '') && index >= rightStartIndex && rightCells[index - rightStartIndex]) {
-                                                cellValue = extractCellText(rightCells[index - rightStartIndex]);
+                                            } else if (index >= headers.length - rightCellCount && rightCellCount > 0) {
+                                                // 最後幾個欄位：強制從右側固定列取值
+                                                const rightIndex = index - (headers.length - rightCellCount);
+                                                if (rightCells[rightIndex]) {
+                                                    cellValue = extractCellText(rightCells[rightIndex]);
+                                                }
+                                            } else {
+                                                // 中間的欄位：從 body cells 取值（跳過前 leftCellCount 個佔位符）
+                                                const bodyIndex = index - leftCellCount;
+                                                if (bodyCells[bodyIndex]) {
+                                                    cellValue = extractCellText(bodyCells[bodyIndex]);
+                                                }
                                             }
                                             
                                             rowData[header] = cellValue;
@@ -508,8 +514,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                         await page.waitForSelector('#radix-vue-dropdown-menu-trigger-v-3', { timeout: 5000 });
                         await page.click('#radix-vue-dropdown-menu-trigger-v-3');
                         await new Promise(r => setTimeout(r, 1000));
-                        await page.screenshot({ path: path.join(workingDir, 'omg_debug_language_clicked.png'), fullPage: true });
-                        console.log('📸 Debug screenshot saved: omg_debug_language_clicked.png');
                         
                         // Click English menu item
                         await new Promise(r => setTimeout(r, 500));
@@ -529,7 +533,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                             console.log('✅ Debug: Clicked English menu item');
                             console.log('⏳ Waiting 5s for language switch...');
                             await new Promise(r => setTimeout(r, 5000)); // Wait for language switch
-                            await page.screenshot({ path: path.join(workingDir, 'omg_debug_english_selected.png'), fullPage: true });
                         } else {
                             console.log('⚠️ Debug: English menu item not found');
                         }
@@ -549,7 +552,7 @@ class ScrapeBrowserOMGDomDetail extends Command
 
                     // 填入日期
                     if (dateStartParsed || dateEndParsed) {
-                         // DEBUG: Click date input, find specific date, and screenshot
+                         // DEBUG: Click date input and find specific date
                          try {
                              console.log('👆 Debug: Clicking Start Date input...');
                              
@@ -561,15 +564,10 @@ class ScrapeBrowserOMGDomDetail extends Command
                                  await page.click(startDateSelector);
                                  console.log('✅ Start Date input clicked');
                              } catch (clickErr) {
-                                 console.error('⚠️ Failed to click Start Date input (' + clickErr.message + '), taking screenshot anyway...');
+                                 console.error('⚠️ Failed to click Start Date input (' + clickErr.message + ')');
                              }
                              
                              await new Promise(r => setTimeout(r, 1000)); // Wait for picker (if any)
-
-                             // Screenshot after clicking input (User Request)
-                             // 無論點擊是否成功都截圖，以便除錯
-                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_clicked.png'), fullPage: true });
-                             console.log('📸 Debug screenshot saved: omg_debug_start_date_clicked.png');
                              
                              if (dateStartParsed) {
                                  console.log('🔍 Debug: Looking for element with date: ' + dateStartParsed);
@@ -602,11 +600,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                  if (clickedDate) {
                                      console.log('✅ Debug: Found and clicked date element for ' + dateStartParsed);
                                      
-                                     // Screenshot after choosing date (before OK)
-                                     await new Promise(r => setTimeout(r, 500));
-                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_chosen.png'), fullPage: true });
-                                     console.log('📸 Debug screenshot saved: omg_debug_start_date_chosen.png');
-                                     
                                      // Click OK button
                                      await new Promise(r => setTimeout(r, 500));
                                      const okClicked = await page.evaluate(() => {
@@ -633,8 +626,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                              }
                              
                              await new Promise(r => setTimeout(r, 1000));
-                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_start_date_confirmed.png'), fullPage: true });
-                             console.log('📸 Debug screenshot saved: omg_debug_start_date_confirmed.png');
                              
                              // --- End Date Handling ---
                              if (dateEndParsed) {
@@ -645,11 +636,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      await page.waitForSelector(endDateSelector, { timeout: 5000 });
                                      await page.click(endDateSelector);
                                      console.log('✅ End Date input clicked');
-                                     
-                                     // Screenshot after clicking End Date input
                                      await new Promise(r => setTimeout(r, 1000));
-                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_clicked.png'), fullPage: true });
-                                     console.log('📸 Debug screenshot saved: omg_debug_end_date_clicked.png');
                                      
                                      // Find and click End Date
                                      console.log('🔍 Debug: Looking for element with date: ' + dateEndParsed);
@@ -673,11 +660,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      if (clickedEnd) {
                                          console.log('✅ Debug: Found and clicked End Date element');
                                          
-                                         // Screenshot after choosing End Date (before OK)
-                                         await new Promise(r => setTimeout(r, 500));
-                                         await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_chosen.png'), fullPage: true });
-                                         console.log('📸 Debug screenshot saved: omg_debug_end_date_chosen.png');
-                                         
                                          // Click OK button (re-use logic)
                                          await new Promise(r => setTimeout(r, 500));
                                          const okClicked = await page.evaluate(() => {
@@ -694,10 +676,7 @@ class ScrapeBrowserOMGDomDetail extends Command
                                          });
                                          
                                          if (okClicked) console.log('✅ Debug: Clicked OK button for End Date');
-                                         
                                          await new Promise(r => setTimeout(r, 1000));
-                                         await page.screenshot({ path: path.join(workingDir, 'omg_debug_end_date_confirmed.png'), fullPage: true });
-                                         console.log('📸 Debug screenshot saved: omg_debug_end_date_confirmed.png');
                                          
                                      } else {
                                          console.log('⚠️ Debug: End Date element not found');
@@ -729,8 +708,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                              }
                              
                              await new Promise(r => setTimeout(r, 1000));
-                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_platform_id_clicked.png'), fullPage: true });
-                             console.log('📸 Debug screenshot saved: omg_debug_platform_id_clicked.png');
                              
                              // Select "Player ID"
                              console.log('👆 Debug: Selecting "Player ID"...');
@@ -752,8 +729,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                              }
                              
                              await new Promise(r => setTimeout(r, 1000));
-                             await page.screenshot({ path: path.join(workingDir, 'omg_debug_player_id_selected.png'), fullPage: true });
-                             console.log('📸 Debug screenshot saved: omg_debug_player_id_selected.png');
                              
                              // Fill Player ID
                              const accountNumber = $accountNumberJs;
@@ -770,8 +745,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                      console.log('✅ Player ID filled');
                                      
                                      await new Promise(r => setTimeout(r, 1000));
-                                     await page.screenshot({ path: path.join(workingDir, 'omg_debug_player_id_filled.png'), fullPage: true });
-                                     console.log('📸 Debug screenshot saved: omg_debug_player_id_filled.png');
                                      
                                      // Click Search Button (Native)
                                      console.log('👆 Debug: Clicking Search button (native)...');
@@ -843,9 +816,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                             console.log('⚠️ Table not found, but proceeding anyway...');
                                         }
                                     }
-                                     
-                                    await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_fill_wait.png'), fullPage: true });
-                                    console.log('📸 Debug screenshot saved: omg_debug_after_fill_wait.png');
                                     
                                     // 額外等待一下，確保數據完全渲染
                                     await new Promise(r => setTimeout(r, 1000));
@@ -1219,9 +1189,6 @@ class ScrapeBrowserOMGDomDetail extends Command
                                         console.log('⚠️ Table not found, but proceeding anyway...');
                                     }
                                 }
-                                 
-                                await page.screenshot({ path: path.join(workingDir, 'omg_debug_after_search_wait.png'), fullPage: true });
-                                console.log('📸 Debug screenshot saved: omg_debug_after_search_wait.png');
                                 
                                 // 額外等待一下，確保數據完全渲染
                                 await new Promise(r => setTimeout(r, 1000));
@@ -1795,7 +1762,7 @@ class ScrapeBrowserOMGDomDetail extends Command
         // 顯示瀏覽器執行的輸出信息
         $this->line(""); // 空行
         $this->line("📋 Browser Output:");
-        $this->line($result->output());
+        // $this->line($result->output());
 
         // 檢查執行是否失敗
         if ($result->failed()) {
