@@ -115,7 +115,9 @@ class ScrapeBrowser1BetDomDetail2 extends Command
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
 
         $script = <<<JS
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const fs = require('fs');
 const path = require('path');
 
@@ -148,7 +150,8 @@ async function run() {
             const client = await page.target().createCDPSession();
             await client.send('Debugger.enable');
             await client.send('Debugger.setBreakpointsActive', { active: false });
-            console.log('🛡️ CDP Debugger disabled');
+            await client.send('Debugger.setSkipAllPauses', { skip: true });
+            console.log('🛡️ CDP Debugger disabled (with setSkipAllPauses)');
         } catch (e) {
             console.log('⚠️ Failed to disable debugger via CDP:', e.message);
         }
@@ -156,11 +159,19 @@ async function run() {
         await page.setViewport({ width: 1920, height: 1080 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        // 🛡️ Anti-detection and disable-devtool bypass
+        // 🛡️ Anti-detection and disable-devtool bypass (enhanced)
         await page.setRequestInterception(true);
         page.on('request', (request) => {
-            const url = request.url();
-            if (url.includes('disable-devtool') || url.includes('theajack.github.io')) {
+            const url = request.url().toLowerCase();
+            const isDisableDevtool = 
+                url.includes('disable-devtool') || 
+                url.includes('theajack.github.io') ||
+                url.includes('cdn.jsdelivr.net/npm/disable-devtool') ||
+                url.includes('unpkg.com/disable-devtool') ||
+                url.includes('devtools-detector') ||
+                url.includes('console-ban');
+            
+            if (isDisableDevtool) {
                 if (request.isNavigationRequest()) {
                     console.log('🛡️ Blocked navigation to disable-devtool');
                     request.respond({ status: 204, body: '' });
@@ -169,7 +180,7 @@ async function run() {
                     request.respond({
                         status: 200,
                         contentType: 'text/javascript',
-                        body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" };'
+                        body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; window.devtoolsDetector = { launch: () => {}, stop: () => {}, isLaunch: () => false };'
                     });
                 }
             } else {
@@ -178,7 +189,6 @@ async function run() {
         });
 
         await page.evaluateOnNewDocument((l) => {
-            // Avoid console.log here as it might cause "Execution context was destroyed"
             // Bypass webdriver detection
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             window.chrome = { runtime: {} };
@@ -228,6 +238,94 @@ async function run() {
                 if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
                 return oRegExpToString.call(this);
             };
+            
+            // 🛡️ 【關鍵】Performance API 時間隨機化 - 防止 type=6 檢測
+            try {
+                const originalNow = performance.now.bind(performance);
+                performance.now = function() {
+                    return originalNow() + Math.random() * 0.1;
+                };
+            } catch (e) {}
+            
+            // 🛡️ 【關鍵】覆寫 console 方法 - 防止 type=6 時間測量檢測
+            try {
+                const originalConsole = {
+                    log: console.log.bind(console),
+                    table: console.table.bind(console),
+                    warn: console.warn.bind(console),
+                    error: console.error.bind(console),
+                    clear: console.clear.bind(console)
+                };
+                
+                // 快速返回，不讓 console.log 觸發時間差異
+                console.log = function() {
+                    // 使用 setTimeout 延遲執行，避免時間測量
+                    const args = Array.from(arguments);
+                    setTimeout(() => originalConsole.log.apply(console, args), 0);
+                };
+                console.table = function() {
+                    const args = Array.from(arguments);
+                    setTimeout(() => originalConsole.table.apply(console, args), 0);
+                };
+                console.clear = function() {
+                    setTimeout(() => originalConsole.clear(), 0);
+                };
+            } catch (e) {}
+            
+            // 🛡️ 防止頁面被清空（innerHTML = ''）
+            try {
+                const originalInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+                Object.defineProperty(Element.prototype, 'innerHTML', {
+                    set: function(value) {
+                        if ((this === document.body || this === document.documentElement) && 
+                            (value === '' || value === ' ' || value.length < 10)) {
+                            console.log('🛡️ Blocked attempt to clear page content');
+                            return;
+                        }
+                        return originalInnerHTMLDescriptor.set.call(this, value);
+                    },
+                    get: function() {
+                        return originalInnerHTMLDescriptor.get.call(this);
+                    },
+                    configurable: true
+                });
+            } catch (e) {}
+            
+            // 🛡️ 防止 document.write 清空頁面
+            try {
+                const originalWrite = document.write.bind(document);
+                document.write = function(content) {
+                    if (!content || content.length < 10) {
+                        return;
+                    }
+                    return originalWrite(content);
+                };
+            } catch (e) {}
+            
+            // 🛡️ 偽裝 devtoolsDetector
+            try {
+                window.devtoolsDetector = {
+                    launch: () => {},
+                    stop: () => {},
+                    isLaunch: () => false,
+                    addListener: () => {},
+                    removeListener: () => {}
+                };
+            } catch (e) {}
+            
+            // 🛡️ 攔截 setInterval（阻止檢測循環）
+            try {
+                const originalSetInterval = window.setInterval;
+                window.setInterval = function(callback, delay) {
+                    if (typeof callback === 'function' && typeof delay === 'number' && delay <= 500) {
+                        const str = callback.toString();
+                        if (str.includes('devtool') || str.includes('debugger') || str.includes('outerWidth') || str.includes('outerHeight') || str.includes('console')) {
+                            return originalSetInterval(function() {}, delay);
+                        }
+                    }
+                    return originalSetInterval.apply(this, arguments);
+                };
+            } catch (e) {}
         }, $langJs);
 
         console.log('🌐 Navigating to login page: ' + $domainJs);

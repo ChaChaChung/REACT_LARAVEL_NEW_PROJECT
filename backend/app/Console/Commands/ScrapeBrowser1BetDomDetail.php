@@ -182,7 +182,9 @@ class ScrapeBrowser1BetDomDetail extends Command
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
-            const puppeteer = require('puppeteer');
+            const puppeteer = require('puppeteer-extra');
+            const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+            puppeteer.use(StealthPlugin());
             const fs = require('fs');
             const path = require('path');
             
@@ -251,10 +253,26 @@ class ScrapeBrowser1BetDomDetail extends Command
                         const client = await page.target().createCDPSession();
                         await client.send('Debugger.enable');
                         await client.send('Debugger.setBreakpointsActive', { active: false });
-                        console.log('🛡️ CDP Debugger disabled');
+                        await client.send('Debugger.setSkipAllPauses', { skip: true }); // 跳過所有 debugger 暫停
+                        console.log('🛡️ CDP Debugger disabled (with setSkipAllPauses)');
                     } catch (e) {
                         console.log('⚠️ Failed to disable debugger via CDP:', e.message);
                     }
+
+                    // 監聽 console 訊息（偵錯用）
+                    page.on('console', msg => {
+                        const text = msg.text();
+                        // 過濾掉一般訊息，只顯示與 devtool 相關的
+                        if (text.includes('devtool') || text.includes('detect') || text.includes('🛡️') || 
+                            text.includes('blocked') || text.includes('error') || text.includes('Error')) {
+                            console.log('📋 Console:', msg.type(), text);
+                        }
+                    });
+                    
+                    // 監聽頁面錯誤
+                    page.on('pageerror', error => {
+                        console.log('❌ Page error:', error.message);
+                    });
 
                     // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
                     await page.setViewport({ width: 1920, height: 1080 });
@@ -262,13 +280,22 @@ class ScrapeBrowser1BetDomDetail extends Command
                     // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
                     
-                    // 攔截並阻止跳轉到 disable-devtool 頁面
+                    // 攔截並阻止跳轉到 disable-devtool 頁面（加強版）
                     await page.setRequestInterception(true);
                     page.on('request', (request) => {
-                        const url = request.url();
+                        const url = request.url().toLowerCase();
                         const isNav = request.isNavigationRequest() && request.frame() === page.mainFrame();
                         
-                        if (url.includes('disable-devtool') || url.includes('theajack.github.io')) {
+                        // 檢測是否為 disable-devtool 相關資源（包含各種 CDN）
+                        const isDisableDevtool = 
+                            url.includes('disable-devtool') || 
+                            url.includes('theajack.github.io') ||
+                            url.includes('cdn.jsdelivr.net/npm/disable-devtool') ||
+                            url.includes('unpkg.com/disable-devtool') ||
+                            url.includes('devtools-detector') ||
+                            url.includes('console-ban');
+                        
+                        if (isDisableDevtool) {
                             if (isNav) {
                                 console.log('🛡️ Blocked navigation request to error page, staying on app');
                                 request.respond({
@@ -280,7 +307,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 request.respond({
                                     status: 200,
                                     contentType: 'text/javascript',
-                                    body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; console.log("🛡️ DisableDevtool blocked via request interception");'
+                                    body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; window.devtoolsDetector = { launch: () => {}, stop: () => {}, isLaunch: () => false }; console.log("🛡️ DisableDevtool blocked via request interception");'
                                 });
                             }
                         } else {
@@ -428,7 +455,92 @@ class ScrapeBrowser1BetDomDetail extends Command
                             window.location.replace = function(url) { if (!blockUrl(url)) originalReplace.call(window.location, url); };
                         } catch (e) {}
                         
-                        console.log('🛡️ Advanced anti-detection activated');
+                        // 10. 攔截 Performance API 時間測量（防止 console.log 時間檢測）
+                        try {
+                            const originalNow = performance.now.bind(performance);
+                            performance.now = function() {
+                                return originalNow() + Math.random() * 0.1;
+                            };
+                        } catch (e) {}
+                        
+                        // 11. 完全禁用 eval 和 Function 中的 debugger
+                        try {
+                            const originalEval = window.eval;
+                            window.eval = function(code) {
+                                if (typeof code === 'string') {
+                                    code = code.replace(/debugger/g, '');
+                                }
+                                return originalEval.call(this, code);
+                            };
+                        } catch (e) {}
+                        
+                        // 12. 攔截 setInterval/setTimeout（阻止檢測循環）
+                        try {
+                            const originalSetInterval = window.setInterval;
+                            window.setInterval = function(callback, delay) {
+                                if (typeof callback === 'function' && typeof delay === 'number' && delay <= 500) {
+                                    // 可能是檢測循環，返回空操作
+                                    const str = callback.toString();
+                                    if (str.includes('devtool') || str.includes('debugger') || str.includes('outerWidth') || str.includes('outerHeight')) {
+                                        console.log('🛡️ Blocked suspicious setInterval');
+                                        return originalSetInterval(function() {}, delay);
+                                    }
+                                }
+                                return originalSetInterval.apply(this, arguments);
+                            };
+                        } catch (e) {}
+                        
+                        // 13. 防止頁面被清空（innerHTML = '' 或 document.write）
+                        try {
+                            const originalInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+                            Object.defineProperty(Element.prototype, 'innerHTML', {
+                                set: function(value) {
+                                    // 如果嘗試清空 body 或 html，阻止它
+                                    if ((this === document.body || this === document.documentElement) && 
+                                        (value === '' || value === ' ' || value.length < 10)) {
+                                        console.log('🛡️ Blocked attempt to clear page content');
+                                        return;
+                                    }
+                                    return originalInnerHTMLDescriptor.set.call(this, value);
+                                },
+                                get: function() {
+                                    return originalInnerHTMLDescriptor.get.call(this);
+                                },
+                                configurable: true
+                            });
+                        } catch (e) {}
+                        
+                        // 14. 防止 document.write 清空頁面
+                        try {
+                            const originalWrite = document.write;
+                            document.write = function(content) {
+                                if (!content || content.length < 10) {
+                                    console.log('🛡️ Blocked suspicious document.write');
+                                    return;
+                                }
+                                return originalWrite.apply(this, arguments);
+                            };
+                        } catch (e) {}
+                        
+                        // 15. 攔截 window.close
+                        try {
+                            window.close = function() {
+                                console.log('🛡️ Blocked window.close attempt');
+                            };
+                        } catch (e) {}
+                        
+                        // 16. 偽裝 devtoolsDetector（另一個常見的檢測套件）
+                        try {
+                            window.devtoolsDetector = {
+                                launch: () => {},
+                                stop: () => {},
+                                isLaunch: () => false,
+                                addListener: () => {},
+                                removeListener: () => {}
+                            };
+                        } catch (e) {}
+                        
+                        console.log('🛡️ Advanced anti-detection activated (with stealth)');
                     }, $langJs);
 
                     // 移除 JSON 編碼的引號
