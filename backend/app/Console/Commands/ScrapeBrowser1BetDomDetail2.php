@@ -71,7 +71,12 @@ class ScrapeBrowser1BetDomDetail2 extends Command
 
             if ($result) {
                 $this->processScreenshot($result);
-                if (!empty($result['tableData']['found']) && !empty($result['tableData']['data'])) {
+                
+                // 檢查新格式（dataFile）或舊格式（tableData）
+                $hasData = !empty($result['dataFile']) || 
+                          (!empty($result['tableData']['found']) && !empty($result['tableData']['data']));
+                
+                if ($hasData) {
                     $this->processScrapedData($result);
                 }
                 return 0;
@@ -452,9 +457,6 @@ async function run() {
             }
         }
 
-        // Take pre-query screenshot
-        await registerScreenshot('pre_query', '1bet_pre_query.png');
-
         // Query
         console.log('🔍 Clicking Query button...');
         try {
@@ -809,9 +811,14 @@ JS;
 
         if (!$jsonResult || !isset($jsonResult['status']) || $jsonResult['status'] !== 'success') {
             $this->error('❌ Failed to parse result from script');
+            // 清理暫存腳本檔案
+            @unlink($scriptPath);
             return null;
         }
 
+        // 清理暫存腳本檔案
+        @unlink($scriptPath);
+        
         return $jsonResult;
     }
 
@@ -856,7 +863,40 @@ JS;
             $this->info("💾 Data saved to: storage/app/{$fileName}");
         }
         
+        // 清理中間步驟的截圖，只保留最後一張
+        $this->cleanupIntermediateScreenshots();
+        
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
+    }
+    
+    /**
+     * 清理中間步驟的截圖，只保留 final
+     */
+    private function cleanupIntermediateScreenshots()
+    {
+        $screenshotDir = storage_path('app/scraped_data');
+        $patterns = [
+            '1bet_step1_*.png',
+            '1bet_step2_*.png', 
+            '1bet_step3_*.png',
+            '1bet_step4_*.png',
+            '1bet_pre_query.png',
+        ];
+        
+        $deletedCount = 0;
+        foreach ($patterns as $pattern) {
+            $files = glob($screenshotDir . '/' . $pattern);
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                    $deletedCount++;
+                }
+            }
+        }
+        
+        if ($deletedCount > 0) {
+            $this->info("🧹 Cleaned up {$deletedCount} intermediate screenshot(s)");
+        }
     }
 }
