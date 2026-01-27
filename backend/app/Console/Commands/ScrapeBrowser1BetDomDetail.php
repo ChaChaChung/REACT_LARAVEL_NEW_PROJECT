@@ -154,7 +154,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                         await client.send('Debugger.setBreakpointsActive', { active: false });
                         await client.send('Debugger.setSkipAllPauses', { skip: true });
                     } catch (e) {
-                        console.error('❌ Failed to disable CDP Debugger: ' . e.getMessage());
+                        console.error('❌ Failed to disable CDP Debugger: ' . e.message);
                     }
 
                     await page.setViewport({ width: 1920, height: 1080 });
@@ -490,9 +490,6 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 return { found: false, currentPage: 1, totalPages: 1, totalRecords: 0, perPage: 10 };
                             }
                             
-                            // 偵錯：列出分頁元件的 HTML 結構
-                            const paginationHTML = paginationBox.innerHTML.substring(0, 500);
-                            
                             // 嘗試找到總記錄數
                             let totalRecords = 0;
                             const totalEl = paginationBox.querySelector('.el-pagination__total, [class*="total"]');
@@ -535,8 +532,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 totalRecords, 
                                 perPage,
                                 hasNextBtn,
-                                nextBtnDisabled,
-                                paginationHTML
+                                nextBtnDisabled
                             };
                         });
                     };
@@ -852,40 +848,7 @@ class ScrapeBrowser1BetDomDetail extends Command
             $this->info("💾 Data saved to: storage/app/{$fileName}");
         }
         
-        // 清理中間步驟的截圖，只保留最後一張
-        $this->cleanupIntermediateScreenshots();
-        
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
-    }
-    
-    /**
-     * 清理中間步驟的截圖，只保留 final
-     */
-    private function cleanupIntermediateScreenshots()
-    {
-        $screenshotDir = storage_path('app/scraped_data');
-        $patterns = [
-            '1bet_step1_*.png',
-            '1bet_step2_*.png', 
-            '1bet_step3_*.png',
-            '1bet_step4_*.png',
-            '1bet_pre_query.png',
-        ];
-        
-        $deletedCount = 0;
-        foreach ($patterns as $pattern) {
-            $files = glob($screenshotDir . '/' . $pattern);
-            foreach ($files as $file) {
-                if (is_file($file)) {
-                    @unlink($file);
-                    $deletedCount++;
-                }
-            }
-        }
-        
-        if ($deletedCount > 0) {
-            $this->info("🧹 Cleaned up {$deletedCount} intermediate screenshot(s)");
-        }
     }
 }
