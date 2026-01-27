@@ -120,7 +120,9 @@ class ScrapeBrowser1BetDomDetail extends Command
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
             const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
             puppeteer.use(StealthPlugin());
+            
             const fs = require('fs');
             const path = require('path');
 
@@ -145,20 +147,20 @@ class ScrapeBrowser1BetDomDetail extends Command
                 try {
                     const page = await browser.newPage();
 
-                    // 🛡️ Disable Debugger via CDP (silent)
+                    // 禁用 CDP Debugger
                     try {
                         const client = await page.target().createCDPSession();
                         await client.send('Debugger.enable');
                         await client.send('Debugger.setBreakpointsActive', { active: false });
                         await client.send('Debugger.setSkipAllPauses', { skip: true });
                     } catch (e) {
-                        // Silent fail
+                        console.error('❌ Failed to disable CDP Debugger: ' . e.getMessage());
                     }
 
                     await page.setViewport({ width: 1920, height: 1080 });
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-                    // 🛡️ Anti-detection and disable-devtool bypass (enhanced)
+                    // 請求攔截：反檢測和 disable-devtool 繞過（增強版）
                     await page.setRequestInterception(true);
                     page.on('request', (request) => {
                         const url = request.url().toLowerCase();
@@ -172,6 +174,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                         
                         if (isDisableDevtool) {
                             if (request.isNavigationRequest()) {
+                                // 回傳一個假的空殼物件，讓網站以為已載入但實際無功能
                                 request.respond({ status: 204, body: '' });
                             } else {
                                 request.respond({
@@ -186,17 +189,19 @@ class ScrapeBrowser1BetDomDetail extends Command
                     });
 
                     await page.evaluateOnNewDocument((l) => {
-                        // Bypass webdriver detection
+                        // 覆寫 navigator.webdriver 的 getter，回傳 undefined，讓檢測失效
                         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                        // 偽造 window.chrome 物件，提供基本的 runtime 屬性
                         window.chrome = { runtime: {} };
+                        // 偽造視窗尺寸
                         Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                         Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
 
-                        // 🛡️ Prevent window closure and blank redirects
+                        // 防止視窗關閉和空白轉址
                         window.close = function() { };
                         window.open = function() { return null; };
                         
-                        // Language injection
+                        // 語言注入
                         try {
                             const v = l || 'zh-TW';
                             ['lang', 'locale', 'language'].forEach(k => {
@@ -205,7 +210,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             });
                         } catch (e) {}
 
-                        // 🛡️ DisableDevtool Mock
+                        // 偽造 DisableDevtool 物件，讓檢測失效，即使網站呼叫 DisableDevtool.init()，也只會執行空函數
                         const mock = {
                             isSuspend: true,
                             init: () => { },
@@ -214,13 +219,14 @@ class ScrapeBrowser1BetDomDetail extends Command
                             md5: (s) => s,
                             version: '0.3.7'
                         };
+                        // configurable: false 防止被覆寫
                         Object.defineProperty(window, 'DisableDevtool', {
                             get: () => mock,
                             set: () => {},
                             configurable: false
                         });
 
-                        // 🛡️ Function constructor bypass for debugger
+                        // 覆寫 Function.prototype.constructor，讓 debugger 語句無效
                         const oConstructor = Function.prototype.constructor;
                         Function.prototype.constructor = function(str) {
                             if (str && (str.includes('debugger') || str.includes('debug'))) {
@@ -229,14 +235,14 @@ class ScrapeBrowser1BetDomDetail extends Command
                             return oConstructor.apply(this, arguments);
                         };
 
-                        // 🛡️ RegExp bypass for probes
+                        // 覆寫 RegExp.prototype.toString，讓正則表達式無效
                         const oRegExpToString = RegExp.prototype.toString;
                         RegExp.prototype.toString = function() {
                             if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
                             return oRegExpToString.call(this);
                         };
                         
-                        // 🛡️ 【關鍵】Performance API 時間隨機化 - 防止 type=6 檢測
+                        // Performance API 時間隨機化
                         try {
                             const originalNow = performance.now.bind(performance);
                             performance.now = function() {
@@ -244,7 +250,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        // 🛡️ 【關鍵】覆寫 console 方法 - 防止 type=6 時間測量檢測
+                        // 覆寫 console 方法，延遲執行
                         try {
                             const originalConsole = {
                                 log: console.log.bind(console),
@@ -269,7 +275,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        // 🛡️ 防止頁面被清空（innerHTML = ''）
+                        // 防止頁面被清空（innerHTML = ''）
                         try {
                             const originalInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
                             Object.defineProperty(Element.prototype, 'innerHTML', {
@@ -287,7 +293,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             });
                         } catch (e) {}
                         
-                        // 🛡️ 防止 document.write 清空頁面
+                        // 防止 document.write 清空頁面
                         try {
                             const originalWrite = document.write.bind(document);
                             document.write = function(content) {
@@ -298,7 +304,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        // 🛡️ 偽裝 devtoolsDetector
+                        // 偽裝 devtoolsDetector
                         try {
                             window.devtoolsDetector = {
                                 launch: () => {},
@@ -309,7 +315,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        // 🛡️ 攔截 setInterval（阻止檢測循環）
+                        // 攔截 setInterval
                         try {
                             const originalSetInterval = window.setInterval;
                             window.setInterval = function(callback, delay) {
@@ -342,7 +348,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                     
                     await new Promise(r => setTimeout(r, 5000));
 
-                    // Initialize screenshots list
+                    // 初始化截圖列表
                     const screenshots = {};
                     const registerScreenshot = async (name, filename) => {
                         const scPath = path.join(workingDir, filename);
@@ -350,11 +356,11 @@ class ScrapeBrowser1BetDomDetail extends Command
                             await page.screenshot({ path: scPath, fullPage: true });
                             screenshots[name] = scPath;
                         } catch (e) {
-                            // Silent fail
+                            console.error('❌ Failed to take screenshot ' + name + ':', e.message);
                         }
                     };
 
-                    // Form Filling logic with retry for "Execution context was destroyed"
+                    // 表單填寫邏輯，重試 3 次
                     let formFilled = false;
                     let fillAttempts = 0;
                     while (!formFilled && fillAttempts < 3) {
@@ -366,7 +372,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 await new Promise(r => setTimeout(r, 3000));
                             }
 
-                            // Account Number
+                            // 帳號填寫
                             const accountNumber = $accountNumberJs;
                             if (accountNumber && accountNumber !== 'null') {
                                 const accInput = await page.waitForSelector('input[placeholder="Please enter player account"]', { timeout: 10000 });
@@ -378,7 +384,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                                 await page.keyboard.type(accountNumber, { delay: 50 });
                             }
 
-                            // Date Range
+                            // 日期範圍填寫
                             const dateStart = $dateStartJs;
                             const dateEnd = $dateEndJs;
                             if ((dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null')) {
@@ -409,7 +415,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                                     });
                                 }
 
-                                // Click OK
+                                // 點擊 OK 按鈕
                                 await page.evaluate(() => {
                                     const okBtn = Array.from(document.querySelectorAll('button.el-button')).find(b => b.textContent.trim() === 'OK');
                                     if (okBtn) okBtn.click();
@@ -427,7 +433,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                         }
                     }
 
-                    // Query
+                    // 點擊查詢按鈕
                     try {
                         await page.evaluate(() => {
                             const queryBtn = Array.from(document.querySelectorAll('button.el-button--primary')).find(b => {
@@ -438,10 +444,10 @@ class ScrapeBrowser1BetDomDetail extends Command
                         });
                         await new Promise(r => setTimeout(r, 5000));
                     } catch (e) {
-                        // Silent fail
+                        console.error('❌ Failed to click query button:', e.message);
                     }
 
-                    // Take final screenshot
+                    // 截圖
                     await registerScreenshot('final', '1bet_final.png');
                     
                     // 取得表頭（只需要一次）
@@ -591,7 +597,7 @@ class ScrapeBrowser1BetDomDetail extends Command
                     // 開始分頁爬取
                     let allData = [];
                     let pageNum = 1;
-                    const maxPages = 600; // 安全限制，最多爬 600 頁（足夠 4813 筆，每頁 10 筆 = 482 頁）
+                    const maxPages = 600; // 安全限制，最多爬 600 頁
                     
                     // 先取得分頁資訊
                     const paginationInfo = await getPaginationInfo();
@@ -601,7 +607,6 @@ class ScrapeBrowser1BetDomDetail extends Command
                         ? Math.ceil(paginationInfo.totalRecords / paginationInfo.perPage) 
                         : maxPages;
                     
-                    // 類似 OMG 的輸出格式
                     console.log('📄 Scraping ' + expectedPages + ' pages (' + paginationInfo.totalRecords + ' records)...');
                     
                     let consecutiveEmptyPages = 0;
