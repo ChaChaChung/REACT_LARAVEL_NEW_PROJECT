@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * 1BET 瀏覽器截圖命令
+ * 1BET 瀏覽器截圖與爬蟲命令 V2
  */
 class ScrapeBrowser1BetDomDetail extends Command
 {
@@ -25,7 +25,7 @@ class ScrapeBrowser1BetDomDetail extends Command
      * 命令描述
      * @var string
      */
-    protected $description = 'Navigate to 1BET domain from .env and take a screenshot';
+    protected $description = 'Navigate to 1BET domain, login, and scrape data with anti-detection bypass';
 
     /**
      * 執行命令的主要處理方法
@@ -33,70 +33,54 @@ class ScrapeBrowser1BetDomDetail extends Command
      */
     public function handle()
     {
-        // 從 .env 獲取 1BET_AGENT_DOMAIN（登錄頁面 URL）
+        // 從 .env 獲取配置
         $domain = env('1BET_AGENT_DOMAIN', '');
+        $account = env('1BET_AGENT_ACCOUNT', '');
+        $password = env('1BET_AGENT_PASSWORD', '');
 
         if (empty($domain)) {
             $this->error('❌ 1BET_AGENT_DOMAIN is not set in .env file');
             return 1;
         }
 
-        // 優先使用命令參數中的 url 作為登錄後要跳轉的目標 URL
-        // 如果沒有提供參數，則使用 .env 中的 1BET_AGENT_REDIRECT_URL
         $url = $this->argument('url');
-        $redirectUrl = !empty($url) ? $url : env('1BET_AGENT_REDIRECT_URL', '');
-
-        // 從 .env 獲取 1BET_AGENT_ACCOUNT
-        $account = env('1BET_AGENT_ACCOUNT', '');
-
-        // 從 .env 獲取 1BET_AGENT_PASSWORD
-        $password = env('1BET_AGENT_PASSWORD', '');
-
-        $this->info('=== 1BET Browser Screenshot ===');
-        $this->info("Login Domain: {$domain}");
-        if (!empty($redirectUrl)) {
-            $this->info("Target URL (after login): {$redirectUrl}");
-        }
-        if (!empty($account)) {
-            $this->info("Account: {$account}");
-        }
-        if (!empty($password)) {
-            $this->info("Password: " . str_repeat('*', strlen($password)));
-        }
-        if ($dateStart = $this->argument('date_start')) {
-            $this->info("Date Start: {$dateStart}");
-        }
-        if ($dateEnd = $this->argument('date_end')) {
-            $this->info("Date End: {$dateEnd}");
-        }
-        if ($accountNumber = $this->argument('account_number')) {
-            $this->info("Account number: {$accountNumber}");
-        }
-        $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
-
-        // 檢查 Node.js 是否安裝
-        if (!$this->checkNodeJs()) {
-            return 1;
-        }
-
-        // 從命令參數獲取 date_start、date_end、account_number（可選）
         $dateStart = $this->argument('date_start');
         $dateEnd = $this->argument('date_end');
         $accountNumber = $this->argument('account_number');
 
+        $this->info('=== 1BET Browser Scraper V2 ===');
+        $this->info("Login Domain: {$domain}");
+        $this->info("Target URL: {$url}");
+        $this->info("Account: {$account}");
+        $this->info("Date Start: " . ($dateStart ?: 'None'));
+        $this->info("Date End: " . ($dateEnd ?: 'None'));
+        $this->info("Account Number: " . ($accountNumber ?: 'None'));
+        $this->info('Start time: ' . date('Y-m-d H:i:s'));
+
+        // 檢查環境
+        if (!$this->checkNodeJs()) {
+            return 1;
+        }
+
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($domain, $redirectUrl, $dateStart, $dateEnd, $accountNumber);
+        try {
+            $scriptPath = $this->createPuppeteerScript($domain, $url, $dateStart, $dateEnd, $accountNumber);
 
-        // 執行腳本
-        $result = $this->runPuppeteerScript($scriptPath);
+            // 執行腳本
+            $result = $this->runPuppeteerScript($scriptPath);
 
-        // 如果執行成功，處理截圖與表格資料
-        if ($result) {
-            $this->processScreenshot($result);
-            if (!empty($result['tableData']['found']) && !empty($result['tableData']['data'])) {
-                $this->processScrapedData($result);
+            if ($result) {
+                // 檢查新格式（dataFile）或舊格式（tableData）
+                $hasData = !empty($result['dataFile']) || 
+                          (!empty($result['tableData']['found']) && !empty($result['tableData']['data']));
+                
+                if ($hasData) {
+                    $this->processScrapedData($result);
+                }
+                return 0;
             }
-            return 0;
+        } catch (\Exception $e) {
+            $this->error('❌ Error: ' . $e->getMessage());
         }
 
         return 1;
@@ -104,189 +88,80 @@ class ScrapeBrowser1BetDomDetail extends Command
 
     /**
      * 檢查 Node.js 和 Puppeteer 環境
-     * @return bool 返回 true 表示環境檢查通過，false 表示失敗
      */
     private function checkNodeJs()
     {
-        $this->info('1. Checking Node.js installation...');
-
-        // 檢查 Node.js 是否已安裝
         $result = Process::run('node --version');
-
         if ($result->failed()) {
             $this->error('❌ Node.js is not installed');
-            $this->line('Please install Node.js from: https://nodejs.org/');
             return false;
         }
-
-        $this->info('✅ Node.js found: ' . trim($result->output()));
-
-        // 檢查是否有 Puppeteer 套件
-        $puppeteerCheck = Process::run('npm list puppeteer --depth=0');
-
-        // Puppeteer 未安裝，嘗試自動安裝
-        if ($puppeteerCheck->failed()) {
-            $this->warn('⚠️  Puppeteer not found. Installing...');
-            $this->info('Installing Puppeteer (this may take a few minutes)...');
-
-            $install = Process::run('npm install puppeteer');
-
-            if ($install->failed()) {
-                $this->error('❌ Failed to install Puppeteer');
-                $this->line('Please manually install: npm install puppeteer');
-                return false;
-            }
-
-            $this->info('✅ Puppeteer installed successfully');
-        } else {
-            $this->info('✅ Puppeteer found');
-        }
-
         return true;
     }
 
     /**
      * 創建 Puppeteer 自動化腳本
-     * @param string $domain 要訪問的域名
-     * @param string $redirectUrl 登錄後要跳轉的 URL
-     * @param string|null $dateStart 開始日期，填入 placeholder="Start Date" 的 input
-     * @param string|null $dateEnd 結束日期，填入 placeholder="End Date" 的 input
-     * @param string|null $accountNumber 玩家帳號，填入 placeholder="Please enter player account" 的 input
-     * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($domain, $redirectUrl = '', $dateStart = null, $dateEnd = null, $accountNumber = null)
+    private function createPuppeteerScript($domain, $redirectUrl, $dateStart, $dateEnd, $accountNumber)
     {
-        $this->info('2. Creating browser automation script...');
-
-        // 轉義 JavaScript 字符串
         $domainJs = json_encode($domain);
         $redirectUrlJs = json_encode($redirectUrl);
-
-        // 獲取工作目錄的絕對路徑
-        $workingDir = storage_path('app/temp');
+        $workingDir = storage_path('app/scraped_data');
         $workingDirJs = json_encode($workingDir);
-
-        // 1BET_AGENT_LANG：在每個新文件載入「前」注入到 sessionStorage/localStorage（key: lang）
         $lang = env('1BET_AGENT_LANG', 'zh-TW');
         $langJs = json_encode($lang);
 
-        // date_start / date_end：填入 Start Date、End Date 的 input
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
-
-        // account_number：填入 placeholder="Please enter player account" 的 input
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
 
-        // 使用 trait 方法生成登入流程代碼
         $loginCode = $this->generate1BetPuppeteerLoginCode('page', $workingDirJs, $redirectUrlJs);
 
-        // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
             const StealthPlugin = require('puppeteer-extra-plugin-stealth');
             puppeteer.use(StealthPlugin());
             const fs = require('fs');
             const path = require('path');
-            
-            // 工作目錄
-            const workingDir = $workingDirJs;
 
-            /**
-             * 導航到域名並截圖
-             */
-            async function navigateAndScreenshot() {
-                // 啟動無頭瀏覽器（在背景執行）
+            const workingDir = $workingDirJs;
+            if (!fs.existsSync(workingDir)) fs.mkdirSync(workingDir, { recursive: true });
+
+            async function run() {
+                console.log('🚀 Starting 1BET scraper...');
                 const browser = await puppeteer.launch({
-                    headless: 'new', // 無頭模式，在背景執行
+                    headless: 'new',
                     args: [
-                        // 安全性相關參數（用於容器環境）
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
-                        // 性能優化參數
-                        '--disable-accelerated-2d-canvas',
-                        '--no-first-run',
-                        '--no-zygote',
-                        '--single-process',
-                        '--disable-gpu',
-                        '--disable-software-rasterizer',
-                        // 背景處理優化
-                        '--disable-background-timer-throttling',
-                        '--disable-backgrounding-occluded-windows',
-                        '--disable-renderer-backgrounding',
-                        // 功能禁用（減少資源使用）
-                        '--disable-features=TranslateUI',
-                        '--disable-ipc-flooding-protection',
-                        '--disable-crash-reporter',
-                        '--disable-breakpad',
-                        '--disable-default-apps',
-                        '--disable-extensions',
-                        '--disable-plugins',
-                        '--disable-web-security',
-                        '--disable-features=VizDisplayCompositor',
-                        '--temp-profile',
-                        '--memory-pressure-off',
-                        // 額外的性能優化
-                        '--disable-javascript-harmony-shipping',
-                        '--disable-sync',
-                        // 重定向相關參數
-                        '--disable-features=IsolateOrigins,site-per-process',
-                        '--disable-site-isolation-trials',
-                        '--disable-blink-features=AutomationControlled', // 核心：禁用自動化控制特徵
-                        // 防止 DevTools Protocol 檢測
                         '--disable-blink-features=AutomationControlled',
-                        '--disable-features=ChromeWhatsNewUI,HttpsUpgrades',
-                        '--use-fake-ui-for-media-stream',
+                        '--disable-web-security',
                     ],
-                    // 排除自動化開關
                     ignoreDefaultArgs: ['--enable-automation'],
-                    // 如果環境變數中指定了 Chrome 路徑，則使用該路徑
                     executablePath: process.env.CHROME_BIN || undefined
                 });
 
                 try {
-                    // 創建新的瀏覽器頁面
                     const page = await browser.newPage();
-                    
-                    // 核心：透過 CDP 徹底禁用 debugger 語句
+
+                    // 🛡️ Disable Debugger via CDP (silent)
                     try {
                         const client = await page.target().createCDPSession();
                         await client.send('Debugger.enable');
                         await client.send('Debugger.setBreakpointsActive', { active: false });
-                        await client.send('Debugger.setSkipAllPauses', { skip: true }); // 跳過所有 debugger 暫停
-                        console.log('🛡️ CDP Debugger disabled (with setSkipAllPauses)');
+                        await client.send('Debugger.setSkipAllPauses', { skip: true });
                     } catch (e) {
-                        console.log('⚠️ Failed to disable debugger via CDP:', e.message);
+                        // Silent fail
                     }
 
-                    // 監聽 console 訊息（偵錯用）
-                    page.on('console', msg => {
-                        const text = msg.text();
-                        // 過濾掉一般訊息，只顯示與 devtool 相關的
-                        if (text.includes('devtool') || text.includes('detect') || text.includes('🛡️') || 
-                            text.includes('blocked') || text.includes('error') || text.includes('Error')) {
-                            console.log('📋 Console:', msg.type(), text);
-                        }
-                    });
-                    
-                    // 監聽頁面錯誤
-                    page.on('pageerror', error => {
-                        console.log('❌ Page error:', error.message);
-                    });
-
-                    // 設定視窗大小為 1920x1080（模擬桌面瀏覽器）
                     await page.setViewport({ width: 1920, height: 1080 });
-
-                    // 設定 User Agent，模擬真實的瀏覽器請求
                     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-                    
-                    // 攔截並阻止跳轉到 disable-devtool 頁面（加強版）
+
+                    // 🛡️ Anti-detection and disable-devtool bypass (enhanced)
                     await page.setRequestInterception(true);
                     page.on('request', (request) => {
                         const url = request.url().toLowerCase();
-                        const isNav = request.isNavigationRequest() && request.frame() === page.mainFrame();
-                        
-                        // 檢測是否為 disable-devtool 相關資源（包含各種 CDN）
                         const isDisableDevtool = 
                             url.includes('disable-devtool') || 
                             url.includes('theajack.github.io') ||
@@ -296,166 +171,72 @@ class ScrapeBrowser1BetDomDetail extends Command
                             url.includes('console-ban');
                         
                         if (isDisableDevtool) {
-                            if (isNav) {
-                                console.log('🛡️ Blocked navigation request to error page, staying on app');
-                                request.respond({
-                                    status: 204,
-                                    body: ''
-                                });
+                            if (request.isNavigationRequest()) {
+                                request.respond({ status: 204, body: '' });
                             } else {
-                                console.log('🛡️ Blocked script/resource request to:', url);
                                 request.respond({
                                     status: 200,
                                     contentType: 'text/javascript',
-                                    body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; window.devtoolsDetector = { launch: () => {}, stop: () => {}, isLaunch: () => false }; console.log("🛡️ DisableDevtool blocked via request interception");'
+                                    body: 'window.DisableDevtool = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: "0.3.7" }; window.devtoolsDetector = { launch: () => {}, stop: () => {}, isLaunch: () => false };'
                                 });
                             }
                         } else {
                             request.continue();
                         }
                     });
-                    
-                    // 監聽頁面跳轉，防止被重定向
-                    page.on('framenavigated', async (frame) => {
-                        const url = frame.url();
-                        if (url.includes('disable-devtool') || url.includes('theajack.github.io') || url.includes('chrome-error://')) {
-                            console.log('🛡️ Detected navigation to disable-devtool, blocking...');
-                            
-                            // 立即重新注入防護代碼
-                            try {
-                                await page.evaluate(() => {
-                                    try {
-                                        const mock = { isSuspend: true, init: () => {}, suspend: () => {}, resume: () => {}, md5: (s) => s, version: '0.3.7' };
-                                        Object.defineProperty(window, 'DisableDevtool', { get: () => mock, set: () => {}, configurable: false });
-                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-                                        
-                                        // 阻止導航
-                                        const blockNav = (url) => (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io')));
-                                        const oAssign = window.location.assign;
-                                        window.location.assign = function(u) { if (!blockNav(u)) oAssign.call(window.location, u); };
-                                        const oReplace = window.location.replace;
-                                        window.location.replace = function(u) { if (!blockNav(u)) oReplace.call(window.location, u); };
-                                        console.log('🛡️ Emergency protection injected');
-                                    } catch (e) {}
-                                });
-                            } catch (e) {
-                                console.log('⚠️ Failed to inject emergency protection:', e.message);
-                            }
-                        }
-                    });
-                    
-                    // 隱藏自動化特徵 + 繞過 disable-devtool + 語言注入
+
                     await page.evaluateOnNewDocument((l) => {
-                        // 1. 語言注入
+                        // Bypass webdriver detection
+                        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                        window.chrome = { runtime: {} };
+                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
+                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
+
+                        // 🛡️ Prevent window closure and blank redirects
+                        window.close = function() { };
+                        window.open = function() { return null; };
+                        
+                        // Language injection
                         try {
-                            var v = (l && String(l) !== 'null' && String(l) !== '') ? l : 'zh-TW';
-                            var keys = ['lang', 'locale', 'language', 'i18n', 'user-lang', 'site_lang'];
-                            keys.forEach(function(k) {
-                                try { sessionStorage.setItem(k, v); } catch (e) {}
-                                try { localStorage.setItem(k, v); } catch (e) {}
+                            const v = l || 'zh-TW';
+                            ['lang', 'locale', 'language'].forEach(k => {
+                                sessionStorage.setItem(k, v);
+                                localStorage.setItem(k, v);
                             });
                         } catch (e) {}
 
-                        // 2. 隱藏 webdriver 屬性
-                        try {
-                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                        } catch (e) {}
-                        
-                        // 3. 偽造 chrome 對象
-                        try {
-                            if (!window.chrome) {
-                                window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
-                            }
-                        } catch (e) {}
-                        
-                        // 4. 繞過與偽裝 disable-devtool 物件
-                        // 1. 完全禁用 DisableDevtool
+                        // 🛡️ DisableDevtool Mock
                         const mock = {
                             isSuspend: true,
-                            init: () => { console.log('🛡️ DisableDevtool.init called (mocked)'); },
-                            suspend: () => { console.log('🛡️ DisableDevtool.suspend called (mocked)'); },
-                            resume: () => { console.log('🛡️ DisableDevtool.resume called (mocked)'); },
+                            init: () => { },
+                            suspend: () => { },
+                            resume: () => { },
                             md5: (s) => s,
                             version: '0.3.7'
                         };
-                        try {
-                            Object.defineProperty(window, 'DisableDevtool', {
-                                get: () => mock,
-                                set: () => {},
-                                configurable: false
-                            });
-                        } catch (e) {}
+                        Object.defineProperty(window, 'DisableDevtool', {
+                            get: () => mock,
+                            set: () => {},
+                            configurable: false
+                        });
 
-                        // 2. 移除一些常見的自動化特徵
-                        try {
-                            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                        } catch (e) {}
+                        // 🛡️ Function constructor bypass for debugger
+                        const oConstructor = Function.prototype.constructor;
+                        Function.prototype.constructor = function(str) {
+                            if (str && (str.includes('debugger') || str.includes('debug'))) {
+                                return function() {};
+                            }
+                            return oConstructor.apply(this, arguments);
+                        };
 
-                        // 3. 偽裝 Chrome 相關屬性
-                        window.chrome = { runtime: {} };
-
-                        // 4. 偽造視窗尺寸，防止被檢測出正在開發者模式
-                        try {
-                            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-                            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-                        } catch (e) {}
-
-                        // 5. 語言注入
-                        try {
-                            Object.defineProperty(navigator, 'languages', { get: () => [lang || 'zh-CN', 'zh', 'en'] });
-                        } catch (e) {}
-
-                        // 6. 覆寫 Function 建構函式以阻斷 debugger 語句
-                        try {
-                            const originalConstructor = Function.prototype.constructor;
-                            Function.prototype.constructor = function(str) {
-                                if (str && (str.includes('debugger') || str.includes('debug'))) {
-                                    return function() {};
-                                }
-                                return originalConstructor.apply(this, arguments);
-                            };
-                        } catch (e) {}
-
-                        // 7. 攔截 RegExp 以防止探針
-                        try {
-                            const originalRegExpToString = RegExp.prototype.toString;
-                            RegExp.prototype.toString = function() {
-                                if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
-                                return originalRegExpToString.call(this);
-                            };
-                        } catch (e) {}
-
-                        // 8. 攔截 console 以防止除錯工具偵測
-                        try {
-                            const methods = ['log', 'debug', 'info', 'warn', 'error', 'table', 'clear'];
-                            methods.forEach(m => {
-                                const original = console[m];
-                                if (original) {
-                                    console[m] = function() {
-                                        if (arguments.length > 0 && typeof arguments[0] === 'string' && (arguments[0].includes('devtool') || arguments[0].includes('detect'))) return;
-                                        return original.apply(console, arguments);
-                                    };
-                                }
-                            });
-                        } catch (e) {}
-
-                        // 9. 阻止跳轉到 disable-devtool
-                        try {
-                            const blockUrl = (url) => {
-                                if (typeof url === 'string' && (url.includes('disable-devtool') || url.includes('theajack.github.io'))) {
-                                    console.log('🛡️ Blocked navigation in evaluateOnNewDocument');
-                                    return true;
-                                }
-                                return false;
-                            };
-                            const originalAssign = window.location.assign;
-                            window.location.assign = function(url) { if (!blockUrl(url)) originalAssign.call(window.location, url); };
-                            const originalReplace = window.location.replace;
-                            window.location.replace = function(url) { if (!blockUrl(url)) originalReplace.call(window.location, url); };
-                        } catch (e) {}
+                        // 🛡️ RegExp bypass for probes
+                        const oRegExpToString = RegExp.prototype.toString;
+                        RegExp.prototype.toString = function() {
+                            if (this.source === '(?=a)b') return 'function RegExp() { [native code] }';
+                            return oRegExpToString.call(this);
+                        };
                         
-                        // 10. 攔截 Performance API 時間測量（防止 console.log 時間檢測）
+                        // 🛡️ 【關鍵】Performance API 時間隨機化 - 防止 type=6 檢測
                         try {
                             const originalNow = performance.now.bind(performance);
                             performance.now = function() {
@@ -463,42 +244,38 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        // 11. 完全禁用 eval 和 Function 中的 debugger
+                        // 🛡️ 【關鍵】覆寫 console 方法 - 防止 type=6 時間測量檢測
                         try {
-                            const originalEval = window.eval;
-                            window.eval = function(code) {
-                                if (typeof code === 'string') {
-                                    code = code.replace(/debugger/g, '');
-                                }
-                                return originalEval.call(this, code);
+                            const originalConsole = {
+                                log: console.log.bind(console),
+                                table: console.table.bind(console),
+                                warn: console.warn.bind(console),
+                                error: console.error.bind(console),
+                                clear: console.clear.bind(console)
+                            };
+                            
+                            // 快速返回，不讓 console.log 觸發時間差異
+                            console.log = function() {
+                                // 使用 setTimeout 延遲執行，避免時間測量
+                                const args = Array.from(arguments);
+                                setTimeout(() => originalConsole.log.apply(console, args), 0);
+                            };
+                            console.table = function() {
+                                const args = Array.from(arguments);
+                                setTimeout(() => originalConsole.table.apply(console, args), 0);
+                            };
+                            console.clear = function() {
+                                setTimeout(() => originalConsole.clear(), 0);
                             };
                         } catch (e) {}
                         
-                        // 12. 攔截 setInterval/setTimeout（阻止檢測循環）
-                        try {
-                            const originalSetInterval = window.setInterval;
-                            window.setInterval = function(callback, delay) {
-                                if (typeof callback === 'function' && typeof delay === 'number' && delay <= 500) {
-                                    // 可能是檢測循環，返回空操作
-                                    const str = callback.toString();
-                                    if (str.includes('devtool') || str.includes('debugger') || str.includes('outerWidth') || str.includes('outerHeight')) {
-                                        console.log('🛡️ Blocked suspicious setInterval');
-                                        return originalSetInterval(function() {}, delay);
-                                    }
-                                }
-                                return originalSetInterval.apply(this, arguments);
-                            };
-                        } catch (e) {}
-                        
-                        // 13. 防止頁面被清空（innerHTML = '' 或 document.write）
+                        // 🛡️ 防止頁面被清空（innerHTML = ''）
                         try {
                             const originalInnerHTMLDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
                             Object.defineProperty(Element.prototype, 'innerHTML', {
                                 set: function(value) {
-                                    // 如果嘗試清空 body 或 html，阻止它
                                     if ((this === document.body || this === document.documentElement) && 
                                         (value === '' || value === ' ' || value.length < 10)) {
-                                        console.log('🛡️ Blocked attempt to clear page content');
                                         return;
                                     }
                                     return originalInnerHTMLDescriptor.set.call(this, value);
@@ -510,26 +287,18 @@ class ScrapeBrowser1BetDomDetail extends Command
                             });
                         } catch (e) {}
                         
-                        // 14. 防止 document.write 清空頁面
+                        // 🛡️ 防止 document.write 清空頁面
                         try {
-                            const originalWrite = document.write;
+                            const originalWrite = document.write.bind(document);
                             document.write = function(content) {
                                 if (!content || content.length < 10) {
-                                    console.log('🛡️ Blocked suspicious document.write');
                                     return;
                                 }
-                                return originalWrite.apply(this, arguments);
+                                return originalWrite(content);
                             };
                         } catch (e) {}
                         
-                        // 15. 攔截 window.close
-                        try {
-                            window.close = function() {
-                                console.log('🛡️ Blocked window.close attempt');
-                            };
-                        } catch (e) {}
-                        
-                        // 16. 偽裝 devtoolsDetector（另一個常見的檢測套件）
+                        // 🛡️ 偽裝 devtoolsDetector
                         try {
                             window.devtoolsDetector = {
                                 launch: () => {},
@@ -540,895 +309,578 @@ class ScrapeBrowser1BetDomDetail extends Command
                             };
                         } catch (e) {}
                         
-                        console.log('🛡️ Advanced anti-detection activated (with stealth)');
+                        // 🛡️ 攔截 setInterval（阻止檢測循環）
+                        try {
+                            const originalSetInterval = window.setInterval;
+                            window.setInterval = function(callback, delay) {
+                                if (typeof callback === 'function' && typeof delay === 'number' && delay <= 500) {
+                                    const str = callback.toString();
+                                    if (str.includes('devtool') || str.includes('debugger') || str.includes('outerWidth') || str.includes('outerHeight') || str.includes('console')) {
+                                        return originalSetInterval(function() {}, delay);
+                                    }
+                                }
+                                return originalSetInterval.apply(this, arguments);
+                            };
+                        } catch (e) {}
                     }, $langJs);
+                    
+                    await page.goto($domainJs, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-                    // 移除 JSON 編碼的引號
-                    const targetUrl = $domainJs.replace(/^"|"\$/g, '');
-                    
-                    console.log('🌐 Navigating to target URL: ' + targetUrl);
-                    
-                    // 導航到目標 URL，使用多種策略處理重定向
-                    let navigationSuccess = false;
-                    
-                    // 策略 1: 嘗試正常導航
+                    // Perform login
                     try {
-                        await page.goto(targetUrl, {
-                            waitUntil: 'domcontentloaded',
-                            timeout: 30000
-                        });
-                        navigationSuccess = true;
-                        console.log('✅ Navigation completed (domcontentloaded)');
-                    } catch (e) {
-                        console.log('⚠️  Navigation failed: ' + e.message);
+                        $loginCode
+                    } catch (loginError) {
+                        // Silent - might be okay if navigated
+                    }
+
+                    const targetUrl = $redirectUrlJs;
+                    const currentUrl = page.url();
+                    if (!currentUrl.includes('#/gameOrder') && currentUrl !== targetUrl) {
+                        console.log('🌐 Navigating to target URL: ' + targetUrl);
+                        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => {});
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 5000));
+
+                    // Initialize screenshots list
+                    const screenshots = {};
+                    const registerScreenshot = async (name, filename) => {
+                        const scPath = path.join(workingDir, filename);
+                        try {
+                            await page.screenshot({ path: scPath, fullPage: true });
+                            screenshots[name] = scPath;
+                        } catch (e) {
+                            // Silent fail
+                        }
+                    };
+
+                    // Form Filling logic with retry for "Execution context was destroyed"
+                    let formFilled = false;
+                    let fillAttempts = 0;
+                    while (!formFilled && fillAttempts < 3) {
+                        fillAttempts++;
                         
-                        if (e.message.includes('ERR_TOO_MANY_REDIRECTS')) {
-                            console.log('   Redirect loop detected, trying alternative method...');
-                            
-                            // 策略 2: 使用 evaluate 直接設置 URL
-                            try {
-                                await page.evaluate((url) => {
-                                    window.location.href = url;
-                                }, targetUrl);
+                        try {
+                            if (page.url() === 'about:blank') {
+                                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                                await new Promise(r => setTimeout(r, 3000));
+                            }
+
+                            // Account Number
+                            const accountNumber = $accountNumberJs;
+                            if (accountNumber && accountNumber !== 'null') {
+                                const accInput = await page.waitForSelector('input[placeholder="Please enter player account"]', { timeout: 10000 });
+                                await accInput.focus();
+                                await page.keyboard.down('Control');
+                                await page.keyboard.press('A');
+                                await page.keyboard.up('Control');
+                                await page.keyboard.press('Backspace');
+                                await page.keyboard.type(accountNumber, { delay: 50 });
+                            }
+
+                            // Date Range
+                            const dateStart = $dateStartJs;
+                            const dateEnd = $dateEndJs;
+                            if ((dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null')) {
+                                const datePicker = await page.waitForSelector('input.el-range-input[placeholder="Start date time"], .el-date-editor--datetimerange', { timeout: 10000 });
+                                await datePicker.click();
+                                await new Promise(r => setTimeout(r, 2000));
                                 
-                                // 等待頁面載入
-                                await page.waitForNavigation({
-                                    waitUntil: 'domcontentloaded',
-                                    timeout: 30000
-                                }).catch(() => {
-                                    console.log('   Navigation wait timeout, but continuing...');
+                                if (dateStart && dateStart !== 'null') {
+                                    const startInput = await page.waitForSelector('input[placeholder="Start Date"]', { timeout: 5000 });
+                                    await startInput.focus();
+                                    await startInput.evaluate(el => el.select());
+                                    await page.keyboard.press('Backspace');
+                                    await page.keyboard.type(dateStart, { delay: 50 });
+                                    await startInput.evaluate(el => {
+                                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    });
+                                }
+                                if (dateEnd && dateEnd !== 'null') {
+                                    const endInput = await page.waitForSelector('input[placeholder="End Date"]', { timeout: 5000 });
+                                    await endInput.focus();
+                                    await endInput.evaluate(el => el.select());
+                                    await page.keyboard.press('Backspace');
+                                    await page.keyboard.type(dateEnd, { delay: 50 });
+                                    await endInput.evaluate(el => {
+                                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                                    });
+                                }
+
+                                // Click OK
+                                await page.evaluate(() => {
+                                    const okBtn = Array.from(document.querySelectorAll('button.el-button')).find(b => b.textContent.trim() === 'OK');
+                                    if (okBtn) okBtn.click();
                                 });
-                                
-                                navigationSuccess = true;
-                                console.log('✅ Navigation completed (alternative method)');
-                            } catch (e2) {
-                                console.log('⚠️  Alternative method failed: ' + e2.message);
-                                // 即使失敗也繼續，等待頁面載入
-                                await new Promise(resolve => setTimeout(resolve, 5000));
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
+
+                            formFilled = true;
+                        } catch (e) {
+                            if (e.message.includes('destroyed') || e.message.includes('navigation')) {
+                                await new Promise(r => setTimeout(r, 2000));
+                            } else {
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
+                        }
+                    }
+
+                    // Query
+                    try {
+                        await page.evaluate(() => {
+                            const queryBtn = Array.from(document.querySelectorAll('button.el-button--primary')).find(b => {
+                                const text = b.textContent.trim().toLowerCase();
+                                return text === 'query' || text === '查询' || text === '查詢';
+                            });
+                            if (queryBtn) queryBtn.click();
+                        });
+                        await new Promise(r => setTimeout(r, 5000));
+                    } catch (e) {
+                        // Silent fail
+                    }
+
+                    // Take final screenshot
+                    await registerScreenshot('final', '1bet_final.png');
+                    
+                    // 取得表頭（只需要一次）
+                    const headers = await page.evaluate(() => {
+                        const headerTable = document.querySelector('.el-table__header');
+                        if (!headerTable) return [];
+                        return Array.from(headerTable.querySelectorAll('th')).map(th => th.textContent.trim());
+                    });
+                    
+                    // 提取單頁資料的函數
+                    const extractPageData = async () => {
+                        return await page.evaluate(() => {
+                            const bodyTable = document.querySelector('.el-table__body');
+                            if (!bodyTable) return [];
+                            
+                            const headerTable = document.querySelector('.el-table__header');
+                            const headers = Array.from(headerTable?.querySelectorAll('th') || []).map(th => th.textContent.trim());
+                            
+                            return Array.from(bodyTable.querySelectorAll('tr')).map(tr => {
+                                const cells = Array.from(tr.querySelectorAll('td'));
+                                const rowData = {};
+                                cells.forEach((td, i) => {
+                                    const key = headers[i] || 'col_' + i;
+                                    rowData[key] = td.textContent.trim();
+                                });
+                                return rowData;
+                            }).filter(row => Object.keys(row).length > 0); // 過濾空行
+                        });
+                    };
+                    
+                    // 取得分頁資訊（包含偵錯）
+                    const getPaginationInfo = async () => {
+                        return await page.evaluate(() => {
+                            // 嘗試多種選擇器找分頁元件
+                            const paginationBox = document.querySelector('.pagination-box') || 
+                                                document.querySelector('.el-pagination') ||
+                                                document.querySelector('[class*="pagination"]');
+                            
+                            if (!paginationBox) {
+                                return { found: false, currentPage: 1, totalPages: 1, totalRecords: 0, perPage: 10 };
+                            }
+                            
+                            // 偵錯：列出分頁元件的 HTML 結構
+                            const paginationHTML = paginationBox.innerHTML.substring(0, 500);
+                            
+                            // 嘗試找到總記錄數
+                            let totalRecords = 0;
+                            const totalEl = paginationBox.querySelector('.el-pagination__total, [class*="total"]');
+                            if (totalEl) {
+                                const match = totalEl.textContent.match(/\\d+/);
+                                if (match) totalRecords = parseInt(match[0]);
+                            }
+                            
+                            // 嘗試找到每頁筆數
+                            let perPage = 10;
+                            const sizeEl = paginationBox.querySelector('.el-pagination__sizes, [class*="sizes"]');
+                            if (sizeEl) {
+                                const match = sizeEl.textContent.match(/\\d+/);
+                                if (match) perPage = parseInt(match[0]);
+                            }
+                            
+                            // 計算總頁數
+                            const totalPages = totalRecords > 0 ? Math.ceil(totalRecords / perPage) : 1;
+                            
+                            // 找當前頁
+                            let currentPage = 1;
+                            const activeEl = paginationBox.querySelector('.el-pager li.active, .el-pager li.is-active, .number.active, [class*="active"]');
+                            if (activeEl) {
+                                const num = parseInt(activeEl.textContent);
+                                if (!isNaN(num)) currentPage = num;
+                            }
+                            
+                            // 找下一頁按鈕
+                            const nextBtn = paginationBox.querySelector('.btn-next') || 
+                                        paginationBox.querySelector('.el-pagination__next') ||
+                                        paginationBox.querySelector('button.btn-next') ||
+                                        paginationBox.querySelector('[class*="next"]');
+                            const hasNextBtn = !!nextBtn;
+                            const nextBtnDisabled = nextBtn ? (nextBtn.disabled || nextBtn.classList.contains('disabled') || nextBtn.classList.contains('is-disabled')) : true;
+                            
+                            return { 
+                                found: true, 
+                                currentPage, 
+                                totalPages, 
+                                totalRecords, 
+                                perPage,
+                                hasNextBtn,
+                                nextBtnDisabled,
+                                paginationHTML
+                            };
+                        });
+                    };
+                    
+                    // 檢查是否有下一頁
+                    const hasNextPage = async () => {
+                        return await page.evaluate(() => {
+                            const paginationBox = document.querySelector('.pagination-box') || 
+                                                document.querySelector('.el-pagination') ||
+                                                document.querySelector('[class*="pagination"]');
+                            if (!paginationBox) return false;
+                            
+                            // 嘗試多種選擇器
+                            const nextBtn = paginationBox.querySelector('.btn-next') || 
+                                        paginationBox.querySelector('.el-pagination__next') ||
+                                        paginationBox.querySelector('button.btn-next') ||
+                                        paginationBox.querySelector('[class*="next"]:not([class*="prev"])');
+                            
+                            if (!nextBtn) return false;
+                            
+                            // 檢查是否被禁用
+                            const isDisabled = nextBtn.disabled || 
+                                            nextBtn.classList.contains('disabled') || 
+                                            nextBtn.classList.contains('is-disabled') ||
+                                            nextBtn.getAttribute('disabled') !== null;
+                            
+                            return !isDisabled;
+                        });
+                    };
+                    
+                    // 點擊下一頁
+                    const clickNextPage = async () => {
+                        const clicked = await page.evaluate(() => {
+                            const paginationBox = document.querySelector('.pagination-box') || 
+                                                document.querySelector('.el-pagination') ||
+                                                document.querySelector('[class*="pagination"]');
+                            if (!paginationBox) return false;
+                            
+                            const nextBtn = paginationBox.querySelector('.btn-next') || 
+                                        paginationBox.querySelector('.el-pagination__next') ||
+                                        paginationBox.querySelector('button.btn-next') ||
+                                        paginationBox.querySelector('[class*="next"]:not([class*="prev"])');
+                            
+                            if (nextBtn && !nextBtn.disabled) {
+                                nextBtn.click();
+                                return true;
+                            }
+                            return false;
+                        });
+                        
+                        if (clicked) {
+                            // 等待資料載入
+                            await new Promise(r => setTimeout(r, 1000));
+                        }
+                        return clicked;
+                    };
+                    
+                    // 開始分頁爬取
+                    let allData = [];
+                    let pageNum = 1;
+                    const maxPages = 600; // 安全限制，最多爬 600 頁（足夠 4813 筆，每頁 10 筆 = 482 頁）
+                    
+                    // 先取得分頁資訊
+                    const paginationInfo = await getPaginationInfo();
+                    
+                    // 如果找到總記錄數，計算預期頁數
+                    const expectedPages = paginationInfo.totalRecords > 0 
+                        ? Math.ceil(paginationInfo.totalRecords / paginationInfo.perPage) 
+                        : maxPages;
+                    
+                    // 類似 OMG 的輸出格式
+                    console.log('📄 Scraping ' + expectedPages + ' pages (' + paginationInfo.totalRecords + ' records)...');
+                    
+                    let consecutiveEmptyPages = 0;
+                    const maxConsecutiveEmpty = 3;
+                    const maxRetries = 3;
+                    
+                    while (pageNum <= Math.min(maxPages, expectedPages + 5)) {
+                        // 提取當前頁資料（含重試機制）
+                        let pageData = [];
+                        let retryCount = 0;
+                        
+                        while (retryCount < maxRetries) {
+                            pageData = await extractPageData();
+                            
+                            if (pageData.length > 0) {
+                                break;
+                            }
+                            
+                            retryCount++;
+                            if (retryCount < maxRetries) {
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
+                        }
+                        
+                        if (pageData.length === 0) {
+                            consecutiveEmptyPages++;
+                            
+                            if (consecutiveEmptyPages >= maxConsecutiveEmpty) {
+                                console.log('⚠️ Too many failed pages, stopping pagination');
+                                break;
+                            }
+                            
+                            // 重試機制（類似 OMG）
+                            if (pageNum <= 3) {
+                                console.log('⏳ Retrying page ' + pageNum + '...');
+                                await new Promise(r => setTimeout(r, 1000));
+                                pageData = await extractPageData();
+                                if (pageData.length > 0) {
+                                    consecutiveEmptyPages = 0;
+                                    allData = allData.concat(pageData);
+                                }
                             }
                         } else {
-                            // 其他錯誤，等待一下讓頁面有機會載入
-                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            consecutiveEmptyPages = 0;
+                            allData = allData.concat(pageData);
+                        }
+                        
+                        // 檢查是否有下一頁
+                        const canGoNext = await hasNextPage();
+                        if (!canGoNext) {
+                            break;
+                        }
+                        
+                        // 點擊下一頁
+                        const clicked = await clickNextPage();
+                        if (!clicked) {
+                            break;
+                        }
+                        
+                        pageNum++;
+                        
+                        // 每 200 頁休息一下，避免被檢測
+                        if (pageNum % 200 === 0) {
+                            await new Promise(r => setTimeout(r, 1000));
                         }
                     }
                     
-                    // 等待頁面完全載入
-                    console.log('⏳ Waiting for page to fully render...');
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    // 類似 OMG 的總結輸出
+                    console.log('\\n✅ Total scraped: ' + allData.length + ' rows from ' + pageNum + ' pages');
                     
-                    // 檢查頁面是否真正載入
-                    let pageLoaded = false;
-                    let currentUrl = '';
-                    let retryCount = 0;
-                    const maxRetries = 5;
-                    
-                    while (!pageLoaded && retryCount < maxRetries) {
-                        try {
-                            currentUrl = page.url();
-                            console.log('📍 Current URL (attempt ' + (retryCount + 1) + '): ' + currentUrl);
-                            
-                            // 檢查頁面是否有內容
-                            const pageInfo = await page.evaluate(() => {
-                                return {
-                                    url: window.location.href,
-                                    title: document.title,
-                                    hasBody: !!document.body,
-                                    bodyTextLength: document.body ? document.body.innerText.length : 0,
-                                    inputCount: document.querySelectorAll('input').length,
-                                    hasAccountInput: !!document.querySelector('input.el-input__inner[placeholder="请输入账号"]'),
-                                    hasPasswordInput: !!document.querySelector('input.el-input__inner[placeholder="请输入密码"]')
-                                };
-                            });
-                            
-                            // 如果 URL 不是 about:blank 且有內容，認為頁面已載入
-                            if (currentUrl !== 'about:blank' && currentUrl !== '' && pageInfo.hasBody && pageInfo.bodyTextLength > 0) {
-                                pageLoaded = true;
-                                console.log('✅ Page loaded successfully!');
-                                console.log('   Title: ' + pageInfo.title);
-                                console.log('   Body text length: ' + pageInfo.bodyTextLength);
-                                console.log('   Input count: ' + pageInfo.inputCount);
-                                console.log('   Has account input: ' + pageInfo.hasAccountInput);
-                                console.log('   Has password input: ' + pageInfo.hasPasswordInput);
-                                break;
-                            } else {
-                                console.log('⚠️  Page not fully loaded yet, waiting...');
-                                console.log('   URL: ' + pageInfo.url);
-                                console.log('   Has body: ' + pageInfo.hasBody);
-                                console.log('   Body text length: ' + pageInfo.bodyTextLength);
-                                
-                                // 如果還是空白頁面，嘗試重新導航
-                                if (currentUrl === 'about:blank' || currentUrl === '') {
-                                    console.log('   Attempting to navigate again...');
-                                    try {
-                                        await page.goto(targetUrl, {
-                                            waitUntil: 'domcontentloaded',
-                                            timeout: 30000
-                                        });
-                                    } catch (e) {
-                                        console.log('   Navigation retry failed: ' + e.message);
-                                    }
-                                }
-                                
-                                retryCount++;
-                                await new Promise(resolve => setTimeout(resolve, 3000));
-                            }
-                        } catch (e) {
-                            console.log('⚠️  Error checking page: ' + e.message);
-                            retryCount++;
-                            await new Promise(resolve => setTimeout(resolve, 3000));
-                        }
-                    }
-                    
-                    if (!pageLoaded) {
-                        console.log('❌ Page failed to load after ' + maxRetries + ' attempts');
-                        console.log('   Final URL: ' + currentUrl);
-                        throw new Error('Page failed to load. URL: ' + currentUrl);
-                    }
-                    
-                    // 截圖 1: 頁面載入完成後
-                    console.log('📸 Step 0: Taking screenshot after page loaded...');
-                    const screenshot0Path = path.join(workingDir, '1bet_step0_page_loaded.png');
-                    await page.screenshot({
-                        path: screenshot0Path,
-                        fullPage: true
-                    });
-                    console.log('✅ Screenshot saved: ' + screenshot0Path);
-                    
-                    // 設置 site_lang cookie（evaluateOnNewDocument 已注入 sessionStorage.lang，這裡用同一值）
-                    try {
-                        const langForCookie = await page.evaluate(() => (sessionStorage.getItem('lang') || localStorage.getItem('lang') || 'zh-TW'));
-                        const curl = await page.url();
-                        const u = new URL(curl);
-                        if (u.hostname) {
-                            await page.setCookie({ name: 'site_lang', value: langForCookie, domain: u.hostname, path: '/' });
-                        }
-                    } catch (e) { console.log('⚠️  site_lang cookie: ' + (e.message || e)); }
-                    
-                    // 1BET 登入流程（使用 trait 方法）
-                    {$loginCode}
-
-                    // 提取表格資料的函數（模仿 GLC：table.el-table__header / el-table__body）
-                    const extractTableData = async (pageObject) => {
-                        return await pageObject.evaluate(() => {
-                            let headerTable = document.querySelector('table.el-table__header');
-                            let bodyTable = document.querySelector('table.el-table__body');
-                            let table = document.querySelector('table.el-table');
-                            if (!table && !headerTable) {
-                                const allTables = document.querySelectorAll('table');
-                                for (let t of allTables) {
-                                    if (t.className && (t.className.includes('el-table') || t.className.includes('el-table__header') || t.className.includes('el-table__body'))) {
-                                        if (t.className.includes('el-table__header')) headerTable = t;
-                                        else if (t.className.includes('el-table__body')) bodyTable = t;
-                                        else if (!table) table = t;
-                                    }
-                                }
-                            }
-                            if (!table && !headerTable && !bodyTable) {
-                                const el = document.querySelector('.el-table, .el-table__header, .el-table__body, [class*="el-table"]');
-                                if (el) {
-                                    let p = el.parentElement;
-                                    while (p && p.tagName !== 'TABLE') p = p.parentElement;
-                                    if (p && p.tagName === 'TABLE') {
-                                        if (p.className.includes('el-table__header')) headerTable = p;
-                                        else if (p.className.includes('el-table__body')) bodyTable = p;
-                                        else table = p;
-                                    } else if (el.tagName === 'TABLE') {
-                                        if (el.className.includes('el-table__header')) headerTable = el;
-                                        else if (el.className.includes('el-table__body')) bodyTable = el;
-                                        else table = el;
-                                    }
-                                }
-                            }
-                            if (!table && !headerTable && !bodyTable) {
-                                return { found: false, error: 'Table el-table not found' };
-                            }
-                            let headers = [];
-                            let thead = (headerTable && headerTable.querySelector('thead')) || (table && table.querySelector('thead'));
-                            if (thead) {
-                                const hrs = thead.querySelectorAll('tr');
-                                if (hrs.length > 0) {
-                                    const hcs = hrs[0].querySelectorAll('th, td');
-                                    headers = Array.from(hcs).map(cell => {
-                                        const d = cell.querySelector('div.cell');
-                                        return d ? d.textContent.trim() : cell.textContent.trim();
-                                    });
-                                }
-                            } else {
-                                const src = headerTable || table;
-                                if (src) {
-                                    const fr = src.querySelector('tr');
-                                    if (fr) {
-                                        const hcs = fr.querySelectorAll('th, td');
-                                        headers = Array.from(hcs).map(cell => {
-                                            const d = cell.querySelector('div.cell');
-                                            return d ? d.textContent.trim() : cell.textContent.trim();
-                                        });
-                                    }
-                                }
-                            }
-                            let rows = [], dataStartIndex = 0, tbody = null;
-                            if (bodyTable) {
-                                tbody = bodyTable.querySelector('tbody');
-                                rows = tbody ? Array.from(tbody.querySelectorAll('tr')) : Array.from(bodyTable.querySelectorAll('tr'));
-                            } else if (table) {
-                                tbody = table.querySelector('tbody');
-                                rows = tbody ? Array.from(tbody.querySelectorAll('tr')) : Array.from(table.querySelectorAll('tr'));
-                                if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) dataStartIndex = 1;
-                            }
-                            const dataRows = rows.slice(dataStartIndex).map((row, ri) => {
-                                const cells = Array.from(row.querySelectorAll('td'));
-                                const rowData = {};
-                                if (headers && headers.length > 0) {
-                                    headers.forEach((h, ci) => {
-                                        let ch = (h || '').replace(/[^\\w\\u4e00-\\u9fa5]/g, '_').replace(/^_+|_+$/g, '') || ('column_' + ci);
-                                        let fh = ch; let c = 1;
-                                        while (rowData.hasOwnProperty(fh)) { fh = ch + '_' + c; c++; }
-                                        let cv = null;
-                                        if (cells[ci]) { const d = cells[ci].querySelector('div.cell'); cv = d ? d.textContent.trim() : cells[ci].textContent.trim(); }
-                                        rowData[fh] = cv;
-                                    });
-                                } else {
-                                    cells.forEach((c, ci) => { const d = c.querySelector('div.cell'); rowData['column_' + ci] = (d || c) ? (d ? d.textContent.trim() : c.textContent.trim()) : null; });
-                                }
-                                rowData._rowIndex = ri;
-                                return rowData;
-                            }).filter(rd => { const v = Object.values(rd)[0]; return v !== '小計' && v !== '總計'; });
-                            const ft = bodyTable || table || headerTable;
-                            return { found: true, tableClass: ft ? ft.className : null, headers, headerCount: headers.length, rowCount: dataRows.length, data: dataRows };
-                        });
+                    // 構建類似 OMG 的資料結構
+                    const timestamp = new Date().toISOString();
+                    const mergedData = {
+                        metadata: {
+                            timestamp: timestamp,
+                            url: targetUrl,
+                            queryParams: {
+                                date_start: $dateStartJs || null,
+                                date_end: $dateEndJs || null,
+                                account_number: $accountNumberJs || null
+                            },
+                            totalPages: pageNum,
+                            totalRows: allData.length
+                        },
+                        headers: headers,
+                        data: allData
                     };
 
-                    // 先尋找並框起 Date time 欄位（.el-date-editor--datetimerange 內 input[placeholder="Start date time"]），再將 date_start 填入該 input
-                    const dateTimeFieldInfo = await page.evaluate(() => {
-                        const info = { found: false, by: null, tagName: '', className: '', placeholder: '', id: '', name: '', value: '' };
-                        // 1) 找文字包含 "Date time:" 或 "Date time" 的節點，再找其後的 input / .el-date-editor
-                        const walk = (el) => {
-                            if (!el || el.nodeType !== 1) return null;
-                            const t = (el.textContent || '').trim();
-                            if (/Date\s*time\s*:?/i.test(t) && (el.tagName === 'LABEL' || el.tagName === 'SPAN' || el.tagName === 'DIV' || el.tagName === 'TD' || el.tagName === 'TH')) {
-                                let n = el.nextElementSibling;
-                                while (n) {
-                                    if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA' || n.classList.contains('el-date-editor') || n.querySelector?.('input, .el-date-editor')) {
-                                        const inp = n.tagName === 'INPUT' ? n : n.querySelector('input.el-input__inner, input');
-                                        return inp || n;
-                                    }
-                                    n = n.nextElementSibling;
-                                }
-                                n = el.parentElement?.nextElementSibling;
-                                if (n) {
-                                    const inp = n.querySelector?.('input, .el-date-editor') || (n.tagName === 'INPUT' ? n : null);
-                                    if (inp) return inp.tagName === 'INPUT' ? inp : inp.querySelector?.('input') || inp;
-                                }
-                                const inParent = el.closest('tr, .el-form-item, div[class*="form"], li')?.querySelector?.('input, .el-date-editor input, .el-date-editor');
-                                if (inParent) return inParent;
-                            }
-                            for (let c = el.firstChild; c; c = c.nextSibling) { const r = walk(c); if (r) return r; }
-                            return null;
-                        };
-                        const fromLabel = walk(document.body);
-                        if (fromLabel) {
-                            info.found = true; info.by = 'Date time label';
-                            const el = fromLabel.tagName === 'INPUT' ? fromLabel : fromLabel.querySelector?.('input');
-                            if (el) { info.tagName = el.tagName; info.className = el.className || ''; info.placeholder = el.placeholder || ''; info.id = el.id || ''; info.name = el.name || ''; info.value = (el.value || '').slice(0, 80); }
-                            else { info.tagName = fromLabel.tagName; info.className = fromLabel.className || ''; }
-                            var toFrame = (fromLabel.tagName === 'INPUT' ? fromLabel : (fromLabel.querySelector && fromLabel.querySelector('input.el-input__inner, input'))) || fromLabel;
-                            try {
-                                toFrame.style.border = '3px solid red';
-                                toFrame.style.boxShadow = '0 0 10px red';
-                                toFrame.style.zIndex = '9999';
-                                toFrame.style.position = 'relative';
-                            } catch (e) {}
-                            return info;
+                    // 直接將資料寫入檔案，避免記憶體問題
+                    const fileTimestamp = timestamp.replace(/[:.]/g, '-').slice(0, 19);
+                    const dataFilePath = path.join(workingDir, '1bet_data_' + fileTimestamp + '.json');
+                    fs.writeFileSync(dataFilePath, JSON.stringify(mergedData, null, 2));
+                    
+                    // 類似 OMG 的資訊輸出
+                    console.log('✅ Using scraped data: ' + allData.length + ' rows, ' + headers.length + ' headers');
+                    console.log('📸 Screenshot saved to: ' + (screenshots['final'] || 'N/A'));
+
+                    // 輸出精簡的 JSON 結果供 PHP 解析（不包含完整資料）
+                    console.log(JSON.stringify({
+                        status: 'success',
+                        screenshots: screenshots,
+                        dataFile: dataFilePath,
+                        url: targetUrl,
+                        queryParams: {
+                            date_start: $dateStartJs || null,
+                            date_end: $dateEndJs || null,
+                            account_number: $accountNumberJs || null
+                        },
+                        summary: {
+                            totalRows: allData.length,
+                            totalPages: pageNum,
+                            headers: headers
                         }
-                        // 2) 依 placeholder / 元件型別找
-                        const sel = 'input.el-input__inner[placeholder*="Date time"], input[placeholder*="date time"], input[placeholder*="datetime"], .el-date-editor.el-input__inner, .el-date-editor--datetimerange, .el-date-editor';
-                        const el2 = document.querySelector(sel) || document.querySelector('.el-date-editor input, .el-date-editor--datetimerange input');
-                        if (el2) {
-                            const inp = el2.tagName === 'INPUT' ? el2 : el2.querySelector?.('input');
-                            if (inp) {
-                                info.found = true; info.by = 'placeholder or el-date-editor';
-                                info.tagName = inp.tagName; info.className = inp.className || ''; info.placeholder = inp.placeholder || ''; info.id = inp.id || ''; info.name = inp.name || ''; info.value = (inp.value || '').slice(0, 80);
-                                try {
-                                    inp.style.border = '3px solid red';
-                                    inp.style.boxShadow = '0 0 10px red';
-                                    inp.style.zIndex = '9999';
-                                    inp.style.position = 'relative';
-                                } catch (e) {}
-                            }
-                        }
-                        return info;
-                    });
-                    if (dateTimeFieldInfo.found) {
-                        console.log('✅ Date time field found and framed (by: ' + dateTimeFieldInfo.by + ') tagName=' + dateTimeFieldInfo.tagName + ' placeholder=' + dateTimeFieldInfo.placeholder);
-                        await new Promise(resolve => setTimeout(resolve, 600));
-                    } else {
-                        console.log('⚠️  Date time field not found (searched: "Date time:" label, placeholder*="Date time|datetime", .el-date-editor)');
-                    }
-                    // account_number 填入 placeholder="Please enter player account" 的欄位
-                    const accountNumberVal = $accountNumberJs;
-                    if (accountNumberVal) {
-                        try {
-                            const accEl = await page.$('input[placeholder="Please enter player account"]');
-                            if (accEl) {
-                                // await accEl.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, accountNumberVal);
-                                await accEl.focus(); // 必須先 focus
-                                await page.keyboard.type(accountNumberVal, { delay: 100 });
-                                console.log('✅ Filled account_number (Please enter player account): ' + accountNumberVal);
-                            } else { console.log('⚠️  input[placeholder="Please enter player account"] not found'); }
-                        } catch (e) { console.log('⚠️  Fill account_number: ' + (e.message || e)); }
-                        await new Promise(r => setTimeout(r, 300));
-                    }
-                    const dateStartVal = $dateStartJs;
-                    const dateEndVal = $dateEndJs;
-                    if (dateStartVal || dateEndVal) {
-                        try {
-                            // 1) 點擊主輸入打開彈窗（Start Date / End Date 在彈窗內）
-                            const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || await page.$('div.el-date-editor--datetimerange input') || await page.$('div.el-date-editor--datetimerange');
-                            if (toOpen) {
-                                await toOpen.click();
-                                await new Promise(resolve => setTimeout(resolve, 800));
-                            }
-                            // 2) 等待彈窗內的 input[placeholder="Start Date"]、input[placeholder="End Date"] 出現
-                            await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input.el-input__inner[placeholder="End Date"], input[placeholder="Start Date"], input[placeholder="End Date"]', { timeout: 8000 }).catch(() => {});
-                            // 3) date_start 填入 <input placeholder="Start Date" class="el-input__inner">
-                            if (dateStartVal) {
-                                const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
-                                if (el) {
-                                    await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
-                                    console.log('✅ Filled Start Date (date_start): ' + dateStartVal);
-                                } else { console.log('⚠️  input[placeholder="Start Date"].el-input__inner not found'); }
-                                await new Promise(r => setTimeout(r, 300));
-                            }
-                            // 4) date_end 填入 <input placeholder="End Date" class="el-input__inner">
-                            if (dateEndVal) {
-                                const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
-                                if (el) {
-                                    await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
-                                    console.log('✅ Filled End Date (date_end): ' + dateEndVal);
-                                } else { console.log('⚠️  input[placeholder="End Date"].el-input__inner not found'); }
-                                await new Promise(r => setTimeout(r, 300));
-                            }
-                            // 5) 點擊 OK 確認
-                            const ok = await page.evaluate(() => {
-                                const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
-                                for (const b of btns) { if ((b.textContent || '').trim() === 'OK') { b.click(); return true; } }
-                                return false;
-                            });
-                            if (ok) console.log('✅ OK clicked');
-                            await new Promise(r => setTimeout(r, 600));
-                        } catch (e) { console.log('⚠️  Date range fill: ' + (e.message || e)); }
-                    }
-                    // 點擊 query 按鈕（el-button el-button--primary el-button--small，span=query）；填完 account_number 或日期後皆執行
-                    const queryClicked = await page.evaluate(() => {
-                        const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
-                        for (const b of btns) {
-                            const t = (b.textContent || '').trim();
-                            const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
-                            if (t === 'query' || s === 'query') { b.click(); return true; }
-                        }
-                        return false;
-                    });
-                    if (queryClicked) { console.log('✅ Query button clicked'); } else { console.log('⚠️  Query button not found'); }
-                    await new Promise(r => setTimeout(r, 1200));
-                    
-                    // 檢查是否被跳轉到 disable-devtool 頁面
-                    const currentPageStatus = await page.evaluate(() => {
-                        const url = window.location.href;
-                        const title = document.title || '';
-                        return {
-                            url: url,
-                            title: title,
-                            isDisableDevtool: url.includes('disable-devtool') || 
-                                             url.includes('theajack.github.io') ||
-                                             title.includes('theajack.github.io') ||
-                                             title === 'Blocked'
-                        };
-                    });
-                    
-                    if (currentPageStatus.isDisableDevtool) {
-                        console.log('⚠️  Detected redirect to disable-devtool after query!');
-                        console.log('   Current URL: ' + currentPageStatus.url);
-                        console.log('   Current Title: ' + currentPageStatus.title);
-                        console.log('   Navigating back to target page...');
-                        
-                        // 導航回目標頁面
-                        const targetUrl = $redirectUrlJs.replace(/^"|"\$/g, '');
-                        if (targetUrl && targetUrl !== 'null' && targetUrl !== '') {
-                            try {
-                                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                                await new Promise(r => setTimeout(r, 3000));
-                                
-                                // 重新注入防護
-                                await page.evaluate(() => {
-                                    try {
-                                        Object.defineProperty(window, 'DisableDevtool', {
-                                            get: () => ({
-                                                isSuspend: true,
-                                                init: () => {},
-                                                suspend: () => {},
-                                                resume: () => {},
-                                                md5: (s) => s,
-                                                version: '0.3.7'
-                                            }),
-                                            set: () => {},
-                                            configurable: false
-                                        });
-                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-                                        const originalConstructor = Function.prototype.constructor;
-                                        Function.prototype.constructor = function(str) {
-                                            if (str && (str.includes('debugger') || str.includes('debug'))) {
-                                                return function() {};
-                                            }
-                                            return originalConstructor.apply(this, arguments);
-                                        };
-                                        console.log('🛡️ Protection re-injected after recovery');
-                                    } catch (e) {}
-                                });
-                                
-                                console.log('✅ Successfully navigated back to: ' + page.url());
-                                
-                                // 等待頁面重新載入
-                                await new Promise(r => setTimeout(r, 2000));
-                                
-                                // 重新填寫表單（因為頁面重新載入了）
-                                console.log('🔄 Re-filling form after recovery...');
-                                
-                                // 重新填寫 account_number
-                                if (accountNumberVal) {
-                                    try {
-                                        const accEl = await page.$('input[placeholder="Please enter player account"]');
-                                        if (accEl) {
-                                            await accEl.focus();
-                                            await page.keyboard.type(accountNumberVal, { delay: 100 });
-                                            console.log('✅ Re-filled account_number: ' + accountNumberVal);
-                                        }
-                                    } catch (e) { console.log('⚠️  Re-fill account_number failed:', e.message); }
-                                    await new Promise(r => setTimeout(r, 300));
-                                }
-                                
-                                // 重新填寫日期
-                                if (dateStartVal || dateEndVal) {
-                                    try {
-                                        const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || await page.$('div.el-date-editor--datetimerange input') || await page.$('div.el-date-editor--datetimerange');
-                                        if (toOpen) {
-                                            await toOpen.click();
-                                            await new Promise(resolve => setTimeout(resolve, 800));
-                                        }
-                                        
-                                        if (dateStartVal) {
-                                            const el = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
-                                            if (el) {
-                                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateStartVal);
-                                                console.log('✅ Re-filled Start Date: ' + dateStartVal);
-                                            }
-                                        }
-                                        
-                                        if (dateEndVal) {
-                                            const el = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
-                                            if (el) {
-                                                await el.evaluate((e, v) => { e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, dateEndVal);
-                                                console.log('✅ Re-filled End Date: ' + dateEndVal);
-                                            }
-                                        }
-                                        
-                                        const ok = await page.evaluate(() => {
-                                            const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
-                                            for (const b of btns) { if ((b.textContent || '').trim() === 'OK') { b.click(); return true; } }
-                                            return false;
-                                        });
-                                        if (ok) console.log('✅ OK clicked (retry)');
-                                        await new Promise(r => setTimeout(r, 600));
-                                    } catch (e) { console.log('⚠️  Re-fill dates failed:', e.message); }
-                                }
-                                
-                                // 重新點擊 query
-                                const queryRetry = await page.evaluate(() => {
-                                    const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
-                                    for (const b of btns) {
-                                        const t = (b.textContent || '').trim();
-                                        const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
-                                        if (t === 'query' || s === 'query') { b.click(); return true; }
-                                    }
-                                    return false;
-                                });
-                                if (queryRetry) { console.log('✅ Query button re-clicked'); }
-                                await new Promise(r => setTimeout(r, 1200));
-                                
-                            } catch (e) {
-                                console.log('⚠️  Failed to navigate back:', e.message);
-                            }
-                        }
-                    }
-                    
-                    // 爬取 table.el-table__header / el-table__body 的資料（模仿 GLC）
-                    await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 8000 }).catch(() => {});
-                    let tableData = { found: false };
-                    try {
-                        tableData = await extractTableData(page);
-                        if (tableData.found) console.log('✅ Table extracted: ' + (tableData.rowCount || 0) + ' rows, ' + (tableData.headerCount || 0) + ' columns');
-                        else console.log('⚠️  Table not found: ' + (tableData.error || ''));
-                    } catch (e) { console.log('⚠️  extractTableData: ' + (e.message || e)); }
-                    console.log('📸 Taking screenshot after query...');
-                    await page.screenshot({ path: path.join(workingDir, '1bet_step4b_dates_filled.png'), fullPage: true });
-                    
-                    // 最終檢查：確保不在 disable-devtool 頁面
-                    const finalPageStatus = await page.evaluate(() => {
-                        const url = window.location.href;
-                        const title = document.title || '';
-                        return {
-                            url: url,
-                            title: title,
-                            isDisableDevtool: url.includes('disable-devtool') || 
-                                             url.includes('theajack.github.io') ||
-                                             title.includes('theajack.github.io') ||
-                                             title === 'Blocked'
-                        };
-                    });
-                    
-                    if (finalPageStatus.isDisableDevtool) {
-                        console.log('⚠️  Still on disable-devtool page before final screenshot!');
-                        console.log('   URL: ' + finalPageStatus.url);
-                        console.log('   Title: ' + finalPageStatus.title);
-                        console.log('   Attempting final recovery...');
-                        
-                        const targetUrl = $redirectUrlJs.replace(/^"|"\$/g, '');
-                        if (targetUrl && targetUrl !== 'null' && targetUrl !== '') {
-                            try {
-                                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                                await new Promise(r => setTimeout(r, 3000));
-                                console.log('✅ Final recovery successful: ' + page.url());
-                                
-                                // 重新注入防護
-                                await page.evaluate(() => {
-                                    try {
-                                        Object.defineProperty(window, 'DisableDevtool', {
-                                            get: () => ({
-                                                isSuspend: true,
-                                                init: () => {},
-                                                suspend: () => {},
-                                                resume: () => {},
-                                                md5: (s) => s,
-                                                version: '0.3.7'
-                                            }),
-                                            set: () => {},
-                                            configurable: false
-                                        });
-                                        Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-                                        Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-                                        const originalConstructor = Function.prototype.constructor;
-                                        Function.prototype.constructor = function(str) {
-                                            if (str && (str.includes('debugger') || str.includes('debug'))) {
-                                                return function() {};
-                                            }
-                                            return originalConstructor.apply(this, arguments);
-                                        };
-                                    } catch (e) {}
-                                });
-                                
-                                // 重新填寫完整表單
-                                console.log('🔄 Re-filling complete form after final recovery...');
-                                
-                                // 1. 重新填寫 account_number
-                                if (accountNumberVal) {
-                                    try {
-                                        const accEl = await page.$('input[placeholder="Please enter player account"]');
-                                        if (accEl) {
-                                            await accEl.click({ clickCount: 3 }); // 選中所有文字
-                                            await page.keyboard.press('Backspace'); // 清除
-                                            await accEl.type(accountNumberVal, { delay: 100 });
-                                            console.log('✅ Final: Re-filled account_number: ' + accountNumberVal);
-                                        }
-                                    } catch (e) { console.log('⚠️  Final: Re-fill account failed:', e.message); }
-                                    await new Promise(r => setTimeout(r, 500));
-                                }
-                                
-                                // 2. 重新填寫日期
-                                if (dateStartVal || dateEndVal) {
-                                    try {
-                                        // 點擊打開日期選擇器
-                                        const toOpen = await page.$('input.el-range-input[placeholder="Start date time"]') || 
-                                                      await page.$('div.el-date-editor--datetimerange input') || 
-                                                      await page.$('div.el-date-editor--datetimerange');
-                                        if (toOpen) {
-                                            await toOpen.click();
-                                            await new Promise(r => setTimeout(r, 1000));
-                                            console.log('✅ Final: Date picker opened');
-                                        }
-                                        
-                                        // 等待日期輸入框出現
-                                        await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input[placeholder="Start Date"]', { timeout: 5000 }).catch(() => {});
-                                        
-                                        // 填寫開始日期
-                                        if (dateStartVal) {
-                                            const startEl = await page.$('input.el-input__inner[placeholder="Start Date"]') || await page.$('input[placeholder="Start Date"]');
-                                            if (startEl) {
-                                                await startEl.evaluate((e, v) => { 
-                                                    e.value = v; 
-                                                    e.dispatchEvent(new Event('input', { bubbles: true })); 
-                                                    e.dispatchEvent(new Event('change', { bubbles: true })); 
-                                                }, dateStartVal);
-                                                console.log('✅ Final: Re-filled Start Date: ' + dateStartVal);
-                                            }
-                                            await new Promise(r => setTimeout(r, 300));
-                                        }
-                                        
-                                        // 填寫結束日期
-                                        if (dateEndVal) {
-                                            const endEl = await page.$('input.el-input__inner[placeholder="End Date"]') || await page.$('input[placeholder="End Date"]');
-                                            if (endEl) {
-                                                await endEl.evaluate((e, v) => { 
-                                                    e.value = v; 
-                                                    e.dispatchEvent(new Event('input', { bubbles: true })); 
-                                                    e.dispatchEvent(new Event('change', { bubbles: true })); 
-                                                }, dateEndVal);
-                                                console.log('✅ Final: Re-filled End Date: ' + dateEndVal);
-                                            }
-                                            await new Promise(r => setTimeout(r, 300));
-                                        }
-                                        
-                                        // 點擊 OK
-                                        const okClicked = await page.evaluate(() => {
-                                            const btns = Array.from(document.querySelectorAll('button.el-picker-panel__link-btn, button.el-button'));
-                                            for (const b of btns) { 
-                                                if ((b.textContent || '').trim() === 'OK') { 
-                                                    b.click(); 
-                                                    return true; 
-                                                } 
-                                            }
-                                            return false;
-                                        });
-                                        if (okClicked) console.log('✅ Final: OK clicked');
-                                        await new Promise(r => setTimeout(r, 800));
-                                        
-                                    } catch (e) { 
-                                        console.log('⚠️  Final: Re-fill dates failed:', e.message); 
-                                    }
-                                }
-                                
-                                // 3. 重新點擊 query 按鈕
-                                const queryClicked = await page.evaluate(() => {
-                                    const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary.el-button--small, button.el-button--primary'));
-                                    for (const b of btns) {
-                                        const t = (b.textContent || '').trim();
-                                        const s = (b.querySelector('span') ? (b.querySelector('span').textContent || '') : '').trim();
-                                        if (t === 'query' || s === 'query') { 
-                                            b.click(); 
-                                            return true; 
-                                        }
-                                    }
-                                    return false;
-                                });
-                                if (queryClicked) { 
-                                    console.log('✅ Final: Query button clicked'); 
-                                } else { 
-                                    console.log('⚠️  Final: Query button not found'); 
-                                }
-                                
-                                // 等待查詢完成
-                                await new Promise(r => setTimeout(r, 2000));
-                                
-                                // 重新抓取表格
-                                console.log('🔍 Final: Extracting table data...');
-                                await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 8000 }).catch(() => {});
-                                try {
-                                    tableData = await extractTableData(page);
-                                    if (tableData.found) {
-                                        console.log('✅ Final: Table extracted: ' + (tableData.rowCount || 0) + ' rows, ' + (tableData.headerCount || 0) + ' columns');
-                                    } else {
-                                        console.log('⚠️  Final: Table not found');
-                                    }
-                                } catch (e) {
-                                    console.log('⚠️  Final: Table extraction failed:', e.message);
-                                }
-                                
-                            } catch (e) {
-                                console.log('⚠️  Final recovery failed:', e.message);
-                            }
-                        }
-                    }
-                    
-                    // 最終截圖（若有找到 Date time 欄位，已加上紅框；若已點擊 Start date time，日期面板應已開啟）
-                    console.log('📸 Final: Taking final screenshot...');
-                    const screenshotPath = path.join(workingDir, '1bet_final.png');
-                    await page.screenshot({
-                        path: screenshotPath,
-                        fullPage: true
-                    });
-                    console.log('✅ Screenshot saved: ' + screenshotPath);
-                    
-                    // 返回結果（含 tableData 供 processScrapedData 儲存）
-                    const result = {
-                        success: true,
-                        url: page.url(),
-                        title: await page.title(),
-                        screenshot: screenshotPath,
-                        tableData: tableData
-                    };
-                    
-                    // 保存結果
-                    const resultPath = path.join(workingDir, 'scrape_result.json');
-                    fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
-                    
-                    console.log('⏳ Browser will close in 5 seconds...');
-                    
-                    // 等待 5 秒讓使用者查看結果
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    
-                    await browser.close();
-                    
-                    return result;
+                    }));
+
                 } catch (error) {
-                    console.error('❌ Error:', error);
-                    const errorResult = {
-                        success: false,
-                        error: error.message,
-                        stack: error.stack
-                    };
-                    fs.writeFileSync(path.join(workingDir, 'scrape_result.json'), JSON.stringify(errorResult, null, 2));
-                    
-                    console.log('⏳ Browser will close in 5 seconds...');
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    
+                    console.error('❌ Error:', error.message);
+                    try {
+                        const errorScreenshot = path.join(workingDir, '1bet_error.png');
+                        await page.screenshot({ path: errorScreenshot, fullPage: true });
+                    } catch (e) {}
+                    process.exit(1);
+                } finally {
                     await browser.close();
-                    throw error;
                 }
             }
 
-            navigateAndScreenshot().then(() => {
-                process.exit(0);
-            }).catch((error) => {
-                console.error('Error:', error);
-                process.exit(1);
-            });
+            run();
         JS;
 
-        $scriptPath = storage_path('app/temp/scrape_1bet_screenshot.js');
-        $directory = dirname($scriptPath);
-        if (!is_dir($directory)) {
-            mkdir($directory, 0755, true);
-        }
+        $scriptPath = tempnam($workingDir, 'puppeteer_1bet_');
+        rename($scriptPath, $scriptPath .= '.js');
         file_put_contents($scriptPath, $script);
-
         return $scriptPath;
     }
 
     /**
      * 執行 Puppeteer 腳本
-     * @param string $scriptPath 腳本文件路徑
-     * @return array|null 返回爬取的結果，失敗時返回 null
      */
     private function runPuppeteerScript($scriptPath)
     {
-        $this->info('3. Running browser automation script...');
-
-        $workingDir = dirname($scriptPath);
-
-        // 使用 Process 執行腳本，並實時輸出日誌
-        $process = Process::path($workingDir)
-            ->timeout(600) // 10 分鐘超時
-            ->tty(false); // 不使用 TTY，以便捕獲所有輸出
-
-        // 執行腳本並實時輸出
-        $result = $process->run("node " . basename($scriptPath), function ($type, $output) {
-            // 實時輸出腳本的控制台日誌
-            echo $output;
+        $this->info('3. Executing Puppeteer script...');
+        
+        // 增加超時時間至 1800 秒（30 分鐘），因為需要爬取多頁資料
+        $process = Process::timeout(1800)->path(dirname($scriptPath));
+        
+        // 即時輸出，讓使用者看到進度（只保留最後幾行找 JSON）
+        $lastLines = [];
+        $maxLastLines = 10;
+        
+        $result = $process->run(['node', basename($scriptPath)], function ($type, $output) use (&$lastLines, $maxLastLines) {
+            // 即時顯示輸出
+            $lines = explode("\n", $output);
+            foreach ($lines as $line) {
+                $trimmedLine = trim($line);
+                if (!empty($trimmedLine)) {
+                    // 不顯示 JSON 結果行
+                    if (!str_starts_with($trimmedLine, '{"status"')) {
+                        $this->line($trimmedLine);
+                    }
+                    // 只保留最後幾行
+                    $lastLines[] = $trimmedLine;
+                    if (count($lastLines) > $maxLastLines) {
+                        array_shift($lastLines);
+                    }
+                }
+            }
         });
 
         if ($result->failed()) {
-            $this->error("❌ Script execution failed");
-            $errorOutput = $result->errorOutput();
-            $stdOutput = $result->output();
-
-            // 顯示完整的錯誤信息
-            if (!empty($errorOutput)) {
-                $this->line("Error output: " . $errorOutput);
-            }
-            if (!empty($stdOutput)) {
-                $this->line("Standard output: " . $stdOutput);
-            }
-
+            $this->error('❌ Puppeteer execution failed: ' . $result->errorOutput());
             return null;
         }
 
-        $resultFile = $workingDir . '/scrape_result.json';
-        if (file_exists($resultFile)) {
-            $content = file_get_contents($resultFile);
-            return json_decode($content, true);
-        }
-
-        return null;
-    }
-
-    /**
-     * 處理截圖
-     * @param array $result 爬取的結果資料
-     */
-    private function processScreenshot($result)
-    {
-        $this->info('');
-        $this->info('4. Processing screenshots...');
-
-        $timestamp = date('Y-m-d_H-i-s');
-        $workingDir = storage_path('app/temp');
-
-        // 處理截圖
-        $screenshotsDir = storage_path('app/scraped_data');
-        if (!is_dir($screenshotsDir)) {
-            mkdir($screenshotsDir, 0755, true);
-        }
-
-        // 處理所有步驟的截圖文件
-        $screenshotFiles = [
-            '1bet_step0_page_loaded.png' => 'step0_page_loaded',
-            '1bet_step1_account_filled.png' => 'step1_account_filled',
-            '1bet_step2_password_filled.png' => 'step2_password_filled',
-            '1bet_step3_login_clicked.png' => 'step3_login_clicked',
-            '1bet_step4_login_completed.png' => 'step4_login_completed',
-            '1bet_step4b_dates_filled.png' => 'step4b_dates_filled',
-            '1bet_final.png' => 'final'
-        ];
-
-        $savedCount = 0;
-        foreach ($screenshotFiles as $screenshotFile => $stepName) {
-            $screenshotSrc = $workingDir . '/' . $screenshotFile;
-            if (file_exists($screenshotSrc)) {
-                $screenshotDst = $screenshotsDir . '/1bet_' . $timestamp . '_' . $stepName . '.png';
-                rename($screenshotSrc, $screenshotDst);
-                $this->info("📸 {$stepName} screenshot saved: {$screenshotDst}");
-                $savedCount++;
+        // 從最後幾行中找到 JSON 結果
+        $jsonResult = null;
+        for ($i = count($lastLines) - 1; $i >= 0; $i--) {
+            if (str_starts_with($lastLines[$i], '{"status"')) {
+                $jsonResult = json_decode($lastLines[$i], true);
+                break;
             }
         }
 
-        if ($savedCount === 0) {
-            $this->warn('⚠️  No screenshot files found');
-        } else {
-            $this->info("✅ Total {$savedCount} screenshot(s) saved");
+        if (!$jsonResult || !isset($jsonResult['status']) || $jsonResult['status'] !== 'success') {
+            $this->error('❌ Failed to parse result from script');
+            // 清理暫存腳本檔案
+            @unlink($scriptPath);
+            return null;
         }
 
-        if (isset($result['success']) && $result['success']) {
-            $this->info('✅ Screenshot process completed successfully!');
-            $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
-            $this->info('📄 Title: ' . ($result['title'] ?? 'N/A'));
-        } else {
-            $this->error('❌ Screenshot process failed: ' . ($result['error'] ?? 'Unknown error'));
-        }
-
-        $this->info('');
-        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+        // 清理暫存腳本檔案
+        @unlink($scriptPath);
+        
+        return $jsonResult;
     }
 
-    /**
-     * 處理並儲存爬取的表格資料（模仿 GLC：table.el-table__header / el-table__body）
-     * @param array $result runPuppeteerScript 的結果，需含 tableData
-     */
     private function processScrapedData($result)
     {
-        $tableData = $result['tableData'] ?? null;
-        if (!$tableData || empty($tableData['found']) || empty($tableData['data'])) {
-            $this->warn('⚠️  No table data to save.');
-            return;
+        // 顯示查詢參數（類似 OMG）
+        $queryParams = $result['queryParams'] ?? [];
+        if (!empty($queryParams)) {
+            $this->info('📋 Query Parameters:');
+            if (!empty($queryParams['date_start'])) {
+                $this->info("   - Date Start: {$queryParams['date_start']}");
+            }
+            if (!empty($queryParams['date_end'])) {
+                $this->info("   - Date End: {$queryParams['date_end']}");
+            }
+            if (!empty($queryParams['account_number'])) {
+                $this->info("   - Account Number: {$queryParams['account_number']}");
+            }
         }
-
-        $timestamp = date('Y-m-d_H-i-s');
-        $allData = $tableData['data'];
-        $headers = $tableData['headers'] ?? [];
-        $totalRows = count($allData);
-
-        $mergedData = [
-            'metadata' => [
-                'timestamp' => $timestamp,
-                'url' => $result['url'] ?? '',
-                'totalRows' => $totalRows,
-                'source' => '1bet_el_table',
-            ],
-            'headers' => $headers,
-            'data' => $allData,
+        
+        // 顯示 URL
+        if (!empty($result['url'])) {
+            $this->info("🔗 URL: {$result['url']}");
+        }
+        
+        // 新格式：資料已經由 Node.js 直接寫入檔案
+        if (isset($result['dataFile'])) {
+            $dataFile = $result['dataFile'];
+            $summary = $result['summary'] ?? [];
+            $rowCount = $summary['totalRows'] ?? 0;
+            $totalPages = $summary['totalPages'] ?? 1;
+            $headers = $summary['headers'] ?? [];
+            
+            $this->info("✅ Scraped {$rowCount} rows from {$totalPages} page(s)");
+            $this->info("📊 Headers: " . count($headers));
+            $this->info("💾 Data file: {$dataFile}");
+        } 
+        // 舊格式：資料在 tableData 中
+        elseif (isset($result['tableData'])) {
+            $tableData = $result['tableData'];
+            $rowCount = count($tableData['data'] ?? []);
+            $totalPages = $tableData['totalPages'] ?? 1;
+            
+            $this->info("✅ Scraped {$rowCount} rows from {$totalPages} page(s)");
+            
+            // 儲存資料到 JSON 檔案
+            $timestamp = date('Y-m-d_H-i-s');
+            $fileName = "scraped_data/1bet_data_{$timestamp}.json";
+            Storage::put($fileName, json_encode($tableData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("💾 Data saved to: storage/app/{$fileName}");
+        }
+        
+        // 清理中間步驟的截圖，只保留最後一張
+        $this->cleanupIntermediateScreenshots();
+        
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+        $this->info("✅ Data processing completed!");
+    }
+    
+    /**
+     * 清理中間步驟的截圖，只保留 final
+     */
+    private function cleanupIntermediateScreenshots()
+    {
+        $screenshotDir = storage_path('app/scraped_data');
+        $patterns = [
+            '1bet_step1_*.png',
+            '1bet_step2_*.png', 
+            '1bet_step3_*.png',
+            '1bet_step4_*.png',
+            '1bet_pre_query.png',
         ];
-
-        $fileName = "scraped_data/scraped_data_1bet_{$timestamp}.json";
-        Storage::put($fileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-
-        $this->info("✅ Table data saved: {$fileName} ({$totalRows} rows)");
+        
+        $deletedCount = 0;
+        foreach ($patterns as $pattern) {
+            $files = glob($screenshotDir . '/' . $pattern);
+            foreach ($files as $file) {
+                if (is_file($file)) {
+                    @unlink($file);
+                    $deletedCount++;
+                }
+            }
+        }
+        
+        if ($deletedCount > 0) {
+            $this->info("🧹 Cleaned up {$deletedCount} intermediate screenshot(s)");
+        }
     }
 }
