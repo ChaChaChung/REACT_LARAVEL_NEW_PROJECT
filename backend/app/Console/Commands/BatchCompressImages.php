@@ -50,7 +50,7 @@ class BatchCompressImages extends Command
         $thresholdBytes = $thresholdKB * 1024;
 
         // 來源資料夾不存在
-        if (! $sourceDir || ! is_dir($sourceDir)) {
+        if (!$sourceDir || !is_dir($sourceDir)) {
             $this->error("執行失敗 - 來源資料夾不存在: {$sourceArg}");
             $this->line("請先建立 storage/app/images 資料夾並放入要壓縮的圖片");
 
@@ -58,7 +58,7 @@ class BatchCompressImages extends Command
         }
 
         // 輸出資料夾不存在
-        if (! is_dir($outputArg)) {
+        if (!is_dir($outputArg)) {
             // 建立輸出資料夾
             mkdir($outputArg, 0755, true);
         }
@@ -105,7 +105,7 @@ class BatchCompressImages extends Command
                 // 輸出資料夾路徑
                 $outputDirPath = dirname($outputPath);
                 // 如果輸出資料夾不存在
-                if (! is_dir($outputDirPath)) {
+                if (!is_dir($outputDirPath)) {
                     // 建立輸出資料夾
                     mkdir($outputDirPath, 0755, true);
                 }
@@ -336,34 +336,47 @@ class BatchCompressImages extends Command
      * 若系統有 pngquant，嘗試壓縮 PNG（有損但維持 PNG），成功且比原檔小才採用
      * @return array|null 成功則回傳 ['method' => 'pngquant', 'outputPath' => ...]，否則 null
      */
-    private function tryPngquant(string $inputPath, string $outputPath, int $originalSize): ?array
+    private function tryPngquant($inputPath, $outputPath, $originalSize): ?array
     {
+        // 候選路徑
         $candidates = [
             trim((string) shell_exec('which pngquant 2>/dev/null')),
             '/opt/homebrew/bin/pngquant',
             '/usr/local/bin/pngquant',
             'pngquant',
         ];
+
+        // pngquant 路徑
         $pngquant = null;
+
+        // 候選路徑執行迴圈
         foreach ($candidates as $c) {
+            // 如果候選路徑為空
             if ($c === '') {
                 continue;
             }
+            // 如果候選路徑為 pngquant
             if ($c === 'pngquant') {
-                $pngquant = 'pngquant';
+                $pngquant = $c;
                 break;
             }
+            // 判斷候選路徑是否存在且可執行
             if (is_executable($c)) {
                 $pngquant = $c;
                 break;
             }
         }
+
+        // 如果 pngquant 路徑不存在
         if ($pngquant === null) {
             return null;
         }
 
+        // 暫存路徑
         $tmpPath = $outputPath . '.pngquant.tmp';
+        // 品質
         $quality = '50-85';
+        // 命令
         $cmd = sprintf(
             '%s --quality=%s --skip-if-larger --output %s -- %s 2>/dev/null',
             escapeshellarg($pngquant),
@@ -371,17 +384,27 @@ class BatchCompressImages extends Command
             escapeshellarg($tmpPath),
             escapeshellarg($inputPath)
         );
+        // 執行命令
         exec($cmd);
 
-        if (! is_file($tmpPath)) {
+        // 如果暫存路徑不存在
+        if (!is_file($tmpPath)) {
             return null;
         }
+
+        // 新檔案大小
         $newSize = filesize($tmpPath);
+        // 如果新檔案大小 >= 原始檔案大小
         if ($newSize >= $originalSize) {
+            // 刪除暫存路徑
             unlink($tmpPath);
             return null;
         }
+
+        // 重命名暫存路徑
         rename($tmpPath, $outputPath);
+
+        // 回傳結果
         return ['method' => 'pngquant', 'outputPath' => $outputPath];
     }
 
@@ -431,47 +454,6 @@ class BatchCompressImages extends Command
 
         // 返回新圖片
         return $resized;
-    }
-
-    /**
-     * 判斷圖片是否有透明通道
-     * @return bool
-     */
-    private function imageHasTransparency($image, $ext): bool
-    {
-        // 如果副檔名不是 png
-        if ($ext !== '.png') {
-            return false;
-        }
-
-        // 如果圖片不是 truecolor
-        if (! imageistruecolor($image)) {
-            // 返回圖片是否有透明通道
-            return imagecolortransparent($image) >= 0;
-        }
-        
-        // 圖片寬度
-        $width = imagesx($image);
-        // 圖片高度
-        $height = imagesy($image);
-        // 步長
-        $step = max(1, (int) min($width, $height) / 20);
-        
-        // 執行迴圈
-        for ($x = 0; $x < $width; $x += $step) {
-            // 執行迴圈
-            for ($y = 0; $y < $height; $y += $step) {
-                // 取得顏色 (32-bit: 0xAARRGGBB)
-                $color = imagecolorat($image, $x, $y);
-                // 提取 alpha 通道：右移 24 位取高 8 位，& 0x7F 取得透明度 (GD 中 0=不透明, 127=全透明)
-                $alpha = ($color >> 24) & 0x7F;
-                // 判斷 alpha 是否 > 0
-                if ($alpha > 0) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     /**
