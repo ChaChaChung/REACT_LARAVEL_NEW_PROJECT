@@ -74,7 +74,6 @@ class BatchCompressImages extends Command
         $this->info("📁 來源: {$sourceDir}");
         $this->info("📂 輸出: {$outputDir}");
         $this->info("📏 壓縮門檻: 大於 {$thresholdKB} KB 的圖片將被壓縮");
-        $this->info("🖼️ 副檔名: 非 .png 一律輸出為 .png（超過門檻則壓縮後轉 PNG，未達門檻則僅轉檔）；已是 .png 且未達門檻則不轉也不複製");
         $this->info('');
 
         // 取得所有圖片檔案
@@ -82,27 +81,28 @@ class BatchCompressImages extends Command
 
         // 如果沒有找到圖片檔案
         if (empty($imageFiles)) {
-            // 提示
             $this->warn('未找到支援的圖片 (jpg, jpeg, png, webp)');
         }
 
-        // 壓縮計數
+        // 壓縮圖片數量
         $compressedCount = 0;
-        // 錯誤計數
+        // 錯誤數量
         $errorCount = 0;
-        // 總共節省的位元組數
+        // 節省的位元組數
         $totalSavedBytes = 0;
 
         // 所有圖片檔案執行迴圈
         foreach ($imageFiles as $file) {
             // 輸出路徑（非 .png 一律輸出為 .png）
             $outputPath = $outputDir . DIRECTORY_SEPARATOR . $file['relativePath'];
-            // 如果副檔名不是 .png 則轉成 PNG
+            
+            // 如果副檔名不是 .png，則轉成 PNG
             if ($file['ext'] !== '.png') {
-                // 轉成 PNG 的輸出路徑
+                // 轉成 png 的輸出路徑
                 $outputPath = pathinfo($outputPath, PATHINFO_DIRNAME) . DIRECTORY_SEPARATOR
                     . pathinfo($outputPath, PATHINFO_FILENAME) . '.png';
             }
+
             // 檔案統計資訊
             $stats = stat($file['fullPath']);
             // 檔案大小
@@ -111,17 +111,18 @@ class BatchCompressImages extends Command
             try {
                 // 輸出資料夾路徑
                 $outputDirPath = dirname($outputPath);
+
                 // 如果輸出資料夾不存在
                 if (!is_dir($outputDirPath)) {
                     // 建立輸出資料夾
                     mkdir($outputDirPath, 0755, true);
                 }
 
-                // 如果檔案大小大於壓縮門檻：壓縮（非 .png 會一併轉成 PNG）
+                // 如果檔案大小大於壓縮門檻：壓縮（非 .png 會一併轉成 .png）
                 if ($stats['size'] > $thresholdBytes) {
                     // 原始檔案大小
                     $originalSize = $stats['size'];
-                    // 壓縮圖片（超過 500KB 且非 png → 壓縮後轉成 png）
+                    // 壓縮圖片（超過 500 KB 且非 .png → 壓縮後轉成 .png）
                     $compressResult = $this->compressImage(
                         $file['fullPath'],
                         $outputPath,
@@ -132,6 +133,7 @@ class BatchCompressImages extends Command
 
                     // 實際輸出路徑
                     $actualOutputPath = $compressResult['outputPath'] ?? $outputPath;
+
                     // 如果實際輸出路徑存在
                     if (file_exists($actualOutputPath)) {
                         // 新檔案大小
@@ -148,8 +150,10 @@ class BatchCompressImages extends Command
                         $method = $compressResult['method'] ?? '壓縮';
                         // 提示
                         $this->line("✅ {$method}: {$file['relativePath']} ({$sizeKB}KB → {$newSizeKB}KB, 節省 {$savedPercent}%)");
+                        // 壓縮圖片數量增加
                         $compressedCount++;
                     } else {
+                        // 拋出異常
                         throw new \RuntimeException('壓縮後檔案不存在');
                     }
                 } else {
@@ -157,10 +161,12 @@ class BatchCompressImages extends Command
                     if ($file['ext'] !== '.png') {
                         // 載入圖片
                         $image = $this->loadImage($file['fullPath'], $file['ext']);
+
                         // 如果無法載入圖片
                         if ($image === false) {
                             throw new \RuntimeException("無法載入圖片 - {$file['fullPath']}");
                         }
+
                         // 保存圖片
                         $this->saveImage($image, $outputPath, '.png', 6);
                         // 銷毀圖片
@@ -179,21 +185,20 @@ class BatchCompressImages extends Command
     }
 
     /**
-     * 遞迴取得所有圖片檔案
+     * 取得所有圖片檔案
+     * @param string $dir 資料夾路徑
      * @return array
      */
-    private function getImageFiles($dir, $baseDir = null): array
+    private function getImageFiles($dir): array
     {
-        // 基礎目錄
-        $baseDir = $baseDir ?? $dir;
         // 檔案列表
         $files = [];
-        // 目錄列表
+        // 目錄中的項目名稱列表
         $entries = scandir($dir);
 
-        // 目錄列表執行迴圈
+        // 資料夾中的檔案列表執行迴圈
         foreach ($entries as $entry) {
-            // 跳過當前目錄和父目錄
+            // 跳過當前和父資料夾
             if ($entry === '.' || $entry === '..') {
                 continue;
             }
@@ -201,26 +206,20 @@ class BatchCompressImages extends Command
             // 完整路徑
             $fullPath = $dir . DIRECTORY_SEPARATOR . $entry;
             // 相對路徑
-            $relativePath = substr($fullPath, strlen($baseDir) + 1);
+            $relativePath = substr($fullPath, strlen($dir) + 1);
+            // 檔案副檔名
+            $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+            // 檔案副檔名加上點
+            $extWithDot = '.' . $ext;
 
-            // 如果路徑是目錄
-            if (is_dir($fullPath)) {
-                // 遞迴取得所有圖片檔案
-                $files = array_merge($files, $this->getImageFiles($fullPath, $baseDir));
-            } elseif (is_file($fullPath)) {
-                // 檔案副檔名
-                $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
-                // 檔案副檔名加上點
-                $extWithDot = '.' . $ext;
-                // 如果檔案副檔名在支援的副檔名列表中
-                if (in_array($extWithDot, self::SUPPORTED_EXTENSIONS, true)) {
-                    // 添加到檔案列表
-                    $files[] = [
-                        'fullPath' => $fullPath,
-                        'relativePath' => $relativePath,
-                        'ext' => $extWithDot,
-                    ];
-                }
+            // 如果檔案副檔名在支援的副檔名列表中
+            if (in_array($extWithDot, self::SUPPORTED_EXTENSIONS, true)) {
+                // 加入到檔案列表
+                $files[] = [
+                    'fullPath' => $fullPath,
+                    'relativePath' => $relativePath,
+                    'ext' => $extWithDot,
+                ];
             }
         }
 
@@ -229,6 +228,11 @@ class BatchCompressImages extends Command
 
     /**
      * 使用 GD 壓縮圖片，盡量壓到目標大小以下
+     * @param string $inputPath 原始圖片路徑
+     * @param string $outputPath 輸出路徑
+     * @param string $ext 副檔名
+     * @param int $targetBytes 目標大小
+     * @param int $maxDimension 最大邊長
      * @return array
      */
     private function compressImage($inputPath, $outputPath, $ext, $targetBytes, $maxDimension): array
@@ -237,15 +241,17 @@ class BatchCompressImages extends Command
         $originalOutputPath = $outputPath;
         // 載入圖片
         $image = $this->loadImage($inputPath, $ext);
+
         // 如果無法載入圖片
         if ($image === false) {
             throw new \RuntimeException("無法載入圖片 - {$inputPath}");
         }
 
-        // 縮小尺寸（超過最大邊長時）
+        // 圖片寬度
         $width = imagesx($image);
+        // 圖片高度
         $height = imagesy($image);
-        // 是否需要縮小尺寸
+        // 判斷是否需要縮小尺寸
         $wasResized = $width > $maxDimension || $height > $maxDimension;
         // 如果需要縮小尺寸
         if ($wasResized) {
@@ -268,8 +274,10 @@ class BatchCompressImages extends Command
         $fallbackSize = PHP_INT_MAX;
         // PNG 用壓縮等級 0-9（9 壓最大）；JPG/WebP 用品質 95-30
         $qualities = [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30];
+        // 如果副檔名是 .png，則使用壓縮等級 0-9；否則使用品質 95-30
         $tryValues = ($outputExt === '.png') ? range(0, 9) : $qualities;
 
+        // 壓縮品質參數執行迴圈
         foreach ($tryValues as $param) {
             // 測試路徑
             $testPath = $outputPath . '.tmp.' . $param;
@@ -342,7 +350,7 @@ class BatchCompressImages extends Command
 
             // 複製原檔案
             copy($inputPath, $originalOutputPath);
-            
+
             return ['method' => '複製(壓縮後更大)', 'outputPath' => $originalOutputPath];
         }
 
@@ -373,7 +381,10 @@ class BatchCompressImages extends Command
 
     /**
      * 若系統有 pngquant，嘗試壓縮 PNG（有損但維持 PNG），成功且比原檔小才採用
-     * @return array|null 成功則回傳 ['method' => 'pngquant', 'outputPath' => ...]，否則 null
+     * @param string $inputPath 原始圖片路徑
+     * @param string $outputPath 輸出路徑
+     * @param int $originalSize 原始檔案大小
+     * @return array|null
      */
     private function tryPngquant($inputPath, $outputPath, $originalSize): ?array
     {
@@ -449,6 +460,8 @@ class BatchCompressImages extends Command
 
     /**
      * 縮小圖片尺寸
+     * @param \GdImage $image 圖片
+     * @param int $maxDimension 最大邊長
      * @return \GdImage|false
      */
     private function resizeImage($image, $maxDimension)
@@ -497,6 +510,10 @@ class BatchCompressImages extends Command
 
     /**
      * 儲存圖片
+     * @param \GdImage $image 圖片
+     * @param string $path 輸出路徑
+     * @param string $ext 副檔名
+     * @param int $quality 品質
      * @return void
      */
     private function saveImage($image, $path, $ext, $quality): void
@@ -529,6 +546,8 @@ class BatchCompressImages extends Command
 
     /**
      * 使用 GD 載入圖片
+     * @param string $path 圖片路徑
+     * @param string $ext 副檔名
      * @return \GdImage|false
      */
     private function loadImage(string $path, string $ext)
