@@ -3,7 +3,6 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Log;
 
 /**
  * 批量壓縮圖片，當圖片大於指定大小時壓縮，輸出到目標資料夾
@@ -37,8 +36,6 @@ class BatchCompressImages extends Command
      */
     public function handle(): int
     {
-        Log::alert('Start compressing images at: ' . now()->toDateTimeString());
-
         // 來源資料夾
         $sourceArg = $this->argument('source') ?? storage_path('app/images');
         // 輸出資料夾
@@ -54,8 +51,8 @@ class BatchCompressImages extends Command
 
         // 來源資料夾不存在
         if (!$sourceDir || !is_dir($sourceDir)) {
-            Log::alert("執行失敗 - 來源資料夾不存在: {$sourceArg}");
-            Log::alert("請先建立 storage/app/images 資料夾並放入要壓縮的圖片");
+            $this->error("執行失敗 - 來源資料夾不存在: {$sourceArg}");
+            $this->line('請先建立 storage/app/images 資料夾並放入要壓縮的圖片');
 
             return 1;
         }
@@ -78,7 +75,9 @@ class BatchCompressImages extends Command
 
         // 如果沒有找到圖片檔案
         if (empty($imageFiles)) {
-            Log::alert('No supported images found (jpg, jpeg, png, webp)');
+            $this->warn('未找到支援的圖片 (jpg, jpeg, png, webp)');
+
+            return 0;
         }
 
         // 壓縮圖片數量
@@ -126,8 +125,8 @@ class BatchCompressImages extends Command
                         $maxDimension
                     );
 
-                    // 實際輸出路徑
-                    $actualOutputPath = $compressResult['outputPath'] ?? $outputPath;
+                    // compressImage 回傳輸出路徑字串
+                    $actualOutputPath = $compressResult;
 
                     // 如果實際輸出路徑存在
                     if (file_exists($actualOutputPath)) {
@@ -161,13 +160,13 @@ class BatchCompressImages extends Command
                     }
                 }
             } catch (\Throwable $e) {
-                // 提示
-                Log::alert("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
+                $this->error("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
                 $errorCount++;
             }
         }
 
-        Log::alert('End compressing images at: ' . now()->toDateTimeString());
+        $savedKB = number_format($totalSavedBytes / 1024, 1);
+        $this->info("完成：壓縮 {$compressedCount} 張，錯誤 {$errorCount} 筆，節省 {$savedKB} KB");
 
         return 0;
     }
