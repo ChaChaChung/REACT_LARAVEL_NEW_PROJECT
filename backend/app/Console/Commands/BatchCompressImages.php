@@ -233,15 +233,8 @@ class BatchCompressImages extends Command
 
         // 原始檔案大小
         $originalSize = filesize($inputPath);
-        // 是否有透明通道
-        $hasTransparency = $this->imageHasTransparency($image, $ext);
-
-        // PNG 無透明通道時轉 JPEG（壓縮效果更好）
+        // 維持原本格式，不轉換
         $outputExt = $ext;
-        if (($ext === '.png' || $ext === '.webp') && ! $hasTransparency) {
-            $outputExt = '.jpg';
-            $outputPath = preg_replace('/\.(png|webp)$/i', '.jpg', $outputPath);
-        }
 
         // 迭代壓縮 - 選用「最高品質」且「不超過目標大小」的結果（盡量接近目標）
         $bestPath = null;
@@ -251,15 +244,15 @@ class BatchCompressImages extends Command
         $fallbackPath = null;
         // 備用大小
         $fallbackSize = PHP_INT_MAX;
-        // 品質列表
+        // PNG 用壓縮等級 0-9（9 壓最大）；JPG/WebP 用品質 95-30
         $qualities = [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30];
+        $tryValues = ($outputExt === '.png') ? range(0, 9) : $qualities;
 
-        // 品質列表執行迴圈
-        foreach ($qualities as $quality) {
+        foreach ($tryValues as $param) {
             // 測試路徑
-            $testPath = $outputPath . '.tmp.' . $quality;
-            // 保存圖片
-            $this->saveImage($image, $testPath, $outputExt, $quality);
+            $testPath = $outputPath . '.tmp.' . $param;
+            // 保存圖片（PNG 時 param 為壓縮等級 0-9，否則為品質）
+            $this->saveImage($image, $testPath, $outputExt, $param);
 
             // 如果測試路徑存在
             if (file_exists($testPath)) {
@@ -293,29 +286,31 @@ class BatchCompressImages extends Command
             $bestSize = $fallbackSize;
         }
 
-        // 若壓縮後比原檔大，直接複製原檔（保持原副檔名）
+        // 若壓縮後比原檔大，先嘗試 pngquant（僅 PNG），再決定複製原檔
         if ($bestPath === null || $bestSize > $originalSize) {
-            // 品質列表執行迴圈
-            foreach ($qualities as $quality) {
-                // 測試路徑
-                $tmpPath = $outputPath . '.tmp.' . $quality;
-                // 如果測試路徑存在
+            foreach ($tryValues as $param) {
+                $tmpPath = $outputPath . '.tmp.' . $param;
                 if (file_exists($tmpPath)) {
-                    // 刪除測試路徑
                     unlink($tmpPath);
                 }
             }
-            // 複製原檔案
-            copy($inputPath, $originalOutputPath);
 
-            // 返回結果
+            // PNG 且 GD 無法壓更小：嘗試 pngquant（若已安裝）
+            if ($ext === '.png') {
+                $pngquantResult = $this->tryPngquant($inputPath, $originalOutputPath, $originalSize);
+                if ($pngquantResult !== null) {
+                    return $pngquantResult;
+                }
+            }
+
+            copy($inputPath, $originalOutputPath);
             return ['method' => '複製(壓縮後更大)', 'outputPath' => $originalOutputPath];
         }
 
         // 清理其他暫存檔
-        foreach ($qualities as $quality) {
+        foreach ($tryValues as $param) {
             // 測試路徑
-            $tmpPath = $outputPath . '.tmp.' . $quality;
+            $tmpPath = $outputPath . '.tmp.' . $param;
             // 如果測試路徑存在且不是最佳路徑
             if (file_exists($tmpPath) && $tmpPath !== $bestPath) {
                 // 刪除測試路徑
@@ -335,6 +330,59 @@ class BatchCompressImages extends Command
         }
 
         return ['method' => $method, 'outputPath' => $outputPath];
+    }
+
+    /**
+     * 若系統有 pngquant，嘗試壓縮 PNG（有損但維持 PNG），成功且比原檔小才採用
+     * @return array|null 成功則回傳 ['method' => 'pngquant', 'outputPath' => ...]，否則 null
+     */
+    private function tryPngquant(string $inputPath, string $outputPath, int $originalSize): ?array
+    {
+        $candidates = [
+            trim((string) shell_exec('which pngquant 2>/dev/null')),
+            '/opt/homebrew/bin/pngquant',
+            '/usr/local/bin/pngquant',
+            'pngquant',
+        ];
+        $pngquant = null;
+        foreach ($candidates as $c) {
+            if ($c === '') {
+                continue;
+            }
+            if ($c === 'pngquant') {
+                $pngquant = 'pngquant';
+                break;
+            }
+            if (is_executable($c)) {
+                $pngquant = $c;
+                break;
+            }
+        }
+        if ($pngquant === null) {
+            return null;
+        }
+
+        $tmpPath = $outputPath . '.pngquant.tmp';
+        $quality = '50-85';
+        $cmd = sprintf(
+            '%s --quality=%s --skip-if-larger --output %s -- %s 2>/dev/null',
+            escapeshellarg($pngquant),
+            $quality,
+            escapeshellarg($tmpPath),
+            escapeshellarg($inputPath)
+        );
+        exec($cmd);
+
+        if (! is_file($tmpPath)) {
+            return null;
+        }
+        $newSize = filesize($tmpPath);
+        if ($newSize >= $originalSize) {
+            unlink($tmpPath);
+            return null;
+        }
+        rename($tmpPath, $outputPath);
+        return ['method' => 'pngquant', 'outputPath' => $outputPath];
     }
 
     /**
@@ -444,9 +492,8 @@ class BatchCompressImages extends Command
                 imagealphablending($image, false);
                 // 保存透明通道
                 imagesavealpha($image, true);
-                // 計算 PNG 壓縮等級 (0=無壓縮, 9=最大壓縮)，品質越高則壓縮越少
-                $pngLevel = (int) round(9 * (100 - $quality) / 100);
-                // 儲存 PNG：第三參數為壓縮等級，限制在 0-9 範圍內
+                // 壓縮等級 0-9：若傳入 0-9 則直接當等級，否則由品質換算
+                $pngLevel = ($quality >= 0 && $quality <= 9) ? (int) $quality : (int) round(9 * (100 - $quality) / 100);
                 imagepng($image, $path, max(0, min(9, $pngLevel)));
                 break;
             case '.webp':
