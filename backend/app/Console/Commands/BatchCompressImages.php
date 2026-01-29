@@ -152,8 +152,6 @@ class BatchCompressImages extends Command
 
                         // 保存圖片
                         $this->saveImage($image, $outputPath, '.png', 6);
-                        // 銷毀圖片
-                        imagedestroy($image);
                     }
                 }
             } catch (\Throwable $e) {
@@ -274,9 +272,6 @@ class BatchCompressImages extends Command
             }
         }
 
-        // 銷毀圖片
-        imagedestroy($image);
-
         // 若無符合目標的，使用壓縮後最小的
         if ($bestPath === null && $fallbackPath !== null) {
             // 最佳路徑
@@ -317,8 +312,6 @@ class BatchCompressImages extends Command
                 if ($imageForConvert !== false) {
                     // 保存圖片
                     $this->saveImage($imageForConvert, $outputPath, '.png', 6);
-                    // 銷毀圖片
-                    imagedestroy($imageForConvert);
                     // 回傳結果
                     return $outputPath;
                 }
