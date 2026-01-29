@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * 批量壓縮圖片，當圖片大於指定大小時壓縮，輸出到目標資料夾
@@ -36,6 +37,8 @@ class BatchCompressImages extends Command
      */
     public function handle(): int
     {
+        Log::alert('Start compressing images at: ' . now()->toDateTimeString());
+
         // 來源資料夾
         $sourceArg = $this->argument('source') ?? storage_path('app/images');
         // 輸出資料夾
@@ -51,8 +54,8 @@ class BatchCompressImages extends Command
 
         // 來源資料夾不存在
         if (!$sourceDir || !is_dir($sourceDir)) {
-            $this->error("執行失敗 - 來源資料夾不存在: {$sourceArg}");
-            $this->line("請先建立 storage/app/images 資料夾並放入要壓縮的圖片");
+            Log::alert("執行失敗 - 來源資料夾不存在: {$sourceArg}");
+            Log::alert("請先建立 storage/app/images 資料夾並放入要壓縮的圖片");
 
             return 1;
         }
@@ -70,18 +73,12 @@ class BatchCompressImages extends Command
         // 目標大小
         $targetBytes = 300 * 1024;
 
-        $this->info('');
-        $this->info("📁 來源: {$sourceDir}");
-        $this->info("📂 輸出: {$outputDir}");
-        $this->info("📏 壓縮門檻: 大於 {$thresholdKB} KB 的圖片將被壓縮");
-        $this->info('');
-
         // 取得所有圖片檔案
         $imageFiles = $this->getImageFiles($sourceDir);
 
         // 如果沒有找到圖片檔案
         if (empty($imageFiles)) {
-            $this->warn('未找到支援的圖片 (jpg, jpeg, png, webp)');
+            Log::alert('No supported images found (jpg, jpeg, png, webp)');
         }
 
         // 壓縮圖片數量
@@ -96,7 +93,7 @@ class BatchCompressImages extends Command
             // 輸出路徑（非 .png 一律輸出為 .png）
             $outputPath = $outputDir . DIRECTORY_SEPARATOR . $file['relativePath'];
             
-            // 如果副檔名不是 .png，則轉成 PNG
+            // 如果副檔名不是 .png，則轉成 png
             if ($file['ext'] !== '.png') {
                 // 轉成 png 的輸出路徑
                 $outputPath = pathinfo($outputPath, PATHINFO_DIRNAME) . DIRECTORY_SEPARATOR
@@ -105,8 +102,6 @@ class BatchCompressImages extends Command
 
             // 檔案統計資訊
             $stats = stat($file['fullPath']);
-            // 檔案大小
-            $sizeKB = number_format($stats['size'] / 1024, 1);
 
             try {
                 // 輸出資料夾路徑
@@ -142,14 +137,6 @@ class BatchCompressImages extends Command
                         $savedBytes = $originalSize - $newSize;
                         // 總共節省的位元組數
                         $totalSavedBytes += $savedBytes;
-                        // 新檔案大小
-                        $newSizeKB = number_format($newSize / 1024, 1);
-                        // 節省的百分比
-                        $savedPercent = number_format(($savedBytes / $originalSize) * 100, 1);
-                        // 壓縮方法
-                        $method = $compressResult['method'] ?? '壓縮';
-                        // 提示
-                        $this->line("✅ {$method}: {$file['relativePath']} ({$sizeKB}KB → {$newSizeKB}KB, 節省 {$savedPercent}%)");
                         // 壓縮圖片數量增加
                         $compressedCount++;
                     } else {
@@ -157,7 +144,7 @@ class BatchCompressImages extends Command
                         throw new \RuntimeException('壓縮後檔案不存在');
                     }
                 } else {
-                    // 未超過門檻：若非 .png 則轉成 PNG 輸出；已是 .png 則不轉也不複製（略過）
+                    // 未超過門檻：若非 .png 則轉成 png 輸出；已是 .png 則不轉也不複製（略過）
                     if ($file['ext'] !== '.png') {
                         // 載入圖片
                         $image = $this->loadImage($file['fullPath'], $file['ext']);
@@ -171,15 +158,16 @@ class BatchCompressImages extends Command
                         $this->saveImage($image, $outputPath, '.png', 6);
                         // 銷毀圖片
                         imagedestroy($image);
-                        $this->line("✅ 轉 PNG: {$file['relativePath']} ({$sizeKB}KB)");
                     }
                 }
             } catch (\Throwable $e) {
                 // 提示
-                $this->error("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
+                Log::alert("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
                 $errorCount++;
             }
         }
+
+        Log::alert('End compressing images at: ' . now()->toDateTimeString());
 
         return 0;
     }
@@ -227,18 +215,16 @@ class BatchCompressImages extends Command
     }
 
     /**
-     * 使用 GD 壓縮圖片，盡量壓到目標大小以下
+     * 壓縮圖片
      * @param string $inputPath 原始圖片路徑
      * @param string $outputPath 輸出路徑
      * @param string $ext 副檔名
      * @param int $targetBytes 目標大小
      * @param int $maxDimension 最大邊長
-     * @return array
+     * @return string
      */
-    private function compressImage($inputPath, $outputPath, $ext, $targetBytes, $maxDimension): array
+    private function compressImage($inputPath, $outputPath, $ext, $targetBytes, $maxDimension): string
     {
-        // 原始輸出路徑
-        $originalOutputPath = $outputPath;
         // 載入圖片
         $image = $this->loadImage($inputPath, $ext);
 
@@ -261,7 +247,7 @@ class BatchCompressImages extends Command
 
         // 原始檔案大小
         $originalSize = filesize($inputPath);
-        // 副檔名不是 .png 則一律輸出為 PNG
+        // 副檔名不是 png 則一律輸出為 png
         $outputExt = ($ext === '.png') ? $ext : '.png';
 
         // 迭代壓縮 - 選用「最高品質」且「不超過目標大小」的結果（盡量接近目標）
@@ -272,7 +258,7 @@ class BatchCompressImages extends Command
         $fallbackPath = null;
         // 備用大小
         $fallbackSize = PHP_INT_MAX;
-        // PNG 用壓縮等級 0-9（9 壓最大）；JPG/WebP 用品質 95-30
+        // png 用壓縮等級 0-9（9 壓最大）；JPG/WebP 用品質 95-30
         $qualities = [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30];
         // 如果副檔名是 .png，則使用壓縮等級 0-9；否則使用品質 95-30
         $tryValues = ($outputExt === '.png') ? range(0, 9) : $qualities;
@@ -281,14 +267,14 @@ class BatchCompressImages extends Command
         foreach ($tryValues as $param) {
             // 測試路徑
             $testPath = $outputPath . '.tmp.' . $param;
-            // 保存圖片（PNG 時 param 為壓縮等級 0-9，否則為品質）
+            // 保存圖片（png 時 param 為壓縮等級 0-9，否則為品質）
             $this->saveImage($image, $testPath, $outputExt, $param);
 
             // 如果測試路徑存在
             if (file_exists($testPath)) {
                 // 檔案大小
                 $size = filesize($testPath);
-                // 如果檔案大小小於備用大小
+                // 如果檔案大小 < 備用大小
                 if ($size < $fallbackSize) {
                     // 備用大小
                     $fallbackSize = $size;
@@ -316,42 +302,49 @@ class BatchCompressImages extends Command
             $bestSize = $fallbackSize;
         }
 
-        // 若壓縮後比原檔大，先嘗試 pngquant（僅 PNG），再決定複製原檔
+        // 若壓縮後比原檔大，先嘗試 pngquant（僅 png），再決定複製原檔
         if ($bestPath === null || $bestSize > $originalSize) {
+            // 壓縮品質參數執行迴圈
             foreach ($tryValues as $param) {
+                // 測試路徑
                 $tmpPath = $outputPath . '.tmp.' . $param;
+                // 如果測試路徑存在
                 if (file_exists($tmpPath)) {
+                    // 刪除測試路徑
                     unlink($tmpPath);
                 }
             }
 
-            // PNG 且 GD 無法壓更小：嘗試 pngquant（若已安裝）
+            // 若副檔名爲 png 且 GD 無法壓更小，嘗試 pngquant（若已安裝）
             if ($ext === '.png') {
-                $pngquantResult = $this->tryPngquant($inputPath, $originalOutputPath, $originalSize);
+                // 嘗試 pngquant
+                $pngquantResult = $this->tryPngquant($inputPath, $outputPath, $originalSize);
+                // 如果 pngquant 結果不為 null
                 if ($pngquantResult !== null) {
+                    // 回傳 pngquant 結果
                     return $pngquantResult;
                 }
             }
 
-            // 非 PNG 來源但輸出為 PNG：必須轉成 PNG，不能直接複製
+            // 非 png 來源但輸出為 png，必須轉成 png，不能直接複製
             if ($outputExt === '.png' && $ext !== '.png') {
                 // 載入圖片
                 $imageForConvert = $this->loadImage($inputPath, $ext);
                 // 如果無法載入圖片
                 if ($imageForConvert !== false) {
                     // 保存圖片
-                    $this->saveImage($imageForConvert, $originalOutputPath, '.png', 6);
+                    $this->saveImage($imageForConvert, $outputPath, '.png', 6);
                     // 銷毀圖片
                     imagedestroy($imageForConvert);
                     // 回傳結果
-                    return ['method' => '轉 PNG(壓縮後更大)', 'outputPath' => $originalOutputPath];
+                    return $outputPath;
                 }
             }
 
             // 複製原檔案
-            copy($inputPath, $originalOutputPath);
+            copy($inputPath, $outputPath);
 
-            return ['method' => '複製(壓縮後更大)', 'outputPath' => $originalOutputPath];
+            return $outputPath;
         }
 
         // 清理其他暫存檔
@@ -368,25 +361,17 @@ class BatchCompressImages extends Command
         // 重命名最佳路徑
         rename($bestPath, $outputPath);
 
-        // 壓縮方法（依實際輸出格式顯示）
-        $method = $outputExt !== $ext ? ($outputExt === '.png' ? '轉 PNG' : '轉 JPEG') : '壓縮';
-        // 如果需要縮小尺寸
-        if ($wasResized) {
-            // 壓縮方法加上縮圖
-            $method .= '+縮圖';
-        }
-
-        return ['method' => $method, 'outputPath' => $outputPath];
+        return $outputPath;
     }
 
     /**
-     * 若系統有 pngquant，嘗試壓縮 PNG（有損但維持 PNG），成功且比原檔小才採用
+     * 若系統有 pngquant，嘗試壓縮 png（有損但維持 png），成功且比原檔小才採用
      * @param string $inputPath 原始圖片路徑
      * @param string $outputPath 輸出路徑
      * @param int $originalSize 原始檔案大小
-     * @return array|null
+     * @return string|null
      */
-    private function tryPngquant($inputPath, $outputPath, $originalSize): ?array
+    private function tryPngquant($inputPath, $outputPath, $originalSize): ?string
     {
         // 候選路徑
         $candidates = [
@@ -455,7 +440,7 @@ class BatchCompressImages extends Command
         rename($tmpPath, $outputPath);
 
         // 回傳結果
-        return ['method' => 'pngquant', 'outputPath' => $outputPath];
+        return $outputPath;
     }
 
     /**
@@ -559,7 +544,7 @@ class BatchCompressImages extends Command
                 // 載入 JPEG 圖片
                 return imagecreatefromjpeg($path);
             case '.png':
-                // 載入 PNG 圖片
+                // 載入 png 圖片
                 return imagecreatefrompng($path);
             case '.webp':
                 // 如果 PHP GD 支援 WebP 格式
