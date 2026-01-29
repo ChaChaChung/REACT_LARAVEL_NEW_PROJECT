@@ -65,8 +65,6 @@ class BatchCompressImages extends Command
         // 輸出資料夾的實際路徑
         $outputDir = realpath($outputArg);
 
-        // 最大邊長
-        $maxDimension = 1280;
         // 目標大小
         $targetBytes = 300 * 1024;
 
@@ -121,11 +119,10 @@ class BatchCompressImages extends Command
                         $file['fullPath'],
                         $outputPath,
                         $file['ext'],
-                        $targetBytes,
-                        $maxDimension
+                        $targetBytes
                     );
 
-                    // compressImage 回傳輸出路徑字串
+                    // 壓縮圖片後回傳的輸出路徑字串
                     $actualOutputPath = $compressResult;
 
                     // 如果實際輸出路徑存在
@@ -219,10 +216,9 @@ class BatchCompressImages extends Command
      * @param string $outputPath 輸出路徑
      * @param string $ext 副檔名
      * @param int $targetBytes 目標大小
-     * @param int $maxDimension 最大邊長
      * @return string
      */
-    private function compressImage($inputPath, $outputPath, $ext, $targetBytes, $maxDimension): string
+    private function compressImage($inputPath, $outputPath, $ext, $targetBytes): string
     {
         // 載入圖片
         $image = $this->loadImage($inputPath, $ext);
@@ -230,18 +226,6 @@ class BatchCompressImages extends Command
         // 如果無法載入圖片
         if ($image === false) {
             throw new \RuntimeException("無法載入圖片 - {$inputPath}");
-        }
-
-        // 圖片寬度
-        $width = imagesx($image);
-        // 圖片高度
-        $height = imagesy($image);
-        // 判斷是否需要縮小尺寸
-        $wasResized = $width > $maxDimension || $height > $maxDimension;
-        // 如果需要縮小尺寸
-        if ($wasResized) {
-            // 縮小圖片尺寸
-            $image = $this->resizeImage($image, $maxDimension);
         }
 
         // 原始檔案大小
@@ -440,56 +424,6 @@ class BatchCompressImages extends Command
 
         // 回傳結果
         return $outputPath;
-    }
-
-    /**
-     * 縮小圖片尺寸
-     * @param \GdImage $image 圖片
-     * @param int $maxDimension 最大邊長
-     * @return \GdImage|false
-     */
-    private function resizeImage($image, $maxDimension)
-    {
-        // 圖片寬度
-        $width = imagesx($image);
-        // 圖片高度
-        $height = imagesy($image);
-
-        // 判斷 圖片寬度是否 <= 最大邊長 且 圖片高度是否 <= 最大邊長
-        if ($width <= $maxDimension && $height <= $maxDimension) {
-            // 返回原圖
-            return $image;
-        }
-
-        // 計算比例
-        $ratio = min($maxDimension / $width, $maxDimension / $height);
-        // 新寬度
-        $newWidth = (int) round($width * $ratio);
-        // 新高度
-        $newHeight = (int) round($height * $ratio);
-
-        // 創建新圖片
-        $resized = imagecreatetruecolor($newWidth, $newHeight);
-        // 如果創建新圖片失敗
-        if ($resized === false) {
-            return $image;
-        }
-
-        // 設置透明通道
-        imagealphablending($resized, false);
-        // 保存透明通道
-        imagesavealpha($resized, true);
-        // 設置透明顏色
-        $transparent = imagecolorallocatealpha($resized, 0, 0, 0, 127);
-        // 填充透明顏色
-        imagefill($resized, 0, 0, $transparent);
-        // 複製圖片
-        imagecopyresampled($resized, $image, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
-        // 銷毀原圖
-        imagedestroy($image);
-
-        // 返回新圖片
-        return $resized;
     }
 
     /**
