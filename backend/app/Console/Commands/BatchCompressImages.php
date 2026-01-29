@@ -74,6 +74,7 @@ class BatchCompressImages extends Command
         $this->info("📁 來源: {$sourceDir}");
         $this->info("📂 輸出: {$outputDir}");
         $this->info("📏 壓縮門檻: 大於 {$thresholdKB} KB 的圖片將被壓縮");
+        $this->info("🖼️ 副檔名: 非 .png 一律輸出為 .png（超過門檻則壓縮後轉 PNG，未達門檻則僅轉檔）；已是 .png 且未達門檻則不轉也不複製");
         $this->info('');
 
         // 取得所有圖片檔案
@@ -94,8 +95,14 @@ class BatchCompressImages extends Command
 
         // 所有圖片檔案執行迴圈
         foreach ($imageFiles as $file) {
-            // 輸出路徑
+            // 輸出路徑（非 .png 一律輸出為 .png）
             $outputPath = $outputDir . DIRECTORY_SEPARATOR . $file['relativePath'];
+            // 如果副檔名不是 .png 則轉成 PNG
+            if ($file['ext'] !== '.png') {
+                // 轉成 PNG 的輸出路徑
+                $outputPath = pathinfo($outputPath, PATHINFO_DIRNAME) . DIRECTORY_SEPARATOR
+                    . pathinfo($outputPath, PATHINFO_FILENAME) . '.png';
+            }
             // 檔案統計資訊
             $stats = stat($file['fullPath']);
             // 檔案大小
@@ -110,11 +117,11 @@ class BatchCompressImages extends Command
                     mkdir($outputDirPath, 0755, true);
                 }
 
-                // 如果檔案大小大於壓縮門檻
+                // 如果檔案大小大於壓縮門檻：壓縮（非 .png 會一併轉成 PNG）
                 if ($stats['size'] > $thresholdBytes) {
                     // 原始檔案大小
                     $originalSize = $stats['size'];
-                    // 壓縮圖片
+                    // 壓縮圖片（超過 500KB 且非 png → 壓縮後轉成 png）
                     $compressResult = $this->compressImage(
                         $file['fullPath'],
                         $outputPath,
@@ -144,6 +151,21 @@ class BatchCompressImages extends Command
                         $compressedCount++;
                     } else {
                         throw new \RuntimeException('壓縮後檔案不存在');
+                    }
+                } else {
+                    // 未超過門檻：若非 .png 則轉成 PNG 輸出；已是 .png 則不轉也不複製（略過）
+                    if ($file['ext'] !== '.png') {
+                        // 載入圖片
+                        $image = $this->loadImage($file['fullPath'], $file['ext']);
+                        // 如果無法載入圖片
+                        if ($image === false) {
+                            throw new \RuntimeException("無法載入圖片 - {$file['fullPath']}");
+                        }
+                        // 保存圖片
+                        $this->saveImage($image, $outputPath, '.png', 6);
+                        // 銷毀圖片
+                        imagedestroy($image);
+                        $this->line("✅ 轉 PNG: {$file['relativePath']} ({$sizeKB}KB)");
                     }
                 }
             } catch (\Throwable $e) {
@@ -233,8 +255,8 @@ class BatchCompressImages extends Command
 
         // 原始檔案大小
         $originalSize = filesize($inputPath);
-        // 維持原本格式，不轉換
-        $outputExt = $ext;
+        // 副檔名不是 .png 則一律輸出為 PNG
+        $outputExt = ($ext === '.png') ? $ext : '.png';
 
         // 迭代壓縮 - 選用「最高品質」且「不超過目標大小」的結果（盡量接近目標）
         $bestPath = null;
@@ -303,7 +325,24 @@ class BatchCompressImages extends Command
                 }
             }
 
+            // 非 PNG 來源但輸出為 PNG：必須轉成 PNG，不能直接複製
+            if ($outputExt === '.png' && $ext !== '.png') {
+                // 載入圖片
+                $imageForConvert = $this->loadImage($inputPath, $ext);
+                // 如果無法載入圖片
+                if ($imageForConvert !== false) {
+                    // 保存圖片
+                    $this->saveImage($imageForConvert, $originalOutputPath, '.png', 6);
+                    // 銷毀圖片
+                    imagedestroy($imageForConvert);
+                    // 回傳結果
+                    return ['method' => '轉 PNG(壓縮後更大)', 'outputPath' => $originalOutputPath];
+                }
+            }
+
+            // 複製原檔案
             copy($inputPath, $originalOutputPath);
+            
             return ['method' => '複製(壓縮後更大)', 'outputPath' => $originalOutputPath];
         }
 
@@ -321,8 +360,8 @@ class BatchCompressImages extends Command
         // 重命名最佳路徑
         rename($bestPath, $outputPath);
 
-        // 壓縮方法
-        $method = $outputExt !== $ext ? '轉 JPEG' : '壓縮';
+        // 壓縮方法（依實際輸出格式顯示）
+        $method = $outputExt !== $ext ? ($outputExt === '.png' ? '轉 PNG' : '轉 JPEG') : '壓縮';
         // 如果需要縮小尺寸
         if ($wasResized) {
             // 壓縮方法加上縮圖
