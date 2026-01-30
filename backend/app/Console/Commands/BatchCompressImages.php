@@ -40,14 +40,11 @@ class BatchCompressImages extends Command
         $sourceArg = $this->argument('source') ?? storage_path('app/images');
         // 輸出資料夾
         $outputArg = $this->argument('output') ?? storage_path('app/compressed');
-
+        
         // 來源資料夾的實際路徑
         $sourceDir = realpath($sourceArg);
-
-        // 壓縮門檻
-        $thresholdKB = (int) $this->option('threshold');
-        // 壓縮門檻的位元組數
-        $thresholdBytes = $thresholdKB * 1024;
+        // 壓縮門檻（KB → 位元組）
+        $thresholdBytes = (int) $this->option('threshold') * 1024;
 
         // 來源資料夾不存在
         if (!$sourceDir || !is_dir($sourceDir)) {
@@ -122,25 +119,21 @@ class BatchCompressImages extends Command
                         $targetBytes
                     );
 
-                    // 壓縮圖片後回傳的輸出路徑字串
-                    $actualOutputPath = $compressResult;
-
-                    // 如果實際輸出路徑存在
-                    if (file_exists($actualOutputPath)) {
+                    // 若壓縮後檔案存在則累計統計
+                    if (file_exists($compressResult)) {
                         // 新檔案大小
-                        $newSize = filesize($actualOutputPath);
-                        // 節省的位元組數
+                        $newSize = filesize($compressResult);
+                        // 計算節省的位元組數 = 原始檔案大小 - 新檔案大小
                         $savedBytes = $originalSize - $newSize;
-                        // 總共節省的位元組數
+                        // 計算總共節省的位元組數
                         $totalSavedBytes += $savedBytes;
                         // 壓縮圖片數量增加
                         $compressedCount++;
                     } else {
-                        // 拋出異常
                         throw new \RuntimeException('壓縮後檔案不存在');
                     }
                 } else {
-                    // 未超過門檻：若非 .png 則轉成 png 輸出；已是 .png 則不轉也不複製（略過）
+                    // 判斷副檔名是否為 .png
                     if ($file['ext'] !== '.png') {
                         // 載入圖片
                         $image = $this->loadImage($file['fullPath'], $file['ext']);
@@ -155,8 +148,10 @@ class BatchCompressImages extends Command
                     }
                 }
             } catch (\Throwable $e) {
-                $this->error("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
+                // 錯誤數量增加
                 $errorCount++;
+                // 顯示錯誤訊息
+                $this->error("執行失敗 - {$file['relativePath']} - {$e->getMessage()}");
             }
         }
 
@@ -347,7 +342,7 @@ class BatchCompressImages extends Command
             // 更激進品質
             $aggressiveQualities = ['25-55', '20-50', '15-45'];
             // 更激進品質執行迴圈
-            foreach ($aggressiveQualities as $quaility) {
+            foreach ($aggressiveQualities as $quality) {
                 // 如果檔案大小 <= 目標大小，則跳出迴圈
                 if (filesize($outputPath) <= $targetBytes) {
                     break;
@@ -357,7 +352,7 @@ class BatchCompressImages extends Command
                 // 當前檔案大小
                 $currentSize = filesize($outputPath);
                 // 嘗試 pngquant
-                if ($this->tryPngquant($outputPath, $secondPath, $currentSize, $quaility) !== null) {
+                if ($this->tryPngquant($outputPath, $secondPath, $currentSize, $quality) !== null) {
                     // 重命名原檔案
                     rename($outputPath, $outputPath . '.old');
                     rename($secondPath, $outputPath);
