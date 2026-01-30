@@ -65,8 +65,8 @@ class BatchCompressImages extends Command
         // 輸出資料夾的實際路徑
         $outputDir = realpath($outputArg);
 
-        // 目標大小
-        $targetBytes = 300 * 1024;
+        // 目標大小（約 450 KB，壓到約 400–500 KB）
+        $targetBytes = 450 * 1024;
 
         // 取得所有圖片檔案
         $imageFiles = $this->getImageFiles($sourceDir);
@@ -334,8 +334,83 @@ class BatchCompressImages extends Command
             }
         }
 
-        // 重命名最佳路徑
+        // 重命名最佳路徑（先輸出 GD 結果）
         rename($bestPath, $outputPath);
+
+        // PNG 且仍超過目標大小：用 pngquant 壓
+        if ($ext === '.png' && $bestSize > $targetBytes) {
+            $this->tryPngquant($inputPath, $outputPath, $originalSize);
+        }
+
+        // 若目前輸出仍 > 目標：對「當前檔」再跑 pngquant（更激進品質），可多段直到達標
+        if ($ext === '.png' && file_exists($outputPath) && filesize($outputPath) > $targetBytes) {
+            // 更激進品質
+            $aggressiveQualities = ['25-55', '20-50', '15-45'];
+            // 更激進品質執行迴圈
+            foreach ($aggressiveQualities as $q) {
+                // 如果檔案大小 <= 目標大小，則跳出迴圈
+                if (filesize($outputPath) <= $targetBytes) {
+                    break;
+                }
+                // 第二個路徑
+                $secondPath = $outputPath . '.2nd';
+                // 當前檔案大小
+                $currentSize = filesize($outputPath);
+                // 嘗試 pngquant
+                if ($this->tryPngquant($outputPath, $secondPath, $currentSize, $q) !== null) {
+                    // 重命名原檔案
+                    rename($outputPath, $outputPath . '.old');
+                    rename($secondPath, $outputPath);
+                    @unlink($outputPath . '.old');
+                }
+            }
+        }
+
+        // 最後手段，若壓縮出來的圖片還是 > 目標尺寸，則縮小尺寸再存 PNG（像素變少，檔案變小）
+        if ($ext === '.png' && file_exists($outputPath) && filesize($outputPath) > $targetBytes) {
+            // 載入圖片
+            $img = $this->loadImage($outputPath, '.png');
+            // 如果無法載入圖片
+            if ($img !== false) {
+                // 圖片寬度
+                $w = imagesx($img);
+                // 圖片高度
+                $h = imagesy($img);
+                // 暫存路徑
+                $tmpResized = $outputPath . '.resized.tmp';
+                // 縮小尺寸執行迴圈
+                foreach ([0.85, 0.75, 0.65, 0.55, 0.5, 0.45, 0.4] as $scale) {
+                    // 如果當前檔案大小 <= 目標大小，則跳出迴圈
+                    if (filesize($outputPath) <= $targetBytes) {
+                        break;
+                    }
+                    // 新寬度
+                    $nw = max(1, (int) round($w * $scale));
+                    // 新高度
+                    $nh = max(1, (int) round($h * $scale));
+                    // 縮小圖片
+                    $resized = imagescale($img, $nw, $nh);
+                    // 如果縮小圖片成功
+                    if ($resized !== false) {
+                        // 保存圖片
+                        $this->saveImage($resized, $tmpResized, '.png', 9);
+                        // 如果暫存路徑存在且檔案大小 <= 目標大小，則重命名
+                        if (is_file($tmpResized) && filesize($tmpResized) <= $targetBytes) {
+                            rename($tmpResized, $outputPath);
+                            break;
+                        }
+                        // 如果暫存路徑存在且檔案大小 < 原檔案大小，則重命名
+                        if (is_file($tmpResized) && filesize($tmpResized) < filesize($outputPath)) {
+                            rename($tmpResized, $outputPath);
+                        // 如果暫存路徑存在，則刪除
+                        } else if (is_file($tmpResized)) {
+                            @unlink($tmpResized);
+                        }
+                    }
+                }
+                @unlink($tmpResized);
+            }
+        }
 
         return $outputPath;
     }
@@ -345,9 +420,10 @@ class BatchCompressImages extends Command
      * @param string $inputPath 原始圖片路徑
      * @param string $outputPath 輸出路徑
      * @param int $originalSize 原始檔案大小
+     * @param string $quality 品質區間，例如 '35-68' 或 '20-50'（二壓用）
      * @return string|null
      */
-    private function tryPngquant($inputPath, $outputPath, $originalSize): ?string
+    private function tryPngquant($inputPath, $outputPath, $originalSize, $quality = '35-68'): ?string
     {
         // 候選路徑
         $candidates = [
@@ -385,8 +461,6 @@ class BatchCompressImages extends Command
 
         // 暫存路徑
         $tmpPath = $outputPath . '.pngquant.tmp';
-        // 品質
-        $quality = '50-85';
         // 命令
         $cmd = sprintf(
             '%s --quality=%s --skip-if-larger --output %s -- %s 2>/dev/null',
