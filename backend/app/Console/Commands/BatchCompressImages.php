@@ -337,7 +337,7 @@ class BatchCompressImages extends Command
         // 重命名最佳路徑（先輸出 GD 結果）
         rename($bestPath, $outputPath);
 
-        // PNG 且仍超過目標大小：用 pngquant 壓
+        // PNG 且仍超過目標大小，用 pngquant 再壓一次
         if ($ext === '.png' && $bestSize > $targetBytes) {
             $this->tryPngquant($inputPath, $outputPath, $originalSize);
         }
@@ -347,7 +347,7 @@ class BatchCompressImages extends Command
             // 更激進品質
             $aggressiveQualities = ['25-55', '20-50', '15-45'];
             // 更激進品質執行迴圈
-            foreach ($aggressiveQualities as $q) {
+            foreach ($aggressiveQualities as $quaility) {
                 // 如果檔案大小 <= 目標大小，則跳出迴圈
                 if (filesize($outputPath) <= $targetBytes) {
                     break;
@@ -357,7 +357,7 @@ class BatchCompressImages extends Command
                 // 當前檔案大小
                 $currentSize = filesize($outputPath);
                 // 嘗試 pngquant
-                if ($this->tryPngquant($outputPath, $secondPath, $currentSize, $q) !== null) {
+                if ($this->tryPngquant($outputPath, $secondPath, $currentSize, $quaility) !== null) {
                     // 重命名原檔案
                     rename($outputPath, $outputPath . '.old');
                     rename($secondPath, $outputPath);
@@ -378,8 +378,10 @@ class BatchCompressImages extends Command
                 $h = imagesy($img);
                 // 暫存路徑
                 $tmpResized = $outputPath . '.resized.tmp';
-                // 縮小尺寸執行迴圈
-                foreach ([0.85, 0.75, 0.65, 0.55, 0.5, 0.45, 0.4] as $scale) {
+                // 縮小尺寸比例
+                $scales = [0.85, 0.75, 0.65, 0.55, 0.5, 0.45, 0.4];
+                // 縮小尺寸比例執行迴圈
+                foreach ($scales as $scale) {
                     // 如果當前檔案大小 <= 目標大小，則跳出迴圈
                     if (filesize($outputPath) <= $targetBytes) {
                         break;
@@ -416,55 +418,22 @@ class BatchCompressImages extends Command
     }
 
     /**
-     * 若系統有 pngquant，嘗試壓縮 png（有損但維持 png），成功且比原檔小才採用
+     * 若系統有 pngquant，嘗試壓縮 png
      * @param string $inputPath 原始圖片路徑
      * @param string $outputPath 輸出路徑
      * @param int $originalSize 原始檔案大小
-     * @param string $quality 品質區間，例如 '35-68' 或 '20-50'（二壓用）
+     * @param string $quality 品質區間
      * @return string|null
      */
     private function tryPngquant($inputPath, $outputPath, $originalSize, $quality = '35-68'): ?string
     {
-        // 候選路徑
-        $candidates = [
-            trim((string) shell_exec('which pngquant 2>/dev/null')),
-            '/opt/homebrew/bin/pngquant',
-            '/usr/local/bin/pngquant',
-            'pngquant',
-        ];
-
-        // pngquant 路徑
-        $pngquant = null;
-
-        // 候選路徑執行迴圈
-        foreach ($candidates as $c) {
-            // 如果候選路徑為空
-            if ($c === '') {
-                continue;
-            }
-            // 如果候選路徑為 pngquant
-            if ($c === 'pngquant') {
-                $pngquant = $c;
-                break;
-            }
-            // 判斷候選路徑是否存在且可執行
-            if (is_executable($c)) {
-                $pngquant = $c;
-                break;
-            }
-        }
-
-        // 如果 pngquant 路徑不存在
-        if ($pngquant === null) {
-            return null;
-        }
-
         // 暫存路徑
         $tmpPath = $outputPath . '.pngquant.tmp';
+
         // 命令
         $cmd = sprintf(
             '%s --quality=%s --skip-if-larger --output %s -- %s 2>/dev/null',
-            escapeshellarg($pngquant),
+            'pngquant',
             $quality,
             escapeshellarg($tmpPath),
             escapeshellarg($inputPath)
@@ -515,7 +484,7 @@ class BatchCompressImages extends Command
                 imagealphablending($image, false);
                 // 保存透明通道
                 imagesavealpha($image, true);
-                // 壓縮等級 0-9：若傳入 0-9 則直接當等級，否則由品質換算
+                // 壓縮等級 0-9，若傳入 0-9 則直接當等級，否則由品質換算
                 $pngLevel = ($quality >= 0 && $quality <= 9) ? (int) $quality : (int) round(9 * (100 - $quality) / 100);
                 imagepng($image, $path, max(0, min(9, $pngLevel)));
                 break;
