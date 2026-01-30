@@ -303,6 +303,58 @@ trait HasAgentAuth
     }
 
     /**
+     * 生成 TAG Puppeteer cookies 設定程式碼片段
+     * 使用 TAG_AGENT_TOKEN 登入，存到 cookie 名稱「session」
+     * 登入成功後：TAG_AGENT_LANG → cookie「lang」；TAG_AGENT_ROLE →「role」；TAG_AGENT_TIMEZONE →「timezone」
+     * TAG_AGENT_DOMAIN 為目標網址（可為完整 URL，會自動取 host 作為 cookie domain）
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @param string|null $domainFromUrl 若未設定 TAG_AGENT_DOMAIN，可從目標 URL 的 host 傳入
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateTagPuppeteerCookiesCode(string $pageVar = 'page', ?string $domainFromUrl = null): string
+    {
+        $token = env('TAG_AGENT_TOKEN', '');
+        $lang = env('TAG_AGENT_LANG', 'zh-TW');
+        $role = env('TAG_AGENT_ROLE', 'platform');
+        $timezone = env('TAG_AGENT_TIMEZONE', 'GMTMinusFour');
+        $domainRaw = env('TAG_AGENT_DOMAIN', '') ?: ($domainFromUrl ?? '');
+        
+        // TAG_AGENT_DOMAIN 可能是完整網址，取 host 作為 cookie domain
+        $domain = $domainRaw;
+        if ($domainRaw && preg_match('#^https?://#i', $domainRaw)) {
+            $parsed = parse_url($domainRaw);
+            $domain = $parsed['host'] ?? $domainRaw;
+        }
+
+        $tokenJs = json_encode($token);
+        $langJs = json_encode($lang);
+        $roleJs = json_encode($role);
+        $timezoneJs = json_encode($timezone);
+        $domainJs = json_encode($domain);
+
+        return <<<JS
+            console.log('🔐 Setting authentication cookies (session, lang, role, timezone)...');
+
+            const cookies = [];
+            const tagDomain = {$domainJs};
+            if (tagDomain && tagDomain !== '') {
+                const path = '/';
+                if ({$tokenJs}) cookies.push({ name: 'session', value: {$tokenJs}, domain: tagDomain, path });
+                if ({$langJs}) cookies.push({ name: 'lang', value: {$langJs}, domain: tagDomain, path });
+                cookies.push({ name: 'role', value: {$roleJs}, domain: tagDomain, path });
+                cookies.push({ name: 'timezone', value: {$timezoneJs}, domain: tagDomain, path });
+            }
+
+            if (cookies.length > 0) {
+                await {$pageVar}.setCookie(...cookies);
+                console.log('✅ Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No cookies set (set TAG_AGENT_TOKEN and TAG_AGENT_DOMAIN or use URL with host)');
+            }
+        JS;
+    }
+
+    /**
      * 生成 Blodplay Puppeteer cookies 設定程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @return string 返回 JavaScript 程式碼片段
