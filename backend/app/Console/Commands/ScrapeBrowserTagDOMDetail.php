@@ -138,15 +138,6 @@ class ScrapeBrowserTagDOMDetail extends Command
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
         $playerAccountJs = $player_account ? json_encode($player_account) : 'null';
 
-        // TAG 表單登入用（cookie 無法登入時改用帳密）；有驗證碼時需開可見視窗讓使用者手動完成
-        $tagLoginAccount = json_encode(env('TAG_AGENT_ACCOUNT', ''));
-        $tagLoginPassword = json_encode(env('TAG_AGENT_PASSWORD', ''));
-        // 是否顯示瀏覽器：.env 設 TAG_AGENT_HEADLESS=false 可強制顯示；未設時有帳密則顯示（方便驗證碼）
-        $tagHeadlessEnv = strtolower(trim(env('TAG_AGENT_HEADLESS', '')));
-        $tagHeadedForCaptcha = ($tagHeadlessEnv === 'false' || $tagHeadlessEnv === '0')
-            ? 'false'
-            : (($tagHeadlessEnv === 'true' || $tagHeadlessEnv === '1') ? 'true' : ((env('TAG_AGENT_ACCOUNT') && env('TAG_AGENT_PASSWORD')) ? 'false' : 'true'));
-
         // 有日期時組出帶查詢參數的目標 URL，直接跳轉（不靠日期選擇器）
         $parsed = parse_url($url);
         $basePath = ($parsed['scheme'] ?? 'https') . '://' . ($parsed['host'] ?? '') . ($parsed['path'] ?? '/');
@@ -190,9 +181,8 @@ class ScrapeBrowserTagDOMDetail extends Command
              * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
              */
             async function scrapeDOMContent() {
-                // 有設帳密時改開可見視窗，讓使用者手動完成驗證碼並點擊登入
                 const browser = await puppeteer.launch({
-                    headless: $tagHeadedForCaptcha,
+                    headless: 'new',
                     args: [
                         // 安全性相關參數（用於容器環境）
                         '--no-sandbox',
@@ -278,73 +268,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     await page.screenshot({ path: 'step_02_after_goto_target.png', fullPage: false });
                     console.log('📸 Screenshot: step_02_after_goto_target.png');
 
-                    // 若被導向登入頁，用表單登入（TAG 後台若驗證 session 與 server 端綁定，僅 cookie 可能仍無法通過）
-                    const tagAccount = $tagLoginAccount;
-                    const tagPassword = $tagLoginPassword;
-                    if (tagAccount && tagPassword) {
-                        const isLoginPage = page.url().includes('/login') || await page.$('#login-page, input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]');
-                        if (isLoginPage) {
-                            console.log('🔐 Login page detected, filling account & password...');
-                            await page.screenshot({ path: 'step_02b_login_page_before_fill.png', fullPage: false });
-                            console.log('📸 Screenshot: step_02b_login_page_before_fill.png');
-                            await page.waitForSelector('input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"], input.el-input__inner', { timeout: 5000 }).catch(() => {});
-                            const accountInput = await page.$('input[placeholder*="請輸入帳號"], input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]');
-                            if (accountInput) {
-                                await accountInput.click({ clickCount: 3 });
-                                await accountInput.type(tagAccount, { delay: 50 });
-                            }
-                            const pwdInput = await page.$('input[type="password"]');
-                            if (pwdInput) {
-                                await pwdInput.click({ clickCount: 3 });
-                                await pwdInput.type(tagPassword, { delay: 50 });
-                            }
-                            // 點開語言下拉選單並選中 English
-                            const selectInput = await page.$('input.el-input__inner[placeholder="Select"]');
-                            if (selectInput) {
-                                await selectInput.click();
-                                await new Promise(resolve => setTimeout(resolve, 300));
-                                const englishItem = await page.evaluateHandle(() => {
-                                    const items = document.querySelectorAll('li.el-select-dropdown__item');
-                                    for (const li of items) {
-                                        const span = li.querySelector('span');
-                                        if (span && span.textContent.trim() === 'English') return li;
-                                    }
-                                    return null;
-                                });
-                                const englishEl = englishItem.asElement();
-                                if (englishEl) {
-                                    await englishEl.click();
-                                    console.log('✅ Selected English');
-                                }
-                                await englishItem.dispose();
-                            }
-                            await page.screenshot({ path: 'step_02c_login_page_after_fill.png', fullPage: false });
-                            console.log('📸 Screenshot: step_02c_login_page_after_fill.png');
-                            console.log('⏳ 請在開啟的瀏覽器視窗中完成驗證碼並點擊登入，等待最多 2 分鐘...');
-                            await page.waitForFunction(
-                                () => !window.location.href.includes('/login'),
-                                { timeout: 120000 }
-                            ).catch(() => {
-                                console.log('⚠️  Wait for login timed out or still on login page');
-                            });
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            console.log('✅ Login step done');
-                            // 登入成功後跳轉到目標 URL，並做 session 暖身（等網路閒置＋延遲）避免一點 Search 就被踢回登入
-                            if (!page.url().includes('/login')) {
-                                console.log('🔄 Navigating to target URL (session warm-up)...');
-                                await page.goto(finalTargetUrl, { waitUntil: 'networkidle0', timeout: 25000 }).catch(() => {
-                                    console.log('⚠️  networkidle0 timeout, continuing with domcontentloaded');
-                                });
-                                if (page.url().includes('/login')) {
-                                    await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                                }
-                                await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
-                            }
-                        }
-                    } else {
-                        console.log('⚠️  TAG_AGENT_ACCOUNT or TAG_AGENT_PASSWORD not set, skipping form login');
-                    }
-
                     // 若仍為登入頁：再設一次 cookie 後重新導向（有時可補上 lang/role/timezone 或 session）
                     if (page.url().includes('/login')) {
                         $cookiesCodeForPage
@@ -360,7 +283,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                         await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                     }
 
-                    // 偵測 session expired：若被導回登入頁或頁面出現 "Session expired, please log in again (1002)" 等，先自動填帳密與語言，等使用者輸入驗證碼並點 Login
+                    // 偵測 session expired：若被導回登入頁或頁面出現 "Session expired, please log in again (1002)" 等，重設 cookie 並重新導向
                     const checkSessionExpired = async () => {
                         const isLogin = page.url().includes('/login');
                         const hasExpired = await page.evaluate(() => {
@@ -368,43 +291,12 @@ class ScrapeBrowserTagDOMDetail extends Command
                             return /session\s*expired|Session expired,\s*please\s*log\s*in\s*again|\(1002\)|登入已過期|會話已過期/i.test(text);
                         }).catch(() => false);
                         if (isLogin || hasExpired) {
-                            if (tagAccount && tagPassword) {
-                                console.log('⚠️  Session expired (1002). Auto-filling account & password, please enter captcha and click Login in the browser (waiting up to 2 min)...');
-                                await page.waitForSelector('input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]', { timeout: 5000 }).catch(() => {});
-                                const accountInput = await page.$('input[placeholder*="請輸入帳號"], input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]');
-                                if (accountInput) {
-                                    await accountInput.click({ clickCount: 3 });
-                                    await accountInput.type(tagAccount, { delay: 50 });
-                                }
-                                const pwdInput = await page.$('input[type="password"]');
-                                if (pwdInput) {
-                                    await pwdInput.click({ clickCount: 3 });
-                                    await pwdInput.type(tagPassword, { delay: 50 });
-                                }
-                                const selectInput = await page.$('input.el-input__inner[placeholder="Select"]');
-                                if (selectInput) {
-                                    await selectInput.click();
-                                    await new Promise(resolve => setTimeout(resolve, 300));
-                                    const englishItem = await page.evaluateHandle(() => {
-                                        const items = document.querySelectorAll('li.el-select-dropdown__item');
-                                        for (const li of items) {
-                                            const span = li.querySelector('span');
-                                            if (span && span.textContent.trim() === 'English') return li;
-                                        }
-                                        return null;
-                                    });
-                                    const englishEl = englishItem.asElement();
-                                    if (englishEl) await englishEl.click();
-                                    await englishItem.dispose();
-                                }
-                            } else {
-                                console.log('⚠️  Session expired (1002) or redirected to login. Please log in again in the browser (solve captcha if needed), waiting up to 2 min...');
-                            }
-                            await page.waitForFunction(() => !window.location.href.includes('/login'), { timeout: 120000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            console.log('⚠️  Session expired (1002) or redirected to login. Re-applying cookies and retrying...');
+                            $cookiesCodeForPage
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                             console.log('🔄 Navigating to target URL again...');
                             await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                            console.log('⏳ Session warm-up after re-login (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
+                            console.log('⏳ Session warm-up after retry (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
                             await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                             const searchBtnAfter = await page.evaluateHandle(() => {
                                 const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
@@ -413,7 +305,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                             const searchElAfter = searchBtnAfter.asElement();
                             if (searchElAfter) {
                                 await searchElAfter.click();
-                                console.log('✅ Search button clicked (after re-login)');
+                                console.log('✅ Search button clicked (after retry)');
                                 await new Promise(resolve => setTimeout(resolve, 1500));
                             }
                             if (searchBtnAfter) await searchBtnAfter.dispose();
