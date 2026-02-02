@@ -165,10 +165,6 @@ class ScrapeBrowserTagDOMDetail extends Command
         $finalUrlJs = json_encode($finalUrl);
         $useUrlParamsJs = ($date_start || $date_end) ? 'true' : 'false';
 
-        // 降低 1002 session expired：登入後／重新導向後等待（毫秒），可於 .env 設定 TAG_SESSION_WARMUP_AFTER_LOGIN_MS、TAG_SESSION_WARMUP_BEFORE_SEARCH_MS
-        $tagWarmupAfterLoginMs = max(2000, min(30000, (int) env('TAG_SESSION_WARMUP_AFTER_LOGIN_MS', 8000)));
-        $tagWarmupBeforeSearchMs = max(1000, min(15000, (int) env('TAG_SESSION_WARMUP_BEFORE_SEARCH_MS', 5000)));
-
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
@@ -275,12 +271,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     // 若目前在登入頁，再試一次導向目標頁
                     if (page.url().includes('/login')) {
                         await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                        await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
-                    }
-                    // 已登入且在目標頁時：再做一次 session 暖身（等頁面穩定再操作，減少 1002 session expired）
-                    if (!page.url().includes('/login')) {
-                        console.log('⏳ Session warm-up: waiting for page to settle (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
-                        await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                     }
 
                     // 偵測 session expired：若被導回登入頁或頁面出現 "Session expired, please log in again (1002)" 等，重設 cookie 並重新導向
@@ -296,8 +286,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 1000));
                             console.log('🔄 Navigating to target URL again...');
                             await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                            console.log('⏳ Session warm-up after retry (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
-                            await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                             const searchBtnAfter = await page.evaluateHandle(() => {
                                 const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
                                 return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
@@ -379,8 +367,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     
                     // 到達目標 URL 後一律點 Search 按鈕
                     try {
-                        console.log('⏳ Session warm-up before first Search (' + ($tagWarmupBeforeSearchMs/1000) + 's)...');
-                        await new Promise(resolve => setTimeout(resolve, $tagWarmupBeforeSearchMs));
                         const searchBtn = await page.evaluateHandle(() => {
                             const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
                             return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
@@ -566,13 +552,10 @@ class ScrapeBrowserTagDOMDetail extends Command
 
                     // 如果至少填入了其中一個日期或玩家帳號，嘗試點擊搜尋按鈕
                     // 若 URL 已帶查詢參數（useUrlParams），後台會依參數直接載入表格，跳過 Search 可避免觸發查詢 API 導致的 session expired (1002)
-                    if (!useUrlParams && ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
+                        if (!useUrlParams && ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
                         (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') ||
                         (playerAccountParsed && playerAccountParsed !== null && playerAccountParsed !== ''))) {
                         try {
-                            // 點 Search 前做短暫 session 暖身，減少「一按查詢就被後端判 session 過期」的機率
-                            console.log('⏳ Session warm-up before Search (' + ($tagWarmupBeforeSearchMs/1000) + 's)...');
-                            await new Promise(resolve => setTimeout(resolve, $tagWarmupBeforeSearchMs));
                             // 等待一下讓日期和帳號輸入完成
                             await new Promise(resolve => setTimeout(resolve, 300));
 
