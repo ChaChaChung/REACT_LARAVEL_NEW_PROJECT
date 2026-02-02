@@ -153,7 +153,11 @@ class ScrapeBrowserTagDOMDetail extends Command
         // TAG 表單登入用（cookie 無法登入時改用帳密）；有驗證碼時需開可見視窗讓使用者手動完成
         $tagLoginAccount = json_encode(env('TAG_AGENT_ACCOUNT', ''));
         $tagLoginPassword = json_encode(env('TAG_AGENT_PASSWORD', ''));
-        $tagHeadedForCaptcha = (env('TAG_AGENT_ACCOUNT') && env('TAG_AGENT_PASSWORD')) ? 'false' : 'true';
+        // 是否顯示瀏覽器：.env 設 TAG_AGENT_HEADLESS=false 可強制顯示；未設時有帳密則顯示（方便驗證碼）
+        $tagHeadlessEnv = strtolower(trim(env('TAG_AGENT_HEADLESS', '')));
+        $tagHeadedForCaptcha = ($tagHeadlessEnv === 'false' || $tagHeadlessEnv === '0')
+            ? 'false'
+            : (($tagHeadlessEnv === 'true' || $tagHeadlessEnv === '1') ? 'true' : ((env('TAG_AGENT_ACCOUNT') && env('TAG_AGENT_PASSWORD')) ? 'false' : 'true'));
 
         // 有日期時組出帶查詢參數的目標 URL，直接跳轉（不靠日期選擇器）
         $parsed = parse_url($url);
@@ -181,6 +185,10 @@ class ScrapeBrowserTagDOMDetail extends Command
         }
         $finalUrlJs = json_encode($finalUrl);
         $useUrlParamsJs = ($date_start || $date_end) ? 'true' : 'false';
+
+        // 降低 1002 session expired：登入後／重新導向後等待（毫秒），可於 .env 設定 TAG_SESSION_WARMUP_AFTER_LOGIN_MS、TAG_SESSION_WARMUP_BEFORE_SEARCH_MS
+        $tagWarmupAfterLoginMs = max(2000, min(30000, (int) env('TAG_SESSION_WARMUP_AFTER_LOGIN_MS', 8000)));
+        $tagWarmupBeforeSearchMs = max(1000, min(15000, (int) env('TAG_SESSION_WARMUP_BEFORE_SEARCH_MS', 5000)));
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -317,21 +325,40 @@ class ScrapeBrowserTagDOMDetail extends Command
 
                     const finalTargetUrl = $finalUrlJs;
                     const useUrlParams = $useUrlParamsJs;
+                    // 若要用 cookie 代登入：必須「先」進入目標 domain 任一頁，再 setCookie，再 goto 目標 URL（第二次請求才會帶上 cookie）
+                    const tagCookieLoginUrl = (() => {
+                        try {
+                            const u = new URL(finalTargetUrl);
+                            return u.origin + '/';
+                        } catch (e) { return null; }
+                    })();
+                    if (tagCookieLoginUrl) {
+                        console.log('🌐 First navigating to domain (for cookie context):', tagCookieLoginUrl);
+                        await page.goto(tagCookieLoginUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        await page.screenshot({ path: 'step_01_first_domain.png', fullPage: false });
+                        console.log('📸 Screenshot: step_01_first_domain.png');
+                    }
+                    // 在第一次進入該 domain 後立刻設定 cookie，之後再 goto 目標頁時請求會帶上這些 cookie
+                    $cookiesCodeForPage
                     console.log('🌐 Navigating to:', finalTargetUrl);
-
                     await page.goto(finalTargetUrl, {
                         waitUntil: 'domcontentloaded',
                         timeout: 20000
                     });
                     await new Promise(resolve => setTimeout(resolve, 2000));
+                    await page.screenshot({ path: 'step_02_after_goto_target.png', fullPage: false });
+                    console.log('📸 Screenshot: step_02_after_goto_target.png');
 
-                    // 若被導向登入頁，用表單登入（TAG 後台無法用 cookie 直接帶入 session）
+                    // 若被導向登入頁，用表單登入（TAG 後台若驗證 session 與 server 端綁定，僅 cookie 可能仍無法通過）
                     const tagAccount = $tagLoginAccount;
                     const tagPassword = $tagLoginPassword;
                     if (tagAccount && tagPassword) {
                         const isLoginPage = page.url().includes('/login') || await page.$('#login-page, input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]');
                         if (isLoginPage) {
                             console.log('🔐 Login page detected, filling account & password...');
+                            await page.screenshot({ path: 'step_02b_login_page_before_fill.png', fullPage: false });
+                            console.log('📸 Screenshot: step_02b_login_page_before_fill.png');
                             await page.waitForSelector('input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"], input.el-input__inner', { timeout: 5000 }).catch(() => {});
                             const accountInput = await page.$('input[placeholder*="請輸入帳號"], input[placeholder*="帳號"], input[placeholder*="account"], input[placeholder*="Account"]');
                             if (accountInput) {
@@ -363,6 +390,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 }
                                 await englishItem.dispose();
                             }
+                            await page.screenshot({ path: 'step_02c_login_page_after_fill.png', fullPage: false });
+                            console.log('📸 Screenshot: step_02c_login_page_after_fill.png');
                             console.log('⏳ 請在開啟的瀏覽器視窗中完成驗證碼並點擊登入，等待最多 2 分鐘...');
                             await page.waitForFunction(
                                 () => !window.location.href.includes('/login'),
@@ -381,25 +410,26 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 if (page.url().includes('/login')) {
                                     await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
                                 }
-                                await new Promise(resolve => setTimeout(resolve, 4000));
+                                await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                             }
                         }
                     } else {
                         console.log('⚠️  TAG_AGENT_ACCOUNT or TAG_AGENT_PASSWORD not set, skipping form login');
                     }
 
-                    // 若仍為登入頁可再設 cookie（lang/role/timezone）後 reload
-                    $cookiesCodeForPage
-
+                    // 若仍為登入頁：再設一次 cookie 後重新導向（有時可補上 lang/role/timezone 或 session）
+                    if (page.url().includes('/login')) {
+                        $cookiesCodeForPage
+                    }
                     // 若目前在登入頁，再試一次導向目標頁
                     if (page.url().includes('/login')) {
                         await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                        await new Promise(resolve => setTimeout(resolve, 4000));
+                        await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                     }
-                    // 已登入且在目標頁時：再做一次 session 暖身（等頁面穩定再操作，減少一點 Search 就被導回登入）
+                    // 已登入且在目標頁時：再做一次 session 暖身（等頁面穩定再操作，減少 1002 session expired）
                     if (!page.url().includes('/login')) {
-                        console.log('⏳ Session warm-up: waiting for page to settle (4s)...');
-                        await new Promise(resolve => setTimeout(resolve, 4000));
+                        console.log('⏳ Session warm-up: waiting for page to settle (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
+                        await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                     }
 
                     // 偵測 session expired：若被導回登入頁或頁面出現 "Session expired, please log in again (1002)" 等，先自動填帳密與語言，等使用者輸入驗證碼並點 Login
@@ -446,7 +476,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 2000));
                             console.log('🔄 Navigating to target URL again...');
                             await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            console.log('⏳ Session warm-up after re-login (' + ($tagWarmupAfterLoginMs/1000) + 's)...');
+                            await new Promise(resolve => setTimeout(resolve, $tagWarmupAfterLoginMs));
                             const searchBtnAfter = await page.evaluateHandle(() => {
                                 const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
                                 return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
@@ -462,9 +493,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                     };
                     await checkSessionExpired();
 
-                    // 步驟截圖 00：登入／導航後的畫面
-                    await page.screenshot({ path: 'screenshot_00_after_cookies.png', fullPage: false });
-                    console.log('📸 Screenshot saved: screenshot_00_after_cookies.png');
+                    // 步驟截圖 03：登入／cookie 就緒後的畫面
+                    await page.screenshot({ path: 'step_03_after_login_ready.png', fullPage: false });
+                    console.log('📸 Screenshot: step_03_after_login_ready.png');
                     
                     // 選日期前再確認一次 session 未過期
                     await checkSessionExpired();
@@ -526,28 +557,28 @@ class ScrapeBrowserTagDOMDetail extends Command
                         console.log('📅 Date in URL, skip date picker');
                     }
                     
-                    // 導向完成後：有帶日期/參數時不點 Search（後台常會依 URL 參數直接載入表格，可避免一點 Search 就被導回登入）
-                    if (!useUrlParams) {
-                        try {
-                            const searchBtn = await page.evaluateHandle(() => {
-                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
-                                return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
-                            });
-                            const searchEl = searchBtn.asElement();
-                            if (searchEl) {
-                                await searchEl.click();
-                                console.log('✅ Search button clicked');
-                                await new Promise(resolve => setTimeout(resolve, 2500));
-                            }
-                            if (searchBtn) await searchBtn.dispose();
-                        } catch (e) {
-                            console.log('⚠️  Search button click: ' + e.message);
+                    // 到達目標 URL 後一律點 Search 按鈕
+                    try {
+                        console.log('⏳ Session warm-up before first Search (' + ($tagWarmupBeforeSearchMs/1000) + 's)...');
+                        await new Promise(resolve => setTimeout(resolve, $tagWarmupBeforeSearchMs));
+                        const searchBtn = await page.evaluateHandle(() => {
+                            const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
+                            return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
+                        });
+                        const searchEl = searchBtn.asElement();
+                        if (searchEl) {
+                            await searchEl.click();
+                            console.log('✅ Search button clicked');
+                            await new Promise(resolve => setTimeout(resolve, 2500));
+                        } else {
+                            console.log('⚠️  Search button not found');
                         }
-                        console.log('🔍 Checking if page redirected to login after Search click...');
-                        await checkSessionExpired();
-                    } else {
-                        console.log('📌 URL has query params, skipping Search button (data may load from URL)...');
+                        if (searchBtn) await searchBtn.dispose();
+                    } catch (e) {
+                        console.log('⚠️  Search button click: ' + e.message);
                     }
+                    console.log('🔍 Checking if page redirected to login after Search click...');
+                    await checkSessionExpired();
 
                     // 簡化滾動操作（只滾動一次，減少等待時間）
                     await page.evaluate(() => {
@@ -559,9 +590,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                     });
                     await new Promise(resolve => setTimeout(resolve, 500));
                     
-                    // 步驟截圖 01：導航後、等待表格前
-                    await page.screenshot({ path: 'screenshot_01_after_navigation.png', fullPage: false });
-                    console.log('📸 Screenshot saved: screenshot_01_after_navigation.png');
+                    // 步驟截圖 05：導航／滾動後、等待表格前
+                    await page.screenshot({ path: 'step_05_after_navigation.png', fullPage: false });
+                    console.log('📸 Screenshot: step_05_after_navigation.png');
                     
                     const isSessionExpiredPage = async () => {
                         if (page.url().includes('/login')) return true;
@@ -660,9 +691,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                     // 額外等待確保表格完全渲染
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
-                    // 步驟截圖 02：等待表格後（無論是否找到）
-                    await page.screenshot({ path: 'screenshot_02_after_table_wait.png', fullPage: false });
-                    console.log('📸 Screenshot saved: screenshot_02_after_table_wait.png');
+                    // 步驟截圖 06：等待表格後（無論是否找到）
+                    await page.screenshot({ path: 'step_06_after_table_wait.png', fullPage: false });
+                    console.log('📸 Screenshot: step_06_after_table_wait.png');
 
                     // 解析 player_account（date 已在進入 URL 後先選好）
                     let playerAccountParsed = null;
@@ -754,16 +785,20 @@ class ScrapeBrowserTagDOMDetail extends Command
                     }
 
                     // 步驟截圖 03：日期／玩家帳號填寫後、點搜尋前
-                    await page.screenshot({ path: 'screenshot_03_after_date_and_account.png', fullPage: false });
-                    console.log('📸 Screenshot saved: screenshot_03_after_date_and_account.png');
+                    await page.screenshot({ path: 'step_04_after_date_and_account.png', fullPage: false });
+                    console.log('📸 Screenshot: step_04_after_date_and_account.png');
 
                     // 如果至少填入了其中一個日期或玩家帳號，嘗試點擊搜尋按鈕
-                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
+                    // 若 URL 已帶查詢參數（useUrlParams），後台會依參數直接載入表格，跳過 Search 可避免觸發查詢 API 導致的 session expired (1002)
+                    if (!useUrlParams && ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
                         (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') ||
-                        (playerAccountParsed && playerAccountParsed !== null && playerAccountParsed !== '')) {
+                        (playerAccountParsed && playerAccountParsed !== null && playerAccountParsed !== ''))) {
                         try {
-                            // 等待一下讓日期和帳號輸入完成（優化：減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
+                            // 點 Search 前做短暫 session 暖身，減少「一按查詢就被後端判 session 過期」的機率
+                            console.log('⏳ Session warm-up before Search (' + ($tagWarmupBeforeSearchMs/1000) + 's)...');
+                            await new Promise(resolve => setTimeout(resolve, $tagWarmupBeforeSearchMs));
+                            // 等待一下讓日期和帳號輸入完成
+                            await new Promise(resolve => setTimeout(resolve, 300));
 
                             // 查找並點擊搜尋按鈕
                             console.log('🔍 Looking for Search button...');
@@ -991,6 +1026,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                             }
                             
                             if (buttonClicked) {
+                                console.log('✅ Search button clicked (form path)');
                                 // 智能等待：等待表格數據真正更新
                                 // 監聽表格內容變化，或者等待足夠時間
                                 let rowCountAfter = 0;
@@ -1077,15 +1113,17 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 
                                 // 步驟截圖 04：點擊查詢按鈕後（包含頁數和筆數）
                                 await page.screenshot({ 
-                                    path: 'screenshot_04_after_search.png',
+                                    path: 'step_07_after_search.png',
                                     fullPage: false
                                 });
-                                console.log('📸 Screenshot saved: screenshot_04_after_search.png');
+                                console.log('📸 Screenshot: step_07_after_search.png');
                             }
                         } catch (e) {
                             console.log('⚠️  Error clicking search button: ' + e.message);
                             console.error(e);
                         }
+                    } else if (useUrlParams) {
+                        console.log('📌 URL has query params, skipping form Search button (data loaded from URL, avoids session expired)...');
                     }
 
                     // 提取表格資料的函數（可重用）
@@ -1538,8 +1576,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                     }
                     
                     // 步驟截圖 05：第一頁表格資料提取後（或重試後）
-                    await page.screenshot({ path: 'screenshot_05_after_first_page.png', fullPage: false });
-                    console.log('📸 Screenshot saved: screenshot_05_after_first_page.png');
+                    await page.screenshot({ path: 'step_08_after_first_page.png', fullPage: false });
+                    console.log('📸 Screenshot: step_08_after_first_page.png');
                     
                     // 滾動到分頁組件位置，確保頁數和筆數可見（優化：減少等待時間）
                     await page.evaluate(() => {
@@ -2238,12 +2276,16 @@ class ScrapeBrowserTagDOMDetail extends Command
         // 將截圖從臨時目錄移動到永久儲存目錄
         $timestamp = date('Y-m-d_H-i-s');
         $screenshotFiles = [
-            'screenshot_00_after_cookies.png',
-            'screenshot_01_after_navigation.png',
-            'screenshot_02_after_table_wait.png',
-            'screenshot_03_after_date_and_account.png',
-            'screenshot_04_after_search.png',
-            'screenshot_05_after_first_page.png',
+            'step_01_first_domain.png',
+            'step_02_after_goto_target.png',
+            'step_02b_login_page_before_fill.png',
+            'step_02c_login_page_after_fill.png',
+            'step_03_after_login_ready.png',
+            'step_04_after_date_and_account.png',
+            'step_05_after_navigation.png',
+            'step_06_after_table_wait.png',
+            'step_07_after_search.png',
+            'step_08_after_first_page.png',
         ];
         
         foreach ($screenshotFiles as $screenshotFile) {

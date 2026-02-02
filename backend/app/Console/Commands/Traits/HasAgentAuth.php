@@ -307,6 +307,10 @@ trait HasAgentAuth
      * 使用 TAG_AGENT_TOKEN 登入，存到 cookie 名稱「session」
      * 登入成功後：TAG_AGENT_LANG → cookie「lang」；TAG_AGENT_ROLE →「role」；TAG_AGENT_TIMEZONE →「timezone」
      * TAG_AGENT_DOMAIN 為目標網址（可為完整 URL，會自動取 host 作為 cookie domain）
+     *
+     * 注意：Puppeteer 的 setCookie 必須在「已導航到該 domain 的頁面」之後才能設定；
+     * 若仍無法用 cookie 代登入，可能是後端 session 與 server 端綁定（IP/指紋等），需改用帳密表單登入。
+     *
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @param string|null $domainFromUrl 若未設定 TAG_AGENT_DOMAIN，可從目標 URL 的 host 傳入
      * @return string 返回 JavaScript 程式碼片段
