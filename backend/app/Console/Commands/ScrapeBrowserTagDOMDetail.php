@@ -250,8 +250,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         console.log('🌐 First navigating to domain (for cookie context):', tagCookieLoginUrl);
                         await page.goto(tagCookieLoginUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
-                        await page.screenshot({ path: 'step_01_first_domain.png', fullPage: false });
-                        console.log('📸 Screenshot: step_01_first_domain.png');
                     }
                     // 在第一次進入該 domain 後立刻設定 cookie，之後再 goto 目標頁時請求會帶上這些 cookie
                     $cookiesCodeForPage
@@ -261,8 +259,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         timeout: 20000
                     });
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    await page.screenshot({ path: 'step_02_after_goto_target.png', fullPage: false });
-                    console.log('📸 Screenshot: step_02_after_goto_target.png');
 
                     // 若仍為登入頁：再設一次 cookie 後重新導向（有時可補上 lang/role/timezone 或 session）
                     if (page.url().includes('/login')) {
@@ -301,9 +297,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     };
                     await checkSessionExpired();
 
-                    // 步驟截圖 03：登入／cookie 就緒後的畫面
-                    await page.screenshot({ path: 'step_03_after_login_ready.png', fullPage: false });
-                    console.log('📸 Screenshot: step_03_after_login_ready.png');
                     
                     // 選日期前再確認一次 session 未過期
                     await checkSessionExpired();
@@ -396,9 +389,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     });
                     await new Promise(resolve => setTimeout(resolve, 500));
                     
-                    // 步驟截圖 05：導航／滾動後、等待表格前
-                    await page.screenshot({ path: 'step_05_after_navigation.png', fullPage: false });
-                    console.log('📸 Screenshot: step_05_after_navigation.png');
                     
                     const isSessionExpiredPage = async () => {
                         if (page.url().includes('/login')) return true;
@@ -497,9 +487,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     // 額外等待確保表格完全渲染
                     await new Promise(resolve => setTimeout(resolve, 1000));
 
-                    // 步驟截圖 06：等待表格後（無論是否找到）
-                    await page.screenshot({ path: 'step_06_after_table_wait.png', fullPage: false });
-                    console.log('📸 Screenshot: step_06_after_table_wait.png');
 
                     // 解析 player_account（date 已在進入 URL 後先選好）
                     let playerAccountParsed = null;
@@ -546,9 +533,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         }
                     }
 
-                    // 步驟截圖 03：日期／玩家帳號填寫後、點搜尋前
-                    await page.screenshot({ path: 'step_04_after_date_and_account.png', fullPage: false });
-                    console.log('📸 Screenshot: step_04_after_date_and_account.png');
 
                     // 如果至少填入了其中一個日期或玩家帳號，嘗試點擊搜尋按鈕
                     // 若 URL 已帶查詢參數（useUrlParams），後台會依參數直接載入表格，跳過 Search 可避免觸發查詢 API 導致的 session expired (1002)
@@ -871,11 +855,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 
                                 // 步驟截圖 04：點擊查詢按鈕後（包含頁數和筆數）
-                                await page.screenshot({ 
-                                    path: 'step_07_after_search.png',
-                                    fullPage: false
-                                });
-                                console.log('📸 Screenshot: step_07_after_search.png');
                             }
                         } catch (e) {
                             console.log('⚠️  Error clicking search button: ' + e.message);
@@ -1990,15 +1969,6 @@ class ScrapeBrowserTagDOMDetail extends Command
         // 將截圖從臨時目錄移動到永久儲存目錄
         $timestamp = date('Y-m-d_H-i-s');
         $screenshotFiles = [
-            'step_01_first_domain.png',
-            'step_02_after_goto_target.png',
-            'step_02b_login_page_before_fill.png',
-            'step_02c_login_page_after_fill.png',
-            'step_03_after_login_ready.png',
-            'step_04_after_date_and_account.png',
-            'step_05_after_navigation.png',
-            'step_06_after_table_wait.png',
-            'step_07_after_search.png',
             'step_08_after_first_page.png',
         ];
         
