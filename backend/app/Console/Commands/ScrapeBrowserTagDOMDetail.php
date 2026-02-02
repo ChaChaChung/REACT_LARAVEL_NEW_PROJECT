@@ -372,11 +372,16 @@ class ScrapeBrowserTagDOMDetail extends Command
                             });
                             await new Promise(resolve => setTimeout(resolve, 2000));
                             console.log('✅ Login step done');
-                            // 登入成功後跳轉到目標 URL
+                            // 登入成功後跳轉到目標 URL，並做 session 暖身（等網路閒置＋延遲）避免一點 Search 就被踢回登入
                             if (!page.url().includes('/login')) {
-                                console.log('🔄 Navigating to target URL...');
-                                await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                console.log('🔄 Navigating to target URL (session warm-up)...');
+                                await page.goto(finalTargetUrl, { waitUntil: 'networkidle0', timeout: 25000 }).catch(() => {
+                                    console.log('⚠️  networkidle0 timeout, continuing with domcontentloaded');
+                                });
+                                if (page.url().includes('/login')) {
+                                    await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                                }
+                                await new Promise(resolve => setTimeout(resolve, 4000));
                             }
                         }
                     } else {
@@ -389,7 +394,12 @@ class ScrapeBrowserTagDOMDetail extends Command
                     // 若目前在登入頁，再試一次導向目標頁
                     if (page.url().includes('/login')) {
                         await page.goto(finalTargetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                    }
+                    // 已登入且在目標頁時：再做一次 session 暖身（等頁面穩定再操作，減少一點 Search 就被導回登入）
+                    if (!page.url().includes('/login')) {
+                        console.log('⏳ Session warm-up: waiting for page to settle (4s)...');
+                        await new Promise(resolve => setTimeout(resolve, 4000));
                     }
 
                     // 偵測 session expired：若被導回登入頁或頁面出現 "Session expired, please log in again (1002)" 等，先自動填帳密與語言，等使用者輸入驗證碼並點 Login
@@ -447,7 +457,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 console.log('✅ Search button clicked (after re-login)');
                                 await new Promise(resolve => setTimeout(resolve, 1500));
                             }
-                            await searchBtnAfter.dispose();
+                            if (searchBtnAfter) await searchBtnAfter.dispose();
                         }
                     };
                     await checkSessionExpired();
@@ -516,23 +526,29 @@ class ScrapeBrowserTagDOMDetail extends Command
                         console.log('📅 Date in URL, skip date picker');
                     }
                     
-                    // 導向完成後點擊 Search 按鈕
-                    try {
-                        const searchBtn = await page.evaluateHandle(() => {
-                            const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
-                            return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
-                        });
-                        const searchEl = searchBtn.asElement();
-                        if (searchEl) {
-                            await searchEl.click();
-                            console.log('✅ Search button clicked');
-                            await new Promise(resolve => setTimeout(resolve, 1500));
+                    // 導向完成後：有帶日期/參數時不點 Search（後台常會依 URL 參數直接載入表格，可避免一點 Search 就被導回登入）
+                    if (!useUrlParams) {
+                        try {
+                            const searchBtn = await page.evaluateHandle(() => {
+                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
+                                return btns.find(b => (b.querySelector('span') && b.querySelector('span').textContent.trim() === 'Search') || b.textContent.trim().includes('Search')) || null;
+                            });
+                            const searchEl = searchBtn.asElement();
+                            if (searchEl) {
+                                await searchEl.click();
+                                console.log('✅ Search button clicked');
+                                await new Promise(resolve => setTimeout(resolve, 2500));
+                            }
+                            if (searchBtn) await searchBtn.dispose();
+                        } catch (e) {
+                            console.log('⚠️  Search button click: ' + e.message);
                         }
-                        await searchBtn.dispose();
-                    } catch (e) {
-                        console.log('⚠️  Search button click: ' + e.message);
+                        console.log('🔍 Checking if page redirected to login after Search click...');
+                        await checkSessionExpired();
+                    } else {
+                        console.log('📌 URL has query params, skipping Search button (data may load from URL)...');
                     }
-                    
+
                     // 簡化滾動操作（只滾動一次，減少等待時間）
                     await page.evaluate(() => {
                         window.scrollTo(0, document.body.scrollHeight);
