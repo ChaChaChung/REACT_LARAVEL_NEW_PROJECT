@@ -22,9 +22,8 @@ class ScrapeBrowserTagDOMDetail extends Command
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
      * {player_account?} - 玩家帳號（可選參數）
-     * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-tag-dom-detail {url} {date_start?} {date_end?} {player_account?} {--concurrency=8}';
+    protected $signature = 'agent:scrape-tag-dom-detail {url} {date_start?} {date_end?} {player_account?}';
 
     /**
      * 命令描述
@@ -43,14 +42,12 @@ class ScrapeBrowserTagDOMDetail extends Command
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
         $player_account = $this->argument('player_account');
-        $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (TAG) ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Player Account: {$player_account}");
-        $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -60,7 +57,7 @@ class ScrapeBrowserTagDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $player_account, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $player_account);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -123,10 +120,9 @@ class ScrapeBrowserTagDOMDetail extends Command
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
      * @param string|null $player_account 玩家帳號（可選）
-     * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $player_account = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $player_account = null)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -174,7 +170,6 @@ class ScrapeBrowserTagDOMDetail extends Command
 
             /**
              * 從 DOM 提取資料的函數
-             * 使用 Puppeteer 自動化瀏覽器來爬取網頁 DOM 內容（併發版本）
              */
             async function scrapeDOMContent() {
                 const browser = await puppeteer.launch({
@@ -224,18 +219,6 @@ class ScrapeBrowserTagDOMDetail extends Command
 
                     // stealth 外掛已處理多數反偵測；可選：自訂 User-Agent
                     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
-
-                    // TAG 後台為 SPA，不攔截請求，讓所有資源（JS/CSS/XHR）正常載入以利登入後渲染
-                    // await page.setRequestInterception(true);
-                    // page.on('request', (req) => { req.continue(); });
-
-                    // 監聽瀏覽器控制台的錯誤訊息
-                    // 這有助於調試頁面載入問題
-                    page.on('console', msg => {
-                        if (msg.type() === 'error') {
-                            // console.log('❌ Browser console error:', msg.text());
-                        }
-                    });
 
                     const finalTargetUrl = $finalUrlJs;
                     const useUrlParams = $useUrlParamsJs;
@@ -297,7 +280,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     };
                     await checkSessionExpired();
 
-                    
                     // 選日期前再確認一次 session 未過期
                     await checkSessionExpired();
                     
@@ -388,8 +370,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                         window.scrollTo(0, 0);
                     });
                     await new Promise(resolve => setTimeout(resolve, 500));
-                    
-                    
+
                     const isSessionExpiredPage = async () => {
                         if (page.url().includes('/login')) return true;
                         return await page.evaluate(() => {
@@ -503,11 +484,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                         try {
                             console.log('👤 Filling Player Account: ' + playerAccountParsed);
                             
-                            // 等待日期選擇器關閉（如果之前有填入日期）（優化：減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
+                            await new Promise(resolve => setTimeout(resolve, 200));
                             
-                            // 等待 Player Account input 出現（優化：減少超時時間）
-                            await page.waitForSelector('input.el-input__inner[placeholder="InputPlayer Account"]', { timeout: 5000 }).catch(() => { // 從10000ms減少到5000ms
+                            await page.waitForSelector('input.el-input__inner[placeholder="InputPlayer Account"]', { timeout: 5000 }).catch(() => {
                                 console.log('⚠️  Player Account input not found');
                             });
                             
@@ -523,9 +502,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     accountInput.dispatchEvent(new Event('blur', { bubbles: true }));
                                 }
                             }, playerAccountParsed);
-                            
-                            await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
-                            
+
+                            await new Promise(resolve => setTimeout(resolve, 200));
                             console.log('✅ Player Account filled successfully');
                         } catch (e) {
                             console.log('⚠️  Error filling player account: ' + e.message);
@@ -594,48 +572,11 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 });
                                 
                                 if (buttonInfo.found) {
-                                    // 滾動到按鈕位置
                                     await page.evaluate((selector) => {
                                         const btn = document.querySelector(selector);
-                                        if (btn) {
-                                            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                        }
+                                        if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                     }, buttonInfo.selector);
-                                    
                                     await new Promise(resolve => setTimeout(resolve, 300));
-                                    
-                                    // 高亮按鈕（添加紅色邊框）
-                                    await page.evaluate((selector) => {
-                                        const btn = document.querySelector(selector);
-                                        if (btn) {
-                                            // 保存原始樣式
-                                            btn.setAttribute('data-original-style', btn.getAttribute('style') || '');
-                                            // 添加紅色邊框高亮
-                                            btn.style.border = '5px solid red';
-                                            btn.style.boxShadow = '0 0 20px red';
-                                            btn.style.zIndex = '9999';
-                                            btn.style.position = 'relative';
-                                        }
-                                    }, buttonInfo.selector);
-                                    
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                    
-                                    // 恢復原始樣式
-                                    await page.evaluate((selector) => {
-                                        const btn = document.querySelector(selector);
-                                        if (btn) {
-                                            const originalStyle = btn.getAttribute('data-original-style');
-                                            if (originalStyle) {
-                                                btn.setAttribute('style', originalStyle);
-                                            } else {
-                                                btn.removeAttribute('style');
-                                            }
-                                        }
-                                    }, buttonInfo.selector);
-                                    
-                                    await new Promise(resolve => setTimeout(resolve, 300));
-                                    
-                                    // 使用 Puppeteer 的 click 方法
                                     await page.click(buttonInfo.selector, { timeout: 5000 });
                                     
                                     buttonClicked = true;
@@ -659,45 +600,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     });
                                     
                                     if (buttonHandle && buttonHandle.asElement()) {
-                                        // 滾動到按鈕
                                         await buttonHandle.asElement().scrollIntoView();
                                         await new Promise(resolve => setTimeout(resolve, 300));
-                                        
-                                        // 高亮按鈕（通過選擇器）
-                                        await page.evaluate(() => {
-                                            const buttons = Array.from(document.querySelectorAll('button.el-button.el-button--default'));
-                                            for (let btn of buttons) {
-                                                const text = btn.textContent.trim();
-                                                if (text === 'Search') {
-                                                    btn.setAttribute('data-original-style', btn.getAttribute('style') || '');
-                                                    btn.style.border = '5px solid red';
-                                                    btn.style.boxShadow = '0 0 20px red';
-                                                    btn.style.zIndex = '9999';
-                                                    btn.style.position = 'relative';
-                                                    break;
-                                                }
-                                            }
-                                        });
-                                        
-                                        // 恢復樣式
-                                        await page.evaluate(() => {
-                                            const buttons = Array.from(document.querySelectorAll('button.el-button.el-button--default'));
-                                            for (let btn of buttons) {
-                                                const text = btn.textContent.trim();
-                                                if (text === 'Search') {
-                                                    const originalStyle = btn.getAttribute('data-original-style');
-                                                    if (originalStyle) {
-                                                        btn.setAttribute('style', originalStyle);
-                                                    } else {
-                                                        btn.removeAttribute('style');
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        });
-                                        
-                                        await new Promise(resolve => setTimeout(resolve, 300));
-                                        
                                         await buttonHandle.asElement().click();
                                         await buttonHandle.dispose();
                                         
@@ -770,12 +674,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                             
                             if (buttonClicked) {
                                 console.log('✅ Search button clicked (form path)');
-                                // 智能等待：等待表格數據真正更新
-                                // 監聽表格內容變化，或者等待足夠時間
                                 let rowCountAfter = 0;
                                 let waitAttempts = 0;
-                                const maxWaitAttempts = 15; // 最多等待15次，每次1秒（總共15秒）
-                                let dataChanged = false;
+                                const maxWaitAttempts = 15;
                                 
                                 // 先等待初始加載
                                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -803,7 +704,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     
                                     // 檢查行數是否變化
                                     if (rowCountAfter !== rowCountBefore) {
-                                        dataChanged = true;
                                         // 再等待1秒確保數據完全加載
                                         await new Promise(resolve => setTimeout(resolve, 1000));
                                         break;
@@ -820,32 +720,10 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     waitAttempts++;
                                 }
                                 
-                                // 確保表格出現
                                 await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 10000 }).catch(() => {});
-                                
-                                // 等待表格數據行出現
                                 await page.waitForSelector('table.el-table tbody tr, table.el-table__body tbody tr, table[class*="el-table"] tbody tr, .el-table tbody tr', { timeout: 10000 }).catch(() => {});
-                                
-                                // 最後一次檢查行數
-                                rowCountAfter = await page.evaluate(() => {
-                                    // Element UI 表格結構：外層 div.el-table，內層 table.el-table__body
-                                    let bodyTable = null;
-                                    const elTableDiv = document.querySelector('div.el-table, .el-table');
-                                    if (elTableDiv) {
-                                        bodyTable = elTableDiv.querySelector('table.el-table__body');
-                                    }
-                                    if (!bodyTable) {
-                                        bodyTable = document.querySelector('table.el-table__body');
-                                    }
-                                    const finalTable = bodyTable;
-                                    if (finalTable) {
-                                        const rows = finalTable.querySelectorAll('tbody tr, tr');
-                                        return rows.length;
-                                    }
-                                    return 0;
-                                });
-                                
-                                // 滾動到分頁組件位置，確保頁數和筆數可見
+
+                                // 滾動到分頁組件位置
                                 await page.evaluate(() => {
                                     const pagination = document.querySelector('.el-pagination');
                                     if (pagination) {
@@ -853,8 +731,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     }
                                 });
                                 await new Promise(resolve => setTimeout(resolve, 500));
-                                
-                                // 步驟截圖 04：點擊查詢按鈕後（包含頁數和筆數）
                             }
                         } catch (e) {
                             console.log('⚠️  Error clicking search button: ' + e.message);
@@ -1146,24 +1022,20 @@ class ScrapeBrowserTagDOMDetail extends Command
                         await new Promise(resolve => setTimeout(resolve, 2000));
                     }
                     console.log('📄 Step 1: Extracting first page and pagination info...');
-                    
-                    // 確保表格已載入（增加等待時間和重試機制）
-                    // Element UI 表格 (el-table)
                     console.log('🔍 Step 1: Waiting for table to load...');
-                    
-                    // 額外等待並滾動頁面（優化：減少等待時間）
-                    await new Promise(resolve => setTimeout(resolve, 500)); // 從1000ms減少到500ms
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     await page.evaluate(() => {
                         window.scrollTo(0, document.body.scrollHeight);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
+                    await new Promise(resolve => setTimeout(resolve, 300));
                     await page.evaluate(() => {
                         window.scrollTo(0, 0);
                     });
-                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
-                    
+                    await new Promise(resolve => setTimeout(resolve, 300));
+
                     tableFound = false;
-                    for (let retry = 0; retry < 5; retry++) { // 從10減少到5
+                    for (let retry = 0; retry < 5; retry++) {
                         try {
                             // 檢查表格是否存在且有內容
                             const tableCheck = await page.evaluate(() => {
@@ -1234,25 +1106,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         }
                     }
                     
-                    // 如果還是找不到表格，獲取頁面信息以便調試
-                    if (!tableFound) {
-                        // 獲取頁面信息以便調試
-                        const pageInfo = await page.evaluate(() => {
-                            const allTables = Array.from(document.querySelectorAll('table'));
-                            const elTableElements = Array.from(document.querySelectorAll('.el-table, [class*="el-table"]'));
-                            return {
-                                url: window.location.href,
-                                title: document.title,
-                                hasElTable: !!document.querySelector('table.el-table'),
-                                hasElTableClass: elTableElements.length > 0,
-                                tableCount: allTables.length,
-                                tableClasses: allTables.map(t => t.className),
-                                elTableClasses: elTableElements.map(el => el.className),
-                                bodyText: document.body ? document.body.innerText.substring(0, 500) : 'No body'
-                            };
-                        });
-                    }
-                    
                     // 提取第一頁的表格資料
                     const firstPageData = await extractTableData(page);
                     
@@ -1263,18 +1116,17 @@ class ScrapeBrowserTagDOMDetail extends Command
                             console.error('📋 Debug info:', JSON.stringify(firstPageData.debug, null, 2));
                         }
                         
-                        // 再等待一下並重試一次（優化：減少等待時間）
                         console.log('⏳ Waiting and retrying...');
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // 從2000ms減少到1000ms
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                         await page.evaluate(() => {
                             window.scrollTo(0, document.body.scrollHeight);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
+                        await new Promise(resolve => setTimeout(resolve, 300));
                         await page.evaluate(() => {
                             window.scrollTo(0, 0);
                         });
-                        await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
-                        
+                        await new Promise(resolve => setTimeout(resolve, 300));
+
                         const retryData = await extractTableData(page);
                         if (!retryData.found) {
                             throw new Error(errorMsg + ' (retry also failed)');
@@ -1289,21 +1141,16 @@ class ScrapeBrowserTagDOMDetail extends Command
                     await page.screenshot({ path: 'step_08_after_first_page.png', fullPage: false });
                     console.log('📸 Screenshot: step_08_after_first_page.png');
                     
-                    // 滾動到分頁組件位置，確保頁數和筆數可見（優化：減少等待時間）
                     await page.evaluate(() => {
                         const pagination = document.querySelector('.el-pagination');
                         if (pagination) {
                             pagination.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }
                     });
-                    await new Promise(resolve => setTimeout(resolve, 300)); // 從500ms減少到300ms
+                    await new Promise(resolve => setTimeout(resolve, 300));
                     
-                    // 等待分頁組件載入（Element UI 的分頁組件）（優化：減少等待時間）
-                    await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
-                    
-                    // 獲取所有分頁連結（支持多種分頁組件）
+                    // 獲取分頁資訊
                     const paginationInfo = await page.evaluate(() => {
-                        const pageLinks = [];
                         let totalPages = 1;
                         
                         // 優先方式：查找總頁數顯示（最準確）
@@ -1492,18 +1339,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                         if (totalPages < 1) {
                             totalPages = 1;
                         }
-                        
-                        // 生成頁面連結（僅用於構建 URL，不影響總頁數判斷）
-                        for (let i = 1; i <= totalPages; i++) {
-                            pageLinks.push({
-                                pageNumber: i,
-                                url: window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'page=' + i
-                            });
-                        }
-                        
+
                         return {
                             totalPages: totalPages,
-                            pageLinks: pageLinks,
                             currentUrl: window.location.href,
                             paginationFound: totalPages > 1
                         };
@@ -1557,9 +1395,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     
                     console.log('📄 Final total pages: ' + paginationInfo.totalPages);
                     
-                    // 定義併發數量
-                    const CONCURRENCY_LIMIT = $concurrency;
-                    
                     // 準備要爬取的頁面列表（從第 2 頁開始，因為第 1 頁已經爬了）
                     const pagesToScrape = [];
                     for (let i = 2; i <= paginationInfo.totalPages; i++) {
@@ -1607,19 +1442,15 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 return false;
                             }, pageInfo.pageNumber);
 
-                            // 等待頁面切換和數據加載（優化：減少等待時間）
                             await new Promise(resolve => setTimeout(resolve, 300));
-                            
-                            // 等待表格更新（優化：減少超時時間）
                             await page.waitForSelector('table.el-table__body, .el-table__body', { timeout: 5000 }).catch(() => { });
-                            
-                            // 等待數據完全加載（智能等待，優化：減少等待間隔和重試次數）
+
                             let rowCount = 0;
                             let waitAttempts = 0;
-                            const maxWaitAttempts = 5; // 從10減少到5
-                            
+                            const maxWaitAttempts = 5;
+
                             while (waitAttempts < maxWaitAttempts) {
-                                await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
+                                await new Promise(resolve => setTimeout(resolve, 200));
                                 
                                 rowCount = await page.evaluate(() => {
                                     // Element UI 表格結構：外層 div.el-table，內層 table.el-table__body
@@ -1639,9 +1470,8 @@ class ScrapeBrowserTagDOMDetail extends Command
                                     return 0;
                                 });
                                 
-                                // 如果行數穩定（連續兩次檢查相同），認為數據已加載完成
                                 if (waitAttempts > 0 && rowCount > 0) {
-                                    await new Promise(resolve => setTimeout(resolve, 200)); // 從500ms減少到200ms
+                                    await new Promise(resolve => setTimeout(resolve, 200));
                                     const rowCount2 = await page.evaluate(() => {
                                         // Element UI 表格結構：外層 div.el-table，內層 table.el-table__body
                                         let bodyTable = null;
@@ -1667,10 +1497,9 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 
                                 waitAttempts++;
                             }
-                            
-                            // 再等待一下確保數據完全渲染（優化：減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 300)); // 從1000ms減少到300ms
-                            
+
+                            await new Promise(resolve => setTimeout(resolve, 300));
+
                             // 提取表格資料
                             const tableData = await extractTableData(page);
                             
@@ -1723,9 +1552,7 @@ class ScrapeBrowserTagDOMDetail extends Command
                         // 只有在當前頁沒有數據時才停止，不應該因為找不到下一頁按鈕就停止
                         // 因為可能還有更多頁面在 pagesToScrape 列表中
                     }
-                    
-                    const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-                    
+
                     // 合併第一頁和其他頁面的資料
                     const allPagesData = [
                         {
@@ -1940,8 +1767,6 @@ class ScrapeBrowserTagDOMDetail extends Command
         
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
-            unset($row);
-            
             // 創建合併後的數據結構
             $mergedData = [
                 'metadata' => [
@@ -1967,7 +1792,6 @@ class ScrapeBrowserTagDOMDetail extends Command
         }
 
         // 將截圖從臨時目錄移動到永久儲存目錄
-        $timestamp = date('Y-m-d_H-i-s');
         $screenshotFiles = [
             'step_08_after_first_page.png',
         ];
