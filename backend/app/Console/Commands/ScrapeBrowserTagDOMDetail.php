@@ -22,7 +22,7 @@ class ScrapeBrowserTagDOMDetail extends Command
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
      * {player_account?} - 玩家帳號（可選參數）
-     * {--concurrency=8} - 併發數量（可選，預設為 8，建議 8-16 以加快速度）
+     * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
     protected $signature = 'agent:scrape-tag-dom-detail {url} {date_start?} {date_end?} {player_account?} {--concurrency=8}';
 
@@ -50,8 +50,7 @@ class ScrapeBrowserTagDOMDetail extends Command
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Player Account: {$player_account}");
-        $this->info('Concurrency: 1 (TAG 固定單頁以降低 session expired)');
-        $this->line('若出現 session expired，請在跳出視窗內重新登入（含驗證碼），腳本會自動繼續。');
+        $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
@@ -131,19 +130,8 @@ class ScrapeBrowserTagDOMDetail extends Command
     {
         $this->info('2. Creating browser automation script...');
 
-        // TAG 後台易因多分頁或時間差導致 session expired，強制單頁 (concurrency=1) 以降低失效機率
-        $concurrency = 1;
-
-        // 若未設定 TAG_AGENT_DOMAIN，從目標 URL 取得 host 作為 cookie domain
-        $domainFromUrl = '';
-        if ($url) {
-            $parsed = parse_url($url);
-            $domainFromUrl = $parsed['host'] ?? '';
-        }
         // 獲取認證 cookies 程式碼片段（主頁面用）
-        $cookiesCodeForPage = $this->generateTagPuppeteerCookiesCode('page', $domainFromUrl);
-        // 獲取認證 cookies 程式碼片段（併發頁面用）
-        $cookiesCodeForNewPage = $this->generateTagPuppeteerCookiesCode('newPage', $domainFromUrl);
+        $cookiesCodeForPage = $this->generateTagPuppeteerCookiesCode('page');
 
         // 將 date 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
@@ -196,66 +184,6 @@ class ScrapeBrowserTagDOMDetail extends Command
             const StealthPlugin = require('puppeteer-extra-plugin-stealth');
             puppeteer.use(StealthPlugin());
             const fs = require('fs');
-
-            /**
-             * 併發控制器：限制同時執行的 Promise 數量
-             * @param {Array} items - 準備要處理的項目列表（例如要爬取的頁面資訊）
-             * @param {Number} limit - 併發數量上限（同時最多執行幾個任務）
-             * @param {Function} fn - 要執行的函數，接收 (item, index) 兩個參數
-             * @return {Promise<Array>} 返回所有執行結果的陣列
-             */
-            async function promiseAllWithLimit(items, limit, fn) {
-                // 創建兩個陣列來追蹤任務狀態
-                const results = [];   // 儲存所有任務的 Promise（包含已完成和未完成的）
-                const executing = []; // 儲存「正在執行中」的任務 Promise
-                let completedCount = 0;
-                const totalItems = items.length;
-                
-                // 所有要處理的項目執行迴圈
-                for (const [index, item] of items.entries()) {
-                    // 為每個項目創建一個 Promise
-                    // Promise.resolve().then() 確保函數是異步執行的
-                    const promise = Promise.resolve().then(() => fn(item, index))
-                        .then((result) => {
-                            completedCount++;
-                            return result;
-                        });
-                    
-                    // 將這個 Promise 加入結果陣列
-                    // 注意：這裡只是「記錄」這個 Promise，任務可能還沒開始執行
-                    results.push(promise);
-                    
-                    // 併發控制邏輯（核心部分）
-                    if (limit <= items.length) {
-                        // 創建一個「可追蹤」的 Promise
-                        // 當原始 Promise 完成時，自動從 executing 陣列中移除自己
-                        const executing_promise = promise.then(() => 
-                            executing.splice(executing.indexOf(executing_promise), 1)
-                        );
-                        
-                        // 將這個任務加入「執行中」的任務池
-                        executing.push(executing_promise);
-                        
-                        // 如果執行中的任務數量達到上限
-                        if (executing.length >= limit) {
-                            // 使用 Promise.race 等待「任何一個」任務完成
-                            // Promise.race 的特性：只要陣列中有一個 Promise 完成，就會 resolve
-                            // 這樣可以確保：當一個任務完成後，立即可以開始下一個任務
-                            await Promise.race(executing);
-                            
-                            // 執行到這裡時，表示至少有一個任務完成了
-                            // 該任務已經自動從 executing 陣列中移除（見上面的 splice）
-                            // 現在 executing.length < limit，可以繼續添加新任務
-                        }
-                    }
-                }
-                
-                // 等待所有任務完成
-                // Promise.all 會等待 results 陣列中的所有 Promise 都完成
-                // 返回一個包含所有結果的陣列
-                console.log('⏳ Waiting for all pages to complete...');
-                return Promise.all(results);
-            }
 
             /**
              * 從 DOM 提取資料的函數
@@ -703,50 +631,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         }
                     } catch (e) {
                         playerAccountParsed = $playerAccountJs !== 'null' ? $playerAccountJs : null;
-                    }
-
-                    // 若尚未選過日期可在此再選（通常已在上面選好）；此處主要處理玩家帳號與搜尋按鈕
-                    if (false && ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
-                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== ''))) {
-                        try {
-                            const okButtonClicked = await page.evaluate(() => {
-                                // 優先查找指定的 OK 按鈕
-                                const okButtons = Array.from(document.querySelectorAll('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain'));
-                                for (let btn of okButtons) {
-                                    const text = btn.textContent.trim();
-                                    if (text === 'OK') {
-                                        btn.click();
-                                        return true;
-                                    }
-                                }
-                                
-                                // 如果找不到，嘗試查找任何包含 "OK" 文本的按鈕
-                                const allButtons = Array.from(document.querySelectorAll('button.el-button'));
-                                for (let btn of allButtons) {
-                                    const text = btn.textContent.trim();
-                                    if (text === 'OK') {
-                                        btn.click();
-                                        return true;
-                                    }
-                                }
-                                
-                                return false;
-                            });
-                            
-                            if (okButtonClicked) {
-                                console.log('✅ OK button clicked');
-                            } else {
-                                console.log('⚠️  OK button not found');
-                            }
-                            
-                            // 等待日期選擇器關閉（優化：減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 200)); // 從300ms減少到200ms
-                            
-                            console.log('✅ Date range set successfully');
-                        } catch (e) {
-                            console.log('⚠️  Error filling date: ' + e.message);
-                            console.error(e);
-                        }
                     }
 
                     // 如果提供了 player_account，填入玩家帳號
@@ -1400,34 +1284,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         });
                     };
 
-                    // 檢查是否有下一頁的函數
-                    const checkNextPage = async () => {
-                        return await page.evaluate(() => {
-                            // 查找包含 rel="next" 的分頁連結
-                            const nextLink = document.querySelector('a[rel="next"]');
-                            
-                            if (nextLink && nextLink.href) {
-                                // 檢查連結是否可見和可點擊
-                                const style = window.getComputedStyle(nextLink);
-                                const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-                                
-                                return {
-                                    hasNext: true,
-                                    nextUrl: nextLink.href,
-                                    pageNumber: nextLink.getAttribute('data-ci-pagination-page'),
-                                    isVisible: isVisible,
-                                    text: nextLink.textContent.trim()
-                                };
-                            }
-                            
-                            return {
-                                hasNext: false,
-                                nextUrl: null,
-                                pageNumber: null
-                            };
-                        });
-                    };
-
                     // ========== 步驟 1：爬取第一頁，獲取分頁資訊 ==========
                     if (await isSessionExpiredPage()) {
                         console.log('⚠️  Session expired (1002) or on login page before Step 1, recovering...');
@@ -1514,12 +1370,12 @@ class ScrapeBrowserTagDOMDetail extends Command
                                 console.log('⚠️  Table found but no data rows yet (rowCount: ' + tableCheck.rowCount + '), waiting...');
                             }
                             
-                            if (retry < 9) {
-                                console.log('⏳ Retry ' + (retry + 1) + '/10: Waiting for table...');
+                            if (retry < 4) {
+                                console.log('⏳ Retry ' + (retry + 1) + '/5: Waiting for table...');
                                 await new Promise(resolve => setTimeout(resolve, 1000));
                             }
                         } catch (e) {
-                            console.log('⚠️  Retry ' + (retry + 1) + '/10: Error checking table - ' + e.message);
+                            console.log('⚠️  Retry ' + (retry + 1) + '/5: Error checking table - ' + e.message);
                             await new Promise(resolve => setTimeout(resolve, 1000));
                         }
                     }
@@ -2028,13 +1884,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                     // 按頁碼排序
                     allPagesData.sort((a, b) => a.pageNumber - b.pageNumber);
                     
-                    // 顯示每頁的數據統計
-                    allPagesData.forEach(pageData => {
-                        const pageRowCount = pageData.tables && pageData.tables.length > 0 
-                            ? pageData.tables.reduce((sum, table) => sum + (table.rowCount || 0), 0)
-                            : 0;
-                    });
-                    
                     const totalRowsFromPages = allPagesData.reduce((sum, pageData) => {
                         if (pageData.tables && pageData.tables.length > 0) {
                             return sum + pageData.tables.reduce((s, table) => s + (table.rowCount || 0), 0);
@@ -2055,13 +1904,9 @@ class ScrapeBrowserTagDOMDetail extends Command
 
                     // 合併所有頁面的表格資料
                     const allTables = [];
-                    let totalDataRows = 0;
                     allPagesData.forEach(pageData => {
                         if (pageData.tables && pageData.tables.length > 0) {
                             pageData.tables.forEach(table => {
-                                if (table.data && table.data.length > 0) {
-                                    totalDataRows += table.data.length;
-                                }
                                 allTables.push(table);
                             });
                         }
@@ -2079,12 +1924,6 @@ class ScrapeBrowserTagDOMDetail extends Command
                         pages: allPagesData,
                         tables: allTables
                     };
-
-                    // 計算總資料筆數
-                    let totalRows = 0;
-                    allTables.forEach(table => {
-                        totalRows += table.rowCount || 0;
-                    });
 
                     // 合併所有提取的資料
                     const result = {

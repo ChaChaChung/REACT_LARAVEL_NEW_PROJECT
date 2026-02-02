@@ -304,24 +304,14 @@ trait HasAgentAuth
 
     /**
      * 生成 TAG Puppeteer cookies 設定程式碼片段
-     * 使用 TAG_AGENT_TOKEN 登入，存到 cookie 名稱「session」
-     * 登入成功後：TAG_AGENT_LANG → cookie「lang」；TAG_AGENT_ROLE →「role」；TAG_AGENT_TIMEZONE →「timezone」
-     * TAG_AGENT_DOMAIN 為目標網址（可為完整 URL，會自動取 host 作為 cookie domain）
-     *
-     * 注意：Puppeteer 的 setCookie 必須在「已導航到該 domain 的頁面」之後才能設定；
-     * 若仍無法用 cookie 代登入，可能是後端 session 與 server 端綁定（IP/指紋等），需改用帳密表單登入。
-     *
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
-     * @param string|null $domainFromUrl 若未設定 TAG_AGENT_DOMAIN，可從目標 URL 的 host 傳入
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateTagPuppeteerCookiesCode(string $pageVar = 'page', ?string $domainFromUrl = null): string
+    protected function generateTagPuppeteerCookiesCode(string $pageVar = 'page'): string
     {
         $token = env('TAG_AGENT_TOKEN', '');
-        $lang = env('TAG_AGENT_LANG', 'zh-TW');
-        $role = env('TAG_AGENT_ROLE', 'platform');
-        $timezone = env('TAG_AGENT_TIMEZONE', 'GMTMinusFour');
-        $domainRaw = env('TAG_AGENT_DOMAIN', '') ?: ($domainFromUrl ?? '');
+        $lang = env('TAG_AGENT_LANG', 'en-us');
+        $domainRaw = env('TAG_AGENT_DOMAIN', '');
         
         // TAG_AGENT_DOMAIN 可能是完整網址，取 host 作為 cookie domain
         $domain = $domainRaw;
@@ -332,8 +322,6 @@ trait HasAgentAuth
 
         $tokenJs = json_encode($token);
         $langJs = json_encode($lang);
-        $roleJs = json_encode($role);
-        $timezoneJs = json_encode($timezone);
         $domainJs = json_encode($domain);
 
         return <<<JS
@@ -345,8 +333,6 @@ trait HasAgentAuth
                 const path = '/';
                 if ({$tokenJs}) cookies.push({ name: 'session', value: {$tokenJs}, domain: tagDomain, path });
                 if ({$langJs}) cookies.push({ name: 'lang', value: {$langJs}, domain: tagDomain, path });
-                cookies.push({ name: 'role', value: {$roleJs}, domain: tagDomain, path });
-                cookies.push({ name: 'timezone', value: {$timezoneJs}, domain: tagDomain, path });
             }
 
             if (cookies.length > 0) {
