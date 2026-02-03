@@ -125,7 +125,13 @@ class ScrapeBrowserFgDOMDetail extends Command
         $localStorageCode = $this->generateFgPuppeteerLocalStorageCode('page');
         $urlJs = json_encode($url);
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
-        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end)) . ' 23:59:59') : 'null';
+        $startY = $date_start ? (int) date('Y', strtotime($date_start)) : 0;
+        $startM = $date_start ? (int) date('n', strtotime($date_start)) : 0;
+        $startD = $date_start ? (int) date('j', strtotime($date_start)) : 0;
+        $endY = $date_end ? (int) date('Y', strtotime($date_end)) : 0;
+        $endM = $date_end ? (int) date('n', strtotime($date_end)) : 0;
+        $endD = $date_end ? (int) date('j', strtotime($date_end)) : 0;
 
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
@@ -244,33 +250,109 @@ class ScrapeBrowserFgDOMDetail extends Command
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
                     }
 
-                    // 若有 date_start 或 date_end，填入日期選擇器（模仿 GLC）
+                    let dateStepScreenshots = [];
+                    // 若有 date_start 或 date_end，填入日期選擇器（每步截圖）
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') ||
                         (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
                             console.log('📅 Setting up date range...');
+
+                            // Step 1: 點擊前截圖
+                            const step1 = 'fg_date_step1_before_click_' + timestamp + '.png';
+                            await page.screenshot({ path: step1, fullPage: false });
+                            dateStepScreenshots.push(step1);
+                            console.log('📸 Step 1: Before click date input');
+
                             await page.waitForSelector('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 10000 }).catch(() => {});
                             await page.click('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 5000 }).catch(() => {});
                             await new Promise(resolve => setTimeout(resolve, 1000));
 
-                            if (dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') {
-                                console.log('📅 Filling Start Date: ' + dateStartParsed);
-                                await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input[placeholder*="Start Date"]', { timeout: 5000 }).catch(() => {});
-                                await page.evaluate((v) => {
-                                    const el = document.querySelector('input.el-input__inner[placeholder="Start Date"], input[placeholder*="Start Date"]');
-                                    if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }
-                                }, dateStartParsed);
+                            // Step 2: panel 打開後截圖
+                            const step2 = 'fg_date_step2_panel_opened_' + timestamp + '.png';
+                            await page.screenshot({ path: step2, fullPage: false });
+                            dateStepScreenshots.push(step2);
+                            console.log('📸 Step 2: Panel opened');
+
+                            // 用日曆點選，不填入 input（input 會自動加一個月）
+                            const startParts = ($startY && $startM && $startD) ? { y: $startY, m: $startM, d: $startD } : null;
+                            const endParts = ($endY && $endM && $endD) ? { y: $endY, m: $endM, d: $endD } : null;
+
+                            const navigateAndClickDate = async (panelSide, targetY, targetM, targetD) => {
+                                const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+                                const panelIdx = panelSide === 'left' ? 0 : 1;
+                                for (let i = 0; i < 24; i++) {
+                                    const headerText = await page.evaluate((idx) => {
+                                        const contents = document.querySelectorAll('.el-date-range-picker__content');
+                                        const panel = contents[idx];
+                                        if (!panel) return '';
+                                        const divs = panel.querySelectorAll('.el-date-range-picker__header > div');
+                                        const d = divs[divs.length - 1];
+                                        return d ? d.textContent.trim() : '';
+                                    }, panelIdx);
+                                    const parts = headerText.split(/\s+/).filter(Boolean);
+                                    const curY = parseInt(parts[0], 10) || 0;
+                                    const curM = monthNames.indexOf(parts[1]) + 1 || 0;
+                                    if (curY === targetY && curM === targetM) break;
+                                    const needNext = (targetY > curY) || (targetY === curY && targetM > curM);
+                                    const navOk = await page.evaluate(({ idx, goNext }) => {
+                                        const contents = document.querySelectorAll('.el-date-range-picker__content');
+                                        const panel = contents[idx];
+                                        if (!panel) return false;
+                                        const arrowClass = goNext ? 'arrow-right' : 'arrow-left';
+                                        const excludeClass = goNext ? 'd-arrow-right' : 'd-arrow-left';
+                                        const btn = panel.querySelector('.el-picker-panel__icon-btn.' + arrowClass + ':not(.' + excludeClass + ')');
+                                        if (btn) { btn.click(); return true; }
+                                        return false;
+                                    }, { idx: panelIdx, goNext: needNext });
+                                    if (!navOk) break;
+                                    await new Promise(r => setTimeout(r, 300));
+                                }
+                                const clicked = await page.evaluate(({ idx, day }) => {
+                                    const contents = document.querySelectorAll('.el-date-range-picker__content');
+                                    const panel = contents[idx];
+                                    if (!panel) return false;
+                                    const cells = panel.querySelectorAll('td.available:not(.prev-month):not(.next-month)');
+                                    for (const td of cells) {
+                                        const span = td.querySelector('.el-date-table-cell__text');
+                                        if (span && span.textContent.trim() === String(day)) {
+                                            td.click();
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                }, { idx: panelIdx, day: targetD });
+                                return clicked;
+                            };
+
+                            const sameMonth = startParts && endParts && startParts.y === endParts.y && startParts.m === endParts.m;
+                            if (startParts && startParts.y && startParts.m && startParts.d) {
+                                console.log('📅 Selecting Start Date: ' + startParts.y + '-' + startParts.m + '-' + startParts.d);
+                                await navigateAndClickDate('left', startParts.y, startParts.m, startParts.d);
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             }
-                            if (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') {
-                                console.log('📅 Filling End Date: ' + dateEndParsed);
-                                await page.waitForSelector('input.el-input__inner[placeholder="End Date"], input[placeholder*="End Date"]', { timeout: 5000 }).catch(() => {});
-                                await page.evaluate((v) => {
-                                    const el = document.querySelector('input.el-input__inner[placeholder="End Date"], input[placeholder*="End Date"]');
-                                    if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }
-                                }, dateEndParsed);
+
+                            // Step 3: 選 Start Date 後截圖
+                            const step3 = 'fg_date_step3_after_start_date_' + timestamp + '.png';
+                            await page.screenshot({ path: step3, fullPage: false });
+                            dateStepScreenshots.push(step3);
+                            console.log('📸 Step 3: After selecting Start Date');
+
+                            if (endParts && endParts.y && endParts.m && endParts.d) {
+                                console.log('📅 Selecting End Date: ' + endParts.y + '-' + endParts.m + '-' + endParts.d);
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                                if (sameMonth) {
+                                    await navigateAndClickDate('left', endParts.y, endParts.m, endParts.d);
+                                } else {
+                                    await navigateAndClickDate('right', endParts.y, endParts.m, endParts.d);
+                                }
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             }
+
+                            // Step 4: 填入 End Date 後截圖
+                            const step4 = 'fg_date_step4_after_end_date_' + timestamp + '.png';
+                            await page.screenshot({ path: step4, fullPage: false });
+                            dateStepScreenshots.push(step4);
+                            console.log('📸 Step 4: After filling End Date');
 
                             const okButtonClicked = await page.evaluate(() => {
                                 const okButtons = Array.from(document.querySelectorAll('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain, button.el-button'));
@@ -285,6 +367,12 @@ class ScrapeBrowserFgDOMDetail extends Command
                             if (okButtonClicked) console.log('✅ OK button clicked');
                             await new Promise(resolve => setTimeout(resolve, 1000));
 
+                            // Step 5: 點擊 OK 後截圖
+                            const step5 = 'fg_date_step5_after_ok_' + timestamp + '.png';
+                            await page.screenshot({ path: step5, fullPage: false });
+                            dateStepScreenshots.push(step5);
+                            console.log('📸 Step 5: After clicking OK');
+
                             // 點擊 Search 按鈕
                             const searchClicked = await page.evaluate(() => {
                                 const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary, button.el-button'));
@@ -294,6 +382,12 @@ class ScrapeBrowserFgDOMDetail extends Command
                             });
                             if (searchClicked) console.log('✅ Search button clicked');
                             await new Promise(resolve => setTimeout(resolve, 2500));
+
+                            // Step 6: 點擊 Search 後截圖
+                            const step6 = 'fg_date_step6_after_search_' + timestamp + '.png';
+                            await page.screenshot({ path: step6, fullPage: false });
+                            dateStepScreenshots.push(step6);
+                            console.log('📸 Step 6: After clicking Search');
                         } catch (e) {
                             console.log('⚠️  Date selection error: ' + e.message);
                         }
@@ -312,6 +406,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         screenshotPath: screenshotAfterRedirect,
                         screenshotAfterLogin: screenshotAfterLogin,
                         screenshotAfterRedirect: screenshotAfterRedirect,
+                        dateStepScreenshots: dateStepScreenshots,
                         success: true
                     };
 
@@ -411,6 +506,18 @@ class ScrapeBrowserFgDOMDetail extends Command
                 $dst = "{$dstDir}/fg_{$timestamp}_{$name}.png";
                 rename($src, $dst);
                 $this->info("📸 Screenshot saved: {$dst}");
+            }
+        }
+
+        // 日期選擇步驟截圖 (step1~6)
+        foreach ($result['dateStepScreenshots'] ?? [] as $screenshotPath) {
+            $src = $tempDir . '/' . $screenshotPath;
+            if (file_exists($src)) {
+                $base = basename($screenshotPath, '.png');
+                $stepName = preg_replace('/_\d{4}-\d{2}-\d{2}T[\d-]+$/', '', $base);
+                $dst = "{$dstDir}/fg_{$timestamp}_date_{$stepName}.png";
+                rename($src, $dst);
+                $this->info("📸 Date step: {$dst}");
             }
         }
 
