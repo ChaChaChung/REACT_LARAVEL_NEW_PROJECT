@@ -345,6 +345,95 @@ trait HasAgentAuth
     }
 
     /**
+     * 生成 FG Puppeteer cookies 設定程式碼片段
+     * FG_AGENT_TOKEN → token, FG_AGENT_AUTH → auth, FG_AGENT_LANG → bg_languageKey
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateFgPuppeteerCookiesCode(string $pageVar = 'page'): string
+    {
+        $token = env('FG_AGENT_TOKEN', '');
+        $auth = env('FG_AGENT_AUTH', '');
+        $lang = env('FG_AGENT_LANG', 'en-us');
+        $domainRaw = env('FG_AGENT_DOMAIN', '');
+
+        // 從 FG_AGENT_DOMAIN 提取 host 作為 cookie domain
+        $domain = $domainRaw;
+        if ($domainRaw && preg_match('#^https?://#i', $domainRaw)) {
+            $parsed = parse_url($domainRaw);
+            $domain = $parsed['host'] ?? $domainRaw;
+        } elseif ($domainRaw) {
+            // 若無協議，取第一個 / 前的部分作為 host
+            $domain = preg_replace('#/.*$#', '', $domainRaw);
+        }
+
+        $tokenJs = json_encode($token);
+        $authJs = json_encode($auth);
+        $langJs = json_encode($lang);
+        $domainJs = json_encode($domain);
+
+        return <<<JS
+            console.log('🔐 Setting FG authentication cookies (token, auth, bg_languageKey)...');
+
+            const cookies = [];
+            const fgDomain = {$domainJs};
+            const useSecure = typeof targetUrl !== 'undefined' && targetUrl.startsWith('https');
+            if (fgDomain && fgDomain !== '') {
+                const path = '/';
+                if ({$tokenJs}) cookies.push({ name: 'token', value: {$tokenJs}, domain: fgDomain, path, secure: useSecure });
+                if ({$authJs}) cookies.push({ name: 'auth', value: {$authJs}, domain: fgDomain, path, secure: useSecure });
+                if ({$langJs}) cookies.push({ name: 'bg_languageKey', value: {$langJs}, domain: fgDomain, path, secure: useSecure });
+            }
+
+            if (cookies.length > 0) {
+                await {$pageVar}.setCookie(...cookies);
+                console.log('✅ FG Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No FG cookies set (set FG_AGENT_TOKEN, FG_AGENT_AUTH, FG_AGENT_LANG and FG_AGENT_DOMAIN)');
+            }
+        JS;
+    }
+
+    /**
+     * 生成 FG localStorage/sessionStorage 設定程式碼（部分 agent 前端從 localStorage 讀取）
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateFgPuppeteerLocalStorageCode(string $pageVar = 'page'): string
+    {
+        $token = env('FG_AGENT_TOKEN', '');
+        $auth = env('FG_AGENT_AUTH', '');
+        $lang = env('FG_AGENT_LANG', 'en-us');
+
+        $tokenJs = json_encode($token);
+        $authJs = json_encode($auth);
+        $langJs = json_encode($lang);
+
+        return <<<JS
+            // 部分 agent 前端從 localStorage 讀取 token，一併設定
+            await {$pageVar}.evaluate(({ token, auth, lang }) => {
+                try {
+                    if (token) {
+                        localStorage.setItem('token', token);
+                        sessionStorage.setItem('token', token);
+                    }
+                    if (auth) {
+                        localStorage.setItem('auth', auth);
+                        sessionStorage.setItem('auth', auth);
+                    }
+                    if (lang) {
+                        localStorage.setItem('bg_languageKey', lang);
+                        sessionStorage.setItem('bg_languageKey', lang);
+                    }
+                    console.log('✅ FG localStorage/sessionStorage set');
+                } catch (e) {
+                    console.warn('⚠️  localStorage set:', e.message);
+                }
+            }, { token: {$tokenJs}, auth: {$authJs}, lang: {$langJs} });
+        JS;
+    }
+
+    /**
      * 生成 Blodplay Puppeteer cookies 設定程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @return string 返回 JavaScript 程式碼片段
