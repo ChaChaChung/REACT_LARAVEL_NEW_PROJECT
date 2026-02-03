@@ -436,6 +436,85 @@ class ScrapeBrowserFgDOMDetail extends Command
                         console.log('📸 Step 6: After clicking Query');
                     }
 
+                    // 等待 el-table 出現並爬取表格資料
+                    await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 10000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    const extractTableData = async (pageObject) => {
+                        return await pageObject.evaluate(() => {
+                            let headerTable = document.querySelector('table.el-table__header');
+                            let bodyTable = document.querySelector('table.el-table__body');
+                            let table = document.querySelector('table.el-table');
+                            if (!table && !headerTable) {
+                                document.querySelectorAll('table').forEach(t => {
+                                    if (t.className && t.className.includes('el-table')) {
+                                        if (t.className.includes('el-table__header')) headerTable = t;
+                                        else if (t.className.includes('el-table__body')) bodyTable = t;
+                                        else if (!table) table = t;
+                                    }
+                                });
+                            }
+                            if (!table && !headerTable && !bodyTable) {
+                                return { found: false, error: 'Table el-table not found' };
+                            }
+                            let headers = [];
+                            const thead = (headerTable || table)?.querySelector('thead');
+                            if (thead) {
+                                const headerCells = thead.querySelectorAll('tr:first-child th, tr:first-child td');
+                                headers = Array.from(headerCells).map(cell => {
+                                    const div = cell.querySelector('div.cell');
+                                    return div ? div.textContent.trim() : cell.textContent.trim();
+                                });
+                            }
+                            let rows = [];
+                            const tbody = (bodyTable || table)?.querySelector('tbody');
+                            if (tbody) rows = Array.from(tbody.querySelectorAll('tr'));
+                            else if (bodyTable) rows = Array.from(bodyTable.querySelectorAll('tr'));
+                            const dataRows = rows.map((row, rowIndex) => {
+                                const cells = row.querySelectorAll('td');
+                                const rowData = {};
+                                headers.forEach((h, i) => {
+                                    let key = (h || 'column_' + i).replace(/[^\w\u4e00-\u9fa5]/g, '_').replace(/^_+|_+$/g, '') || 'column_' + i;
+                                    let val = null;
+                                    if (cells[i]) {
+                                        const div = cells[i].querySelector('div.cell');
+                                        val = div ? div.textContent.trim() : cells[i].textContent.trim();
+                                    }
+                                    rowData[key] = val;
+                                });
+                                if (headers.length === 0) {
+                                    Array.from(cells).forEach((c, i) => {
+                                        const div = c.querySelector('div.cell');
+                                        rowData['column_' + i] = div ? div.textContent.trim() : c.textContent.trim();
+                                    });
+                                }
+                                rowData._rowIndex = rowIndex;
+                                return rowData;
+                            }).filter(r => {
+                                const v = Object.values(r)[0];
+                                return v !== '小計' && v !== '總計';
+                            });
+                            return {
+                                found: true,
+                                headers: headers,
+                                rowCount: dataRows.length,
+                                data: dataRows
+                            };
+                        });
+                    };
+
+                    let tableData = null;
+                    try {
+                        tableData = await extractTableData(page);
+                        if (tableData && tableData.found) {
+                            console.log('📊 Table scraped: ' + tableData.rowCount + ' rows, ' + (tableData.headers?.length || 0) + ' columns');
+                        } else {
+                            console.log('⚠️  Table not found or empty');
+                        }
+                    } catch (e) {
+                        console.log('⚠️  Table extract error: ' + e.message);
+                    }
+
                     // 轉址後截圖
                     const screenshotAfterRedirect = 'fg_after_redirect_' + timestamp + '.png';
                     await page.screenshot({ path: screenshotAfterRedirect, fullPage: false });
@@ -451,6 +530,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         screenshotAfterLogin: screenshotAfterLogin,
                         screenshotAfterRedirect: screenshotAfterRedirect,
                         dateStepScreenshots: dateStepScreenshots,
+                        tableData: tableData,
                         success: true
                     };
 
@@ -563,6 +643,13 @@ class ScrapeBrowserFgDOMDetail extends Command
                 rename($src, $dst);
                 $this->info("📸 Date step: {$dst}");
             }
+        }
+
+        // 儲存表格資料
+        if (!empty($result['tableData']) && ($result['tableData']['found'] ?? false)) {
+            $tablePath = "{$dstDir}/fg_{$timestamp}_table.json";
+            file_put_contents($tablePath, json_encode($result['tableData'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("📊 Table data saved: {$tablePath} (" . ($result['tableData']['rowCount'] ?? 0) . " rows)");
         }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
