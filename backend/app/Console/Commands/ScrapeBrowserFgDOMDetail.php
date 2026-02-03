@@ -18,12 +18,13 @@ class ScrapeBrowserFgDOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?}
+     * 執行方式：php artisan agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?} {account_number?}
      * {url} - 要爬取的目標網址（可選，未提供則使用 FG_AGENT_DOMAIN）
      * {date_start?} - 開始日期（可選，格式：YYYYMMDD 或 YYYY-MM-DD）
      * {date_end?} - 結束日期（可選）
+     * {account_number?} - player account 帳號（可選，第 4 個位置參數）
      */
-    protected $signature = 'agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?}';
+    protected $signature = 'agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?} {account_number?}';
 
     /**
      * 命令描述
@@ -40,6 +41,7 @@ class ScrapeBrowserFgDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
+        $account_number = $this->argument('account_number');
 
         // 若未提供 url，使用 FG_AGENT_DOMAIN 組出完整 URL
         if (empty($url)) {
@@ -57,13 +59,14 @@ class ScrapeBrowserFgDOMDetail extends Command
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
+        $this->info("Account: " . ($account_number ?: '(none)'));
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         if (!$this->checkNodeJs()) {
             return 1;
         }
 
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number);
         $result = $this->runPuppeteerScript($scriptPath);
 
         if ($result) {
@@ -117,7 +120,7 @@ class ScrapeBrowserFgDOMDetail extends Command
     /**
      * 創建 Puppeteer 腳本：設定 Cookie 登入，導航至目標頁，填入日期，登入完成後截圖
      */
-    private function createPuppeteerScript(string $url, ?string $date_start = null, ?string $date_end = null): string
+    private function createPuppeteerScript(string $url, ?string $date_start = null, ?string $date_end = null, ?string $account_number = null): string
     {
         $this->info('2. Creating browser automation script...');
 
@@ -132,6 +135,7 @@ class ScrapeBrowserFgDOMDetail extends Command
         $endY = $date_end ? (int) date('Y', strtotime($date_end)) : 0;
         $endM = $date_end ? (int) date('n', strtotime($date_end)) : 0;
         $endD = $date_end ? (int) date('j', strtotime($date_end)) : 0;
+        $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
 
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
@@ -373,24 +377,63 @@ class ScrapeBrowserFgDOMDetail extends Command
                             dateStepScreenshots.push(step5);
                             console.log('📸 Step 5: After clicking OK');
 
-                            // 點擊 Search 按鈕
-                            const searchClicked = await page.evaluate(() => {
-                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary, button.el-button'));
-                                const searchBtn = btns.find(b => (b.textContent || '').trim().includes('Search') || (b.textContent || '').trim().includes('搜尋') || (b.textContent || '').trim() === 'Query');
-                                if (searchBtn) { searchBtn.click(); return true; }
-                                return false;
-                            });
-                            if (searchClicked) console.log('✅ Search button clicked');
-                            await new Promise(resolve => setTimeout(resolve, 2500));
-
-                            // Step 6: 點擊 Search 後截圖
-                            const step6 = 'fg_date_step6_after_search_' + timestamp + '.png';
-                            await page.screenshot({ path: step6, fullPage: false });
-                            dateStepScreenshots.push(step6);
-                            console.log('📸 Step 6: After clicking Search');
                         } catch (e) {
                             console.log('⚠️  Date selection error: ' + e.message);
                         }
+                    }
+
+                    // 若有 account_number，填入 player account input（不論是否有日期）
+                    // 目標 input: <input class="el-input__inner" type="text" autocomplete="off" tabindex="4" id="el-id-xxx">
+                    const accountNumber = $accountNumberJs && $accountNumberJs !== 'null' ? $accountNumberJs : null;
+                    if (accountNumber && accountNumber !== '') {
+                        const filled = await page.evaluate((val) => {
+                            const fillInput = (inp) => {
+                                if (!inp) return false;
+                                inp.value = val;
+                                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                                return true;
+                            };
+                            // 1. 優先：tabindex="4"（player account 欄位）
+                            const byTabindex = document.querySelector('input.el-input__inner[tabindex="4"]');
+                            if (byTabindex) return fillInput(byTabindex);
+                            // 2. 依 label / placeholder 尋找
+                            const inputs = document.querySelectorAll('input.el-input__inner');
+                            for (const inp of inputs) {
+                                const label = inp.closest('.el-form-item')?.querySelector('label');
+                                const labelText = label ? label.textContent.trim().toLowerCase() : '';
+                                if (labelText.includes('player account') || inp.placeholder?.toLowerCase().includes('account')) {
+                                    return fillInput(inp);
+                                }
+                            }
+                            // 3. 依 type="text" + autocomplete="off" + tabindex="4" 組合
+                            const byAttrs = document.querySelector('input.el-input__inner[type="text"][autocomplete="off"][tabindex="4"]');
+                            if (byAttrs) return fillInput(byAttrs);
+                            return false;
+                        }, accountNumber);
+                        if (filled) console.log('✅ Filled account_number: ' + accountNumber);
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+
+                    // 點擊 query 按鈕（不論是否有日期或 account）
+                    const searchClicked = await page.evaluate(() => {
+                        const btn = document.querySelector('button.queryBtn.J_Search-bar-query') ||
+                            document.querySelector('button.J_Search-bar-query') ||
+                            document.querySelector('button.queryBtn');
+                        if (btn) { btn.click(); return true; }
+                        const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
+                        const fallback = btns.find(b => /query|search|搜尋/i.test((b.textContent || '').trim()));
+                        if (fallback) { fallback.click(); return true; }
+                        return false;
+                    });
+                    if (searchClicked) console.log('✅ Query button clicked');
+                    await new Promise(resolve => setTimeout(resolve, 2500));
+
+                    if (dateStepScreenshots.length > 0) {
+                        const step6 = 'fg_date_step6_after_search_' + timestamp + '.png';
+                        await page.screenshot({ path: step6, fullPage: false });
+                        dateStepScreenshots.push(step6);
+                        console.log('📸 Step 6: After clicking Query');
                     }
 
                     // 轉址後截圖
@@ -403,6 +446,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         url: targetUrl,
                         date_start: dateStartParsed,
                         date_end: dateEndParsed,
+                        account_number: accountNumber || null,
                         screenshotPath: screenshotAfterRedirect,
                         screenshotAfterLogin: screenshotAfterLogin,
                         screenshotAfterRedirect: screenshotAfterRedirect,
