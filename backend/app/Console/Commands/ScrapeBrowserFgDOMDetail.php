@@ -18,10 +18,12 @@ class ScrapeBrowserFgDOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-fg-dom-detail {url?}
+     * 執行方式：php artisan agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?}
      * {url} - 要爬取的目標網址（可選，未提供則使用 FG_AGENT_DOMAIN）
+     * {date_start?} - 開始日期（可選，格式：YYYYMMDD 或 YYYY-MM-DD）
+     * {date_end?} - 結束日期（可選）
      */
-    protected $signature = 'agent:scrape-fg-dom-detail {url?}';
+    protected $signature = 'agent:scrape-fg-dom-detail {url?} {date_start?} {date_end?}';
 
     /**
      * 命令描述
@@ -36,6 +38,8 @@ class ScrapeBrowserFgDOMDetail extends Command
     public function handle()
     {
         $url = $this->argument('url');
+        $date_start = $this->argument('date_start');
+        $date_end = $this->argument('date_end');
 
         // 若未提供 url，使用 FG_AGENT_DOMAIN 組出完整 URL
         if (empty($url)) {
@@ -51,13 +55,15 @@ class ScrapeBrowserFgDOMDetail extends Command
 
         $this->info('=== FG Browser DOM Scraper (Cookie Login + Screenshot) ===');
         $this->info("Target URL: {$url}");
+        $this->info("Date Start: {$date_start}");
+        $this->info("Date End: {$date_end}");
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
 
         if (!$this->checkNodeJs()) {
             return 1;
         }
 
-        $scriptPath = $this->createPuppeteerScript($url);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end);
         $result = $this->runPuppeteerScript($scriptPath);
 
         if ($result) {
@@ -109,15 +115,17 @@ class ScrapeBrowserFgDOMDetail extends Command
     }
 
     /**
-     * 創建 Puppeteer 腳本：設定 Cookie 登入，導航至目標頁，登入完成後截圖
+     * 創建 Puppeteer 腳本：設定 Cookie 登入，導航至目標頁，填入日期，登入完成後截圖
      */
-    private function createPuppeteerScript(string $url): string
+    private function createPuppeteerScript(string $url, ?string $date_start = null, ?string $date_end = null): string
     {
         $this->info('2. Creating browser automation script...');
 
         $cookiesCode = $this->generateFgPuppeteerCookiesCode('page');
         $localStorageCode = $this->generateFgPuppeteerLocalStorageCode('page');
         $urlJs = json_encode($url);
+        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
+        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
 
         $script = <<<JS
             const puppeteer = require('puppeteer-extra');
@@ -205,18 +213,105 @@ class ScrapeBrowserFgDOMDetail extends Command
                     // 再次確保 localStorage 已設定後重新載入（讓 SPA 讀取 token）
                     $localStorageCode
                     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+
+                    // 登入後截圖
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const screenshotAfterLogin = 'fg_after_login_' + timestamp + '.png';
+                    await page.screenshot({ path: screenshotAfterLogin, fullPage: false });
+                    console.log('📸 Screenshot (after login):', screenshotAfterLogin);
+
+                    // 登入完成後跳轉到目標 URL
+                    console.log('🔗 Navigating to target URL:', targetUrl);
+                    await page.goto(targetUrl, {
+                        waitUntil: 'domcontentloaded',
+                        timeout: 20000
+                    });
                     await new Promise(resolve => setTimeout(resolve, 3000));
 
-                    // 登入完成後截圖
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                    const screenshotPath = 'fg_after_login_' + timestamp + '.png';
-                    await page.screenshot({ path: screenshotPath, fullPage: false });
-                    console.log('📸 Screenshot saved:', screenshotPath);
+                    // 解析 date_start、date_end
+                    let dateStartParsed = null;
+                    let dateEndParsed = null;
+                    try {
+                        if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
+                            dateStartParsed = JSON.parse($dateStartJs);
+                        }
+                        if ($dateEndJs && $dateEndJs !== 'null' && $dateEndJs !== '') {
+                            dateEndParsed = JSON.parse($dateEndJs);
+                        }
+                    } catch (e) {
+                        dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
+                        dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                    }
+
+                    // 若有 date_start 或 date_end，填入日期選擇器（模仿 GLC）
+                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') ||
+                        (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
+                        try {
+                            console.log('📅 Setting up date range...');
+                            await page.waitForSelector('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 10000 }).catch(() => {});
+                            await page.click('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 5000 }).catch(() => {});
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            if (dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') {
+                                console.log('📅 Filling Start Date: ' + dateStartParsed);
+                                await page.waitForSelector('input.el-input__inner[placeholder="Start Date"], input[placeholder*="Start Date"]', { timeout: 5000 }).catch(() => {});
+                                await page.evaluate((v) => {
+                                    const el = document.querySelector('input.el-input__inner[placeholder="Start Date"], input[placeholder*="Start Date"]');
+                                    if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }
+                                }, dateStartParsed);
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            }
+                            if (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '') {
+                                console.log('📅 Filling End Date: ' + dateEndParsed);
+                                await page.waitForSelector('input.el-input__inner[placeholder="End Date"], input[placeholder*="End Date"]', { timeout: 5000 }).catch(() => {});
+                                await page.evaluate((v) => {
+                                    const el = document.querySelector('input.el-input__inner[placeholder="End Date"], input[placeholder*="End Date"]');
+                                    if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); el.dispatchEvent(new Event('blur', { bubbles: true })); }
+                                }, dateEndParsed);
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            }
+
+                            const okButtonClicked = await page.evaluate(() => {
+                                const okButtons = Array.from(document.querySelectorAll('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain, button.el-button'));
+                                for (let btn of okButtons) {
+                                    if (btn.textContent.trim() === 'OK') {
+                                        btn.click();
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            });
+                            if (okButtonClicked) console.log('✅ OK button clicked');
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            // 點擊 Search 按鈕
+                            const searchClicked = await page.evaluate(() => {
+                                const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary, button.el-button'));
+                                const searchBtn = btns.find(b => (b.textContent || '').trim().includes('Search') || (b.textContent || '').trim().includes('搜尋') || (b.textContent || '').trim() === 'Query');
+                                if (searchBtn) { searchBtn.click(); return true; }
+                                return false;
+                            });
+                            if (searchClicked) console.log('✅ Search button clicked');
+                            await new Promise(resolve => setTimeout(resolve, 2500));
+                        } catch (e) {
+                            console.log('⚠️  Date selection error: ' + e.message);
+                        }
+                    }
+
+                    // 轉址後截圖
+                    const screenshotAfterRedirect = 'fg_after_redirect_' + timestamp + '.png';
+                    await page.screenshot({ path: screenshotAfterRedirect, fullPage: false });
+                    console.log('📸 Screenshot (after redirect):', screenshotAfterRedirect);
 
                     const result = {
                         timestamp: new Date().toISOString(),
                         url: targetUrl,
-                        screenshotPath: screenshotPath,
+                        date_start: dateStartParsed,
+                        date_end: dateEndParsed,
+                        screenshotPath: screenshotAfterRedirect,
+                        screenshotAfterLogin: screenshotAfterLogin,
+                        screenshotAfterRedirect: screenshotAfterRedirect,
                         success: true
                     };
 
@@ -286,7 +381,7 @@ class ScrapeBrowserFgDOMDetail extends Command
 
     private function processScreenshot(?array $result): void
     {
-        $this->info('4. Processing screenshot...');
+        $this->info('4. Processing screenshots...');
 
         if (!$result || !($result['success'] ?? false)) {
             $this->error('❌ Scraping failed: ' . ($result['error'] ?? 'Unknown error'));
@@ -294,16 +389,26 @@ class ScrapeBrowserFgDOMDetail extends Command
         }
 
         $timestamp = date('Y-m-d_H-i-s');
-        $screenshotPath = $result['screenshotPath'] ?? null;
+        $tempDir = dirname(storage_path('app/temp/scraper_fg_dom.js'));
+        $dstDir = storage_path('app/scraped_data');
+        if (!is_dir($dstDir)) {
+            mkdir($dstDir, 0755, true);
+        }
 
-        if ($screenshotPath) {
-            $src = dirname(storage_path('app/temp/scraper_fg_dom.js')) . '/' . $screenshotPath;
+        $screenshots = [
+            $result['screenshotAfterLogin'] ?? null,
+            $result['screenshotAfterRedirect'] ?? null,
+        ];
+        // 相容舊版只回傳 screenshotPath
+        if (empty(array_filter($screenshots)) && !empty($result['screenshotPath'])) {
+            $screenshots = [$result['screenshotPath']];
+        }
+
+        foreach (array_filter($screenshots) as $screenshotPath) {
+            $src = $tempDir . '/' . $screenshotPath;
             if (file_exists($src)) {
-                $dst = storage_path("app/scraped_data/fg_{$timestamp}_after_login.png");
-                $dstDir = dirname($dst);
-                if (!is_dir($dstDir)) {
-                    mkdir($dstDir, 0755, true);
-                }
+                $name = str_contains($screenshotPath, 'redirect') ? 'after_redirect' : 'after_login';
+                $dst = "{$dstDir}/fg_{$timestamp}_{$name}.png";
                 rename($src, $dst);
                 $this->info("📸 Screenshot saved: {$dst}");
             }
