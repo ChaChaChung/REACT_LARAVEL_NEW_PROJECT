@@ -645,11 +645,47 @@ class ScrapeBrowserFgDOMDetail extends Command
             }
         }
 
-        // 儲存表格資料
+        // 儲存表格資料（模仿 Splus 的 mergedData 格式）
+        $mergedFileName = null;
         if (!empty($result['tableData']) && ($result['tableData']['found'] ?? false)) {
-            $tablePath = "{$dstDir}/fg_{$timestamp}_table.json";
-            file_put_contents($tablePath, json_encode($result['tableData'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            $this->info("📊 Table data saved: {$tablePath} (" . ($result['tableData']['rowCount'] ?? 0) . " rows)");
+            $tableData = $result['tableData'];
+            $allData = $tableData['data'] ?? [];
+            $headers = $tableData['headers'] ?? [];
+            $totalRows = count($allData);
+
+            // 移除 _rowIndex 等內部欄位
+            $allData = array_map(function ($row) {
+                unset($row['_rowIndex']);
+                return $row;
+            }, $allData);
+
+            $queryParams = array_filter([
+                'date_start' => $result['date_start'] ?? null,
+                'date_end' => $result['date_end'] ?? null,
+                'account_number' => $result['account_number'] ?? null,
+            ]);
+
+            $mergedData = [
+                'metadata' => [
+                    'timestamp' => $timestamp,
+                    'url' => $result['url'] ?? '',
+                    'queryParams' => $queryParams,
+                    'totalPages' => 1,
+                    'totalRows' => $totalRows,
+                ],
+                'headers' => $headers,
+                'headerCount' => count($headers),
+                'rowCount' => $totalRows,
+                'data' => $allData,
+            ];
+
+            $mergedFileName = "scraped_data/fg_scraped_data_{$timestamp}.json";
+            Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("📊 Merged data saved: storage/app/{$mergedFileName} ({$totalRows} rows)");
+        }
+
+        if (!$mergedFileName && !empty($result['tableData']) && !($result['tableData']['found'] ?? false)) {
+            $this->warn('⚠️ Table not found or empty.');
         }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
