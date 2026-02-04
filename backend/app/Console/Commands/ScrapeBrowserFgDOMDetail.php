@@ -205,16 +205,13 @@ class ScrapeBrowserFgDOMDetail extends Command
                     });
                     await new Promise(resolve => setTimeout(resolve, 2000));
 
-                    // 若仍為登入頁，再設一次 cookie + localStorage 後重新導向並重新載入
-                    const currentUrl = page.url();
-                    if (currentUrl.includes('/login') || currentUrl.includes('login') || /login|登入/i.test(await page.evaluate(() => document.body?.innerText || '').catch(() => ''))) {
-                        console.log('⚠️  Still on login page, re-applying cookies and localStorage...');
-                        $cookiesCode
-                        $localStorageCode
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                    }
+                    // 無條件再設一次 cookie + localStorage（FG 需存兩次才會登入成功，SPA 可能在首次載入時未正確讀取）
+                    console.log('🔐 Re-applying cookies and localStorage (2nd pass for reliable login)...');
+                    $cookiesCode
+                    $localStorageCode
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                    await new Promise(resolve => setTimeout(resolve, 2000));
 
                     // 再次確保 localStorage 已設定後重新載入（讓 SPA 讀取 token）
                     $localStorageCode

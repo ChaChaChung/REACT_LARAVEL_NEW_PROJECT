@@ -373,23 +373,23 @@ trait HasAgentAuth
         $domainJs = json_encode($domain);
 
         return <<<JS
-            console.log('🔐 Setting FG authentication cookies (token, auth, bg_languageKey)...');
-
-            const cookies = [];
-            const fgDomain = {$domainJs};
-            const useSecure = typeof targetUrl !== 'undefined' && targetUrl.startsWith('https');
-            if (fgDomain && fgDomain !== '') {
-                const path = '/';
-                if ({$tokenJs}) cookies.push({ name: 'token', value: {$tokenJs}, domain: fgDomain, path, secure: useSecure });
-                if ({$authJs}) cookies.push({ name: 'auth', value: {$authJs}, domain: fgDomain, path, secure: useSecure });
-                if ({$langJs}) cookies.push({ name: 'bg_languageKey', value: {$langJs}, domain: fgDomain, path, secure: useSecure });
-            }
-
-            if (cookies.length > 0) {
-                await {$pageVar}.setCookie(...cookies);
-                console.log('✅ FG Cookies set:', cookies.length);
-            } else {
-                console.log('⚠️  No FG cookies set (set FG_AGENT_TOKEN, FG_AGENT_AUTH, FG_AGENT_LANG and FG_AGENT_DOMAIN)');
+            {
+                console.log('🔐 Setting FG authentication cookies (token, auth, bg_languageKey)...');
+                const cookies = [];
+                const fgDomain = {$domainJs};
+                const useSecure = typeof targetUrl !== 'undefined' && targetUrl.startsWith('https');
+                if (fgDomain && fgDomain !== '') {
+                    const path = '/';
+                    if ({$tokenJs}) cookies.push({ name: 'token', value: {$tokenJs}, domain: fgDomain, path, secure: useSecure });
+                    if ({$authJs}) cookies.push({ name: 'auth', value: {$authJs}, domain: fgDomain, path, secure: useSecure });
+                    if ({$langJs}) cookies.push({ name: 'bg_languageKey', value: {$langJs}, domain: fgDomain, path, secure: useSecure });
+                }
+                if (cookies.length > 0) {
+                    await {$pageVar}.setCookie(...cookies);
+                    console.log('✅ FG Cookies set:', cookies.length);
+                } else {
+                    console.log('⚠️  No FG cookies set (set FG_AGENT_TOKEN, FG_AGENT_AUTH, FG_AGENT_LANG and FG_AGENT_DOMAIN)');
+                }
             }
         JS;
     }
