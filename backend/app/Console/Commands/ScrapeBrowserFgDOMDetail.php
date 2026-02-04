@@ -225,11 +225,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                     await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 });
                     await new Promise(resolve => setTimeout(resolve, 2000));
 
-                    // 登入後截圖
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                    const screenshotAfterLogin = 'fg_after_login_' + timestamp + '.png';
-                    await page.screenshot({ path: screenshotAfterLogin, fullPage: false });
-                    console.log('📸 Screenshot (after login):', screenshotAfterLogin);
 
                     // 登入完成後跳轉到目標 URL
                     console.log('🔗 Navigating to target URL:', targetUrl);
@@ -254,28 +250,15 @@ class ScrapeBrowserFgDOMDetail extends Command
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
                     }
 
-                    let dateStepScreenshots = [];
-                    // 若有 date_start 或 date_end，填入日期選擇器（每步截圖）
+                    // 若有 date_start 或 date_end，填入日期選擇器
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') ||
                         (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
                             console.log('📅 Setting up date range...');
 
-                            // Step 1: 點擊前截圖
-                            const step1 = 'fg_date_step1_before_click_' + timestamp + '.png';
-                            await page.screenshot({ path: step1, fullPage: false });
-                            dateStepScreenshots.push(step1);
-                            console.log('📸 Step 1: Before click date input');
-
                             await page.waitForSelector('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 10000 }).catch(() => {});
                             await page.click('input.el-range-input[placeholder="Start time"], input.el-range-input[placeholder="Start Time"], input.el-range-input', { timeout: 5000 }).catch(() => {});
                             await new Promise(resolve => setTimeout(resolve, 1000));
-
-                            // Step 2: panel 打開後截圖
-                            const step2 = 'fg_date_step2_panel_opened_' + timestamp + '.png';
-                            await page.screenshot({ path: step2, fullPage: false });
-                            dateStepScreenshots.push(step2);
-                            console.log('📸 Step 2: Panel opened');
 
                             // 用日曆點選，不填入 input（input 會自動加一個月）
                             const startParts = ($startY && $startM && $startD) ? { y: $startY, m: $startM, d: $startD } : null;
@@ -335,12 +318,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             }
 
-                            // Step 3: 選 Start Date 後截圖
-                            const step3 = 'fg_date_step3_after_start_date_' + timestamp + '.png';
-                            await page.screenshot({ path: step3, fullPage: false });
-                            dateStepScreenshots.push(step3);
-                            console.log('📸 Step 3: After selecting Start Date');
-
                             if (endParts && endParts.y && endParts.m && endParts.d) {
                                 console.log('📅 Selecting End Date: ' + endParts.y + '-' + endParts.m + '-' + endParts.d);
                                 await new Promise(resolve => setTimeout(resolve, 300));
@@ -351,12 +328,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                                 }
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             }
-
-                            // Step 4: 填入 End Date 後截圖
-                            const step4 = 'fg_date_step4_after_end_date_' + timestamp + '.png';
-                            await page.screenshot({ path: step4, fullPage: false });
-                            dateStepScreenshots.push(step4);
-                            console.log('📸 Step 4: After filling End Date');
 
                             const okButtonClicked = await page.evaluate(() => {
                                 const okButtons = Array.from(document.querySelectorAll('button.el-button.el-picker-panel__link-btn.el-button--default.el-button--mini.is-plain, button.el-button'));
@@ -370,12 +341,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                             });
                             if (okButtonClicked) console.log('✅ OK button clicked');
                             await new Promise(resolve => setTimeout(resolve, 1000));
-
-                            // Step 5: 點擊 OK 後截圖
-                            const step5 = 'fg_date_step5_after_ok_' + timestamp + '.png';
-                            await page.screenshot({ path: step5, fullPage: false });
-                            dateStepScreenshots.push(step5);
-                            console.log('📸 Step 5: After clicking OK');
 
                         } catch (e) {
                             console.log('⚠️  Date selection error: ' + e.message);
@@ -428,13 +393,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                     });
                     if (searchClicked) console.log('✅ Query button clicked');
                     await new Promise(resolve => setTimeout(resolve, 2500));
-
-                    if (dateStepScreenshots.length > 0) {
-                        const step6 = 'fg_date_step6_after_search_' + timestamp + '.png';
-                        await page.screenshot({ path: step6, fullPage: false });
-                        dateStepScreenshots.push(step6);
-                        console.log('📸 Step 6: After clicking Query');
-                    }
 
                     // 等待 el-table 出現並爬取表格資料
                     await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 10000 }).catch(() => {});
@@ -515,10 +473,10 @@ class ScrapeBrowserFgDOMDetail extends Command
                         console.log('⚠️  Table extract error: ' + e.message);
                     }
 
-                    // 轉址後截圖
-                    const screenshotAfterRedirect = 'fg_after_redirect_' + timestamp + '.png';
-                    await page.screenshot({ path: screenshotAfterRedirect, fullPage: false });
-                    console.log('📸 Screenshot (after redirect):', screenshotAfterRedirect);
+                    // 最後一張截圖（所有操作完成後）
+                    const screenshotPath = 'fg_final_' + timestamp + '.png';
+                    await page.screenshot({ path: screenshotPath, fullPage: false });
+                    console.log('📸 Screenshot (final):', screenshotPath);
 
                     const result = {
                         timestamp: new Date().toISOString(),
@@ -526,10 +484,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         date_start: dateStartParsed,
                         date_end: dateEndParsed,
                         account_number: accountNumber || null,
-                        screenshotPath: screenshotAfterRedirect,
-                        screenshotAfterLogin: screenshotAfterLogin,
-                        screenshotAfterRedirect: screenshotAfterRedirect,
-                        dateStepScreenshots: dateStepScreenshots,
+                        screenshotPath: screenshotPath,
                         tableData: tableData,
                         success: true
                     };
@@ -614,34 +569,14 @@ class ScrapeBrowserFgDOMDetail extends Command
             mkdir($dstDir, 0755, true);
         }
 
-        $screenshots = [
-            $result['screenshotAfterLogin'] ?? null,
-            $result['screenshotAfterRedirect'] ?? null,
-        ];
-        // 相容舊版只回傳 screenshotPath
-        if (empty(array_filter($screenshots)) && !empty($result['screenshotPath'])) {
-            $screenshots = [$result['screenshotPath']];
-        }
-
-        foreach (array_filter($screenshots) as $screenshotPath) {
+        // 只保留最後一張截圖
+        $screenshotPath = $result['screenshotPath'] ?? null;
+        if ($screenshotPath) {
             $src = $tempDir . '/' . $screenshotPath;
             if (file_exists($src)) {
-                $name = str_contains($screenshotPath, 'redirect') ? 'after_redirect' : 'after_login';
-                $dst = "{$dstDir}/fg_{$timestamp}_{$name}.png";
+                $dst = "{$dstDir}/fg_{$timestamp}_final.png";
                 rename($src, $dst);
                 $this->info("📸 Screenshot saved: {$dst}");
-            }
-        }
-
-        // 日期選擇步驟截圖 (step1~6)
-        foreach ($result['dateStepScreenshots'] ?? [] as $screenshotPath) {
-            $src = $tempDir . '/' . $screenshotPath;
-            if (file_exists($src)) {
-                $base = basename($screenshotPath, '.png');
-                $stepName = preg_replace('/_\d{4}-\d{2}-\d{2}T[\d-]+$/', '', $base);
-                $dst = "{$dstDir}/fg_{$timestamp}_date_{$stepName}.png";
-                rename($src, $dst);
-                $this->info("📸 Date step: {$dst}");
             }
         }
 
