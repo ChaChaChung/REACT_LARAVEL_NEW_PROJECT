@@ -7,10 +7,6 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
-/**
- * FG 瀏覽器 DOM 內容爬蟲命令
- * 使用 Cookie 登入（token, auth, bg_languageKey），登入完成後截圖
- */
 class ScrapeBrowserFgDOMDetail extends Command
 {
     use HasAgentAuth;
@@ -30,7 +26,7 @@ class ScrapeBrowserFgDOMDetail extends Command
      * 命令描述
      * @var string
      */
-    protected $description = 'FG: Login with cookies (token, auth, bg_languageKey) and take screenshot after login';
+    protected $description = 'Scrape content from FG DOM elements using browser automation with detailed information';
 
     /**
      * 執行命令的主要處理方法
@@ -368,13 +364,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                                     if (inp) return fillInput(inp);
                                 }
                             }
-                            // 備用：依 placeholder 尋找
-                            const inputs = document.querySelectorAll('input.el-input__inner');
-                            for (const inp of inputs) {
-                                if (inp.placeholder?.toLowerCase().includes('account')) {
-                                    return fillInput(inp);
-                                }
-                            }
                             return false;
                         }, accountNumber);
                         if (filled) console.log('✅ Filled account_number: ' + accountNumber);
@@ -383,12 +372,10 @@ class ScrapeBrowserFgDOMDetail extends Command
 
                     // 點擊 query 按鈕（不論是否有日期或 account）
                     const searchClicked = await page.evaluate(() => {
-                        const btn = document.querySelector('button.queryBtn.J_Search-bar-query') ||
-                            document.querySelector('button.J_Search-bar-query') ||
-                            document.querySelector('button.queryBtn');
+                        const btn = document.querySelector('button.queryBtn.J_Search-bar-query');
                         if (btn) { btn.click(); return true; }
                         const btns = Array.from(document.querySelectorAll('button.el-button.el-button--primary'));
-                        const fallback = btns.find(b => /query|search|搜尋/i.test((b.textContent || '').trim()));
+                        const fallback = btns.find(b => /query/i.test((b.textContent || '').trim()));
                         if (fallback) { fallback.click(); return true; }
                         return false;
                     });
@@ -473,9 +460,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                     let firstPageData = null;
                     try {
                         firstPageData = await extractTableData(page);
-                        if (firstPageData && firstPageData.found) {
-                            console.log('📊 First page: ' + firstPageData.rowCount + ' rows');
-                        }
                     } catch (e) {
                         console.log('⚠️  Table extract error: ' + e.message);
                     }
@@ -538,9 +522,6 @@ class ScrapeBrowserFgDOMDetail extends Command
                             const pageData = await extractTableData(page);
                             if (pageData && pageData.found && pageData.data && pageData.data.length > 0) {
                                 allPagesData.push(pageData);
-                                if (p % 20 === 0 || p === totalPages) {
-                                    console.log('📊 Page ' + p + '/' + totalPages + ': ' + pageData.rowCount + ' rows');
-                                }
                             }
                         } catch (err) {
                             console.log('⚠️  Page ' + p + ' error: ' + err.message);
