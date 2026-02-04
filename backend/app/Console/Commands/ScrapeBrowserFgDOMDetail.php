@@ -127,7 +127,7 @@ class ScrapeBrowserFgDOMDetail extends Command
         $cookiesCode = $this->generateFgPuppeteerCookiesCode('page');
         $localStorageCode = $this->generateFgPuppeteerLocalStorageCode('page');
         $urlJs = json_encode($url);
-        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
+        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start)) . ' 00:00:00') : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end)) . ' 23:59:59') : 'null';
         $startY = $date_start ? (int) date('Y', strtotime($date_start)) : 0;
         $startM = $date_start ? (int) date('n', strtotime($date_start)) : 0;
