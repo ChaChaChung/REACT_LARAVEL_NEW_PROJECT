@@ -347,8 +347,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         }
                     }
 
-                    // 若有 account_number，填入 player account input（不論是否有日期）
-                    // 目標 input: <input class="el-input__inner" type="text" autocomplete="off" tabindex="4" id="el-id-xxx">
+                    // 若有 account_number，填入 player account input（依 label 尋找，tabindex 會因頁面不同而變）
                     const accountNumber = $accountNumberJs && $accountNumberJs !== 'null' ? $accountNumberJs : null;
                     if (accountNumber && accountNumber !== '') {
                         const filled = await page.evaluate((val) => {
@@ -359,21 +358,23 @@ class ScrapeBrowserFgDOMDetail extends Command
                                 inp.dispatchEvent(new Event('change', { bubbles: true }));
                                 return true;
                             };
-                            // 1. 優先：tabindex="4"（player account 欄位）
-                            const byTabindex = document.querySelector('input.el-input__inner[tabindex="4"]');
-                            if (byTabindex) return fillInput(byTabindex);
-                            // 2. 依 label / placeholder 尋找
+                            // 依 label "player account" 尋找（el-form-item > label + input）
+                            const formItems = document.querySelectorAll('.el-form-item');
+                            for (const item of formItems) {
+                                const label = item.querySelector('.el-form-item__label, label');
+                                const labelText = label ? label.textContent.trim().toLowerCase() : '';
+                                if (labelText.includes('player account')) {
+                                    const inp = item.querySelector('input.el-input__inner');
+                                    if (inp) return fillInput(inp);
+                                }
+                            }
+                            // 備用：依 placeholder 尋找
                             const inputs = document.querySelectorAll('input.el-input__inner');
                             for (const inp of inputs) {
-                                const label = inp.closest('.el-form-item')?.querySelector('label');
-                                const labelText = label ? label.textContent.trim().toLowerCase() : '';
-                                if (labelText.includes('player account') || inp.placeholder?.toLowerCase().includes('account')) {
+                                if (inp.placeholder?.toLowerCase().includes('account')) {
                                     return fillInput(inp);
                                 }
                             }
-                            // 3. 依 type="text" + autocomplete="off" + tabindex="4" 組合
-                            const byAttrs = document.querySelector('input.el-input__inner[type="text"][autocomplete="off"][tabindex="4"]');
-                            if (byAttrs) return fillInput(byAttrs);
                             return false;
                         }, accountNumber);
                         if (filled) console.log('✅ Filled account_number: ' + accountNumber);
