@@ -398,6 +398,13 @@ class ScrapeBrowserFgDOMDetail extends Command
                     await page.waitForSelector('table.el-table__header, table.el-table__body, table.el-table, table[class*="el-table"]', { timeout: 10000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 500));
 
+                    // 滾動到分頁組件確保可見
+                    await page.evaluate(() => {
+                        const pagination = document.querySelector('.el-pagination');
+                        if (pagination) pagination.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 300));
+
                     const extractTableData = async (pageObject) => {
                         return await pageObject.evaluate(() => {
                             let headerTable = document.querySelector('table.el-table__header');
@@ -461,16 +468,100 @@ class ScrapeBrowserFgDOMDetail extends Command
                         });
                     };
 
-                    let tableData = null;
+                    // 第一頁資料
+                    let firstPageData = null;
                     try {
-                        tableData = await extractTableData(page);
-                        if (tableData && tableData.found) {
-                            console.log('📊 Table scraped: ' + tableData.rowCount + ' rows, ' + (tableData.headers?.length || 0) + ' columns');
-                        } else {
-                            console.log('⚠️  Table not found or empty');
+                        firstPageData = await extractTableData(page);
+                        if (firstPageData && firstPageData.found) {
+                            console.log('📊 First page: ' + firstPageData.rowCount + ' rows');
                         }
                     } catch (e) {
                         console.log('⚠️  Table extract error: ' + e.message);
+                    }
+
+                    // 取得分頁資訊（el-pagination: Total 2698, input max=135, el-pager li.number）
+                    let totalPages = 1;
+                    const paginationInfo = await page.evaluate(() => {
+                        let total = 1;
+                        const elPagination = document.querySelector('.el-pagination');
+                        if (elPagination) {
+                            const pageInput = elPagination.querySelector('input[type="number"][max]');
+                            if (pageInput && pageInput.hasAttribute('max')) {
+                                total = parseInt(pageInput.getAttribute('max'));
+                            }
+                            if (total <= 1) {
+                                const text = elPagination.textContent || '';
+                                const totalMatch = text.match(/total\s+(\d+)/i);
+                                if (totalMatch) {
+                                    const totalRecords = parseInt(totalMatch[1]);
+                                    total = Math.ceil(totalRecords / 20);
+                                }
+                            }
+                            if (total <= 1) {
+                                const pagerItems = elPagination.querySelectorAll('.el-pager li.number');
+                                let maxNum = 1;
+                                pagerItems.forEach(li => {
+                                    const n = parseInt(li.textContent.trim());
+                                    if (!isNaN(n) && n > maxNum) maxNum = n;
+                                });
+                                if (maxNum > 1) total = maxNum;
+                            }
+                        }
+                        return { totalPages: Math.max(1, total) };
+                    });
+                    totalPages = Math.min(paginationInfo.totalPages, 500);
+                    if (paginationInfo.totalPages > 500) {
+                        console.log('⚠️  Capping at 500 pages (detected ' + paginationInfo.totalPages + ')');
+                    }
+                    console.log('📄 Total pages: ' + totalPages);
+
+                    const allPagesData = firstPageData && firstPageData.found ? [firstPageData] : [];
+                    const headers = firstPageData?.headers || [];
+
+                    // 爬取第 2 頁到最後一頁（點擊下一頁按鈕逐頁爬取）
+                    for (let p = 2; p <= totalPages; p++) {
+                        try {
+                            const nextClicked = await page.evaluate(() => {
+                                const btn = document.querySelector('.el-pagination .btn-next:not([disabled]):not(.is-disabled)');
+                                if (btn && btn.getAttribute('aria-disabled') !== 'true') {
+                                    btn.click();
+                                    return true;
+                                }
+                                return false;
+                            });
+                            if (!nextClicked) {
+                                console.log('⚠️  No next page button, stopping at page ' + (p - 1));
+                                break;
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 1200));
+                            const pageData = await extractTableData(page);
+                            if (pageData && pageData.found && pageData.data && pageData.data.length > 0) {
+                                allPagesData.push(pageData);
+                                if (p % 20 === 0 || p === totalPages) {
+                                    console.log('📊 Page ' + p + '/' + totalPages + ': ' + pageData.rowCount + ' rows');
+                                }
+                            }
+                        } catch (err) {
+                            console.log('⚠️  Page ' + p + ' error: ' + err.message);
+                        }
+                    }
+
+                    // 合併所有頁面資料
+                    let tableData = null;
+                    if (allPagesData.length > 0) {
+                        const allRows = [];
+                        allPagesData.forEach(pd => {
+                            if (pd.data) allRows.push(...pd.data);
+                        });
+                        tableData = {
+                            found: true,
+                            headers: headers,
+                            rowCount: allRows.length,
+                            data: allRows
+                        };
+                        console.log('📊 Total scraped: ' + allRows.length + ' rows from ' + allPagesData.length + ' pages');
+                    } else if (firstPageData) {
+                        tableData = firstPageData;
                     }
 
                     // 最後一張截圖（所有操作完成後）
@@ -486,6 +577,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                         account_number: accountNumber || null,
                         screenshotPath: screenshotPath,
                         tableData: tableData,
+                        totalPages: allPagesData.length,
                         success: true
                     };
 
@@ -532,7 +624,7 @@ class ScrapeBrowserFgDOMDetail extends Command
         $this->info('3. Running browser automation...');
 
         $workingDir = dirname($scriptPath);
-        $result = Process::path($workingDir)->timeout(120)->run('node ' . basename($scriptPath));
+        $result = Process::path($workingDir)->timeout(600)->run('node ' . basename($scriptPath));
 
         $this->line('');
         $this->line('📋 Browser Output:');
@@ -605,7 +697,7 @@ class ScrapeBrowserFgDOMDetail extends Command
                     'timestamp' => $timestamp,
                     'url' => $result['url'] ?? '',
                     'queryParams' => $queryParams,
-                    'totalPages' => 1,
+                    'totalPages' => $result['totalPages'] ?? 1,
                     'totalRows' => $totalRows,
                 ],
                 'headers' => $headers,
