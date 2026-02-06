@@ -1463,6 +1463,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         // 初始化合併後的檔案名稱
         $mergedFileName = null;
         
+        // 初始化平台資料（在外層定義，確保在所有情況下都可用）
+        $platformData = [];
+        
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
             // 清理"代理"欄位：移除"公司主站代理線"字樣
@@ -1477,7 +1480,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             unset($row); // 解除引用
             
             // 按照平台分類數資料
-            $platformData = [];
             // 平台欄位名稱
             $platformField = '平台';
             
@@ -1521,11 +1523,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 'platforms' => $platformData
             ];
             
-            // 保存合併後的資料到單一 JSON 檔案
-            $mergedFileName = "scraped_data/scraped_data_{$timestamp}.json";
-            Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-            
-            // 為每個平台單獨保存檔案
+            // 只為每個平台單獨保存檔案（不再產生合併檔案）
             foreach ($platformData as $platform => $data) {
                 // 取出平台名稱
                 $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
@@ -1547,11 +1545,12 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 ];
                 
                 // 保存平台專屬檔案
-                $platformFileName = "scraped_data/platform_{$safePlatformName}_{$timestamp}.json";
+                $platformFileName = "scraped_data/{$safePlatformName}_{$timestamp}.json";
                 Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("💾 Platform file saved: {$platformFileName} ({$data['rowCount']} rows)");
             }
             
-            $this->info("✅ All platform-specific files saved!");
+            $this->info("✅ All " . count($platformData) . " platform-specific files saved!");
         }
 
         // 將截圖從臨時目錄移動到永久儲存目錄
@@ -1563,11 +1562,13 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
         }
 
-        // 處理帳號詳情結果
+        // 處理帳號詳情結果（如果有的話，也按平台合併到對應的平台檔案中）
         $accountDetailResults = $result['accountDetailResults'] ?? [];
+        
         if (!empty($accountDetailResults)) {
             $this->info('📋 Processing account detail results: ' . count($accountDetailResults) . ' result(s)');
             
+            // 將帳號詳情資料按平台分類並合併到對應的平台資料中
             foreach ($accountDetailResults as $index => $detailResult) {
                 if (!isset($detailResult['success']) || !$detailResult['success']) {
                     $this->warn("⚠️  Detail result " . ($index + 1) . " failed: " . ($detailResult['error'] ?? 'Unknown error'));
@@ -1585,38 +1586,85 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     }
                 }
 
-                // 保存詳情頁面的數據
+                // 將詳情頁面的資料合併到對應平台的資料中
                 if (isset($detailResult['tableData']) && !empty($detailResult['tableData']['data'])) {
-                    $accountNumber = $queryParams['account_number'] ?? 'unknown';
                     $platform = $detailResult['platform'] ?? 'unknown';
+                    $detailData = $detailResult['tableData']['data'] ?? [];
                     
-                    // 創建詳情頁面數據結構
-                    $detailData = [
-                        'metadata' => [
-                            'timestamp' => $timestamp,
-                            'accountNumber' => $accountNumber,
-                            'platform' => $platform,
-                            'linkIndex' => $index + 1,
-                            'pageUrl' => $detailResult['pageUrl'] ?? '',
-                            'queryParams' => $queryParams
-                        ],
-                        'headers' => $detailResult['tableData']['headers'] ?? [],
-                        'headerCount' => count($detailResult['tableData']['headers'] ?? []),
-                        'rowCount' => $detailResult['tableData']['rowCount'] ?? 0,
-                        'data' => $detailResult['tableData']['data'] ?? []
-                    ];
+                    // 如果該平台不存在於 platformData 中，創建新的平台資料
+                    if (!isset($platformData[$platform])) {
+                        $platformData[$platform] = [
+                            'rowCount' => 0,
+                            'data' => []
+                        ];
+                    }
                     
-                    // 保存詳情頁面數據文件
-                    $safeAccountNumber = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $accountNumber);
-                    $safePlatform = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
-                    $detailFileName = "scraped_data/account_detail_{$safeAccountNumber}_{$safePlatform}_link_" . ($index + 1) . "_{$timestamp}.json";
+                    // 將詳情資料合併進去
+                    foreach ($detailData as $row) {
+                        // 檢查是否已存在（使用單號或整行資料進行去重）
+                        $rowKey = $row['單號'] ?? $row['Order_Number'] ?? json_encode($row);
+                        $exists = false;
+                        
+                        foreach ($platformData[$platform]['data'] as $existingRow) {
+                            $existingKey = $existingRow['單號'] ?? $existingRow['Order_Number'] ?? json_encode($existingRow);
+                            if ($rowKey === $existingKey) {
+                                $exists = true;
+                                break;
+                            }
+                        }
+                        
+                        // 如果不存在，加入到平台資料中
+                        if (!$exists) {
+                            $platformData[$platform]['data'][] = $row;
+                            $platformData[$platform]['rowCount']++;
+                        }
+                    }
                     
-                    Storage::put($detailFileName, json_encode($detailData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
-                    $this->info("💾 Detail data saved: {$detailFileName}");
+                    $this->info("✅ Merged " . count($detailData) . " rows into platform: {$platform}");
                 }
             }
             
-            $this->info("✅ All account detail results processed!");
+            $this->info("✅ All account detail results merged into platform data!");
+        }
+        
+        // 保存所有平台檔案（包含主列表資料和帳號詳情資料）
+        if (!empty($platformData)) {
+            $this->info('💾 Saving platform files...');
+            
+            foreach ($platformData as $platform => $data) {
+                $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
+                
+                // 從資料中提取表頭（如果資料有的話）
+                $platformHeaders = $headers;
+                if (!empty($data['data'])) {
+                    // 從第一筆資料中取得所有欄位名稱作為表頭
+                    $firstRow = $data['data'][0];
+                    $platformHeaders = array_keys($firstRow);
+                }
+                
+                $platformFileData = [
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'platform' => $platform,
+                        'url' => $result['url'] ?? '',
+                        'queryParams' => $queryParams,
+                        'totalPages' => $domData['totalPages'] ?? 1,
+                        'totalRows' => $data['rowCount']
+                    ],
+                    'headers' => $platformHeaders,
+                    'headerCount' => count($platformHeaders),
+                    'rowCount' => $data['rowCount'],
+                    'data' => $data['data']
+                ];
+                
+                $platformFileName = "scraped_data/{$safePlatformName}_{$timestamp}.json";
+                Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("💾 Platform file saved: {$platformFileName} ({$data['rowCount']} rows)");
+            }
+            
+            $this->info("✅ All " . count($platformData) . " platform files saved successfully!");
+        } else {
+            $this->warn("⚠️  No platform data to save!");
         }
         
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
