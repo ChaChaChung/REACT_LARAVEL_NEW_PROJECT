@@ -22,9 +22,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
      * {account_number?} - 要填入的帳號（可選參數）
+     * {platform?} - 要選擇的平台（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {account_number?} {platform?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -43,6 +44,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
         $account_number = $this->argument('account_number');
+        $platform = $this->argument('platform');
         $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
@@ -50,6 +52,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
         $this->info("Account Number: {$account_number}");
+        $this->info("Platform: {$platform}");
         $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
@@ -60,7 +63,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number, $platform, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -123,10 +126,11 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
      * @param string|null $account_number 要填入的帳號（可選）
+     * @param string|null $platform 要選擇的平台（可選）
      * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null, $platform = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -139,6 +143,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
         $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
+        $platformJs = $platform ? json_encode($platform) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -582,9 +587,19 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         })
                         .filter(rowData => {
                             // 過濾掉小計和總計行
-                            // 檢查第一個欄位（通常是日期欄位）是否包含"小計"或"總計"
+                            // 檢查第一個欄位（通常是日期欄位）是否包含"小計"、"總計"、"Current Total："或"Total："
                             const firstValue = Object.values(rowData)[0];
-                            return firstValue !== '小計' && firstValue !== '總計';
+                            if (!firstValue) return true;
+                            const valueStr = String(firstValue);
+                            const lowerValue = valueStr.toLowerCase();
+                            return firstValue !== '小計' && 
+                                   firstValue !== '總計' && 
+                                   lowerValue !== 'current total' && 
+                                   lowerValue !== 'total' &&
+                                   valueStr !== 'Current Total：' &&
+                                   valueStr !== 'Total：' &&
+                                   !valueStr.startsWith('Current Total') &&
+                                   !valueStr.startsWith('Total：');
                         });
 
                     return {
@@ -598,7 +613,19 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
                             .filter(rowArray => {
                                 // 過濾掉小計和總計行
-                                return rowArray.length > 0 && rowArray[0] !== '小計' && rowArray[0] !== '總計';
+                                if (rowArray.length === 0) return false;
+                                const firstValue = rowArray[0];
+                                if (!firstValue) return true;
+                                const valueStr = String(firstValue);
+                                const lowerValue = valueStr.toLowerCase();
+                                return firstValue !== '小計' && 
+                                       firstValue !== '總計' && 
+                                       lowerValue !== 'current total' && 
+                                       lowerValue !== 'total' &&
+                                       valueStr !== 'Current Total：' &&
+                                       valueStr !== 'Total：' &&
+                                       !valueStr.startsWith('Current Total') &&
+                                       !valueStr.startsWith('Total：');
                             }),
                         data: dataRows
                     };
@@ -872,6 +899,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     let dateStartParsed = null;
                     let dateEndParsed = null;
                     let accountNumberParsed = null;
+                    let platformParsed = null;
                     
                     try {
                         if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
@@ -883,10 +911,31 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
                             accountNumberParsed = JSON.parse($accountNumberJs);
                         }
+                        if ($platformJs && $platformJs !== 'null' && $platformJs !== '') {
+                            platformParsed = JSON.parse($platformJs);
+                        }
                     } catch (e) {
                         dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
                         accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs : null;
+                        platformParsed = $platformJs !== 'null' ? $platformJs : null;
+                    }
+
+                    // 如果提供了 platform，選擇對應的平台
+                    if (platformParsed && platformParsed !== null && platformParsed !== '') {
+                        try {
+                            // 查找 select[name="find6"] 欄位
+                            await page.waitForSelector('select[name="find6"]', { timeout: 10000 });
+                            
+                            // 選擇平台
+                            await page.select('select[name="find6"]', platformParsed);
+                            console.log('✅ Platform selected: ' + platformParsed);
+                            
+                            // 減少等待時間
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } catch (e) {
+                            console.log('⚠️  Error selecting platform: ' + e.message);
+                        }
                     }
 
                     // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
@@ -1068,7 +1117,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                             queryParams: {
                                                 date_start: dateStartParsed,
                                                 date_end: dateEndParsed,
-                                                account_number: accountNumberParsed
+                                                account_number: accountNumberParsed,
+                                                platform: platformParsed
                                             },
                                             domData: {
                                                 pageInfo: {
@@ -1078,7 +1128,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                                 queryParams: {
                                                     date_start: dateStartParsed,
                                                     date_end: dateEndParsed,
-                                                    account_number: accountNumberParsed
+                                                    account_number: accountNumberParsed,
+                                                    platform: platformParsed
                                                 },
                                                 totalPages: 1,
                                                 pages: [],
@@ -1271,7 +1322,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         queryParams: {
                             date_start: dateStartParsed,
                             date_end: dateEndParsed,
-                            account_number: accountNumberParsed
+                            account_number: accountNumberParsed,
+                            platform: platformParsed
                         },
                         totalPages: allPagesData.length,
                         pages: allPagesData,
@@ -1299,7 +1351,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         queryParams: {
                             date_start: dateStartParsed,
                             date_end: dateEndParsed,
-                            account_number: accountNumberParsed
+                            account_number: accountNumberParsed,
+                            platform: platformParsed
                         },
                         domData: domData,
                         accountDetailResults: accountDetailResults,
