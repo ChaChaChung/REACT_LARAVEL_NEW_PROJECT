@@ -17,13 +17,14 @@ class ScrapeBrowserGlcDOMDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-glc-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}
+     * 執行方式：php artisan agent:scrape-glc-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
      * {date_end?} - 要選擇的結束日期（可選參數）
+     * {account_number?} - 要填入的帳號（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-glc-dom-detail {url} {date_start?} {date_end?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-glc-dom-detail {url} {date_start?} {date_end?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -41,12 +42,14 @@ class ScrapeBrowserGlcDOMDetail extends Command
         $url = $this->argument('url');
         $date_start = $this->argument('date_start');
         $date_end = $this->argument('date_end');
+        $account_number = $this->argument('account_number');
         $concurrency = $this->option('concurrency');
 
         $this->info('=== Browser DOM Scraper (Concurrent) ===');
         $this->info("Target URL: {$url}");
         $this->info("Date Start: {$date_start}");
         $this->info("Date End: {$date_end}");
+        $this->info("Account Number: {$account_number}");
         $this->info("Concurrency: {$concurrency}");
 
         $this->info('Start of command at: ' . date('Y-m-d H:i:s'));
@@ -57,7 +60,7 @@ class ScrapeBrowserGlcDOMDetail extends Command
         }
 
         // 創建 Puppeteer 腳本
-        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $concurrency);
+        $scriptPath = $this->createPuppeteerScript($url, $date_start, $date_end, $account_number, $concurrency);
 
         // 執行腳本
         $result = $this->runPuppeteerScript($scriptPath);
@@ -119,10 +122,11 @@ class ScrapeBrowserGlcDOMDetail extends Command
      * @param string $url 要爬取的目標網址
      * @param string|null $date_start 要選擇的開始日期（可選）
      * @param string|null $date_end 要選擇的結束日期（可選）
+     * @param string|null $account_number 要填入的帳號（可選）
      * @param int $concurrency 併發數量
      * @return string 返回生成的腳本文件路徑
      */
-    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $concurrency = 4)
+    private function createPuppeteerScript($url, $date_start = null, $date_end = null, $account_number = null, $concurrency = 4)
     {
         $this->info('2. Creating browser automation script...');
 
@@ -131,9 +135,10 @@ class ScrapeBrowserGlcDOMDetail extends Command
         // 獲取認證 cookies 程式碼片段（併發頁面用）
         $cookiesCodeForNewPage = $this->generateGlcPuppeteerCookiesCode('newPage');
 
-        // 將 date 轉換為 JavaScript 可用的格式
+        // 將 date 和 account_number 轉換為 JavaScript 可用的格式
         $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -244,6 +249,7 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     executablePath: process.env.CHROME_BIN || undefined
                 });
 
+                let stepScreenshots = [];
                 try {
                     // 創建新的瀏覽器頁面
                     const page = await browser.newPage();
@@ -266,37 +272,106 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         }
                     });
 
-                    $cookiesCodeForPage
-
                     // 監聽瀏覽器控制台的錯誤訊息
-                    // 這有助於調試頁面載入問題
                     page.on('console', msg => {
                         if (msg.type() === 'error') {
                             // console.log('❌ Browser console error:', msg.text());
                         }
                     });
 
-                    console.log('🌐 Navigating to:', '$url');
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
-                    // 導航到目標頁面
-                    // 使用 'domcontentloaded' 替代 'networkidle2' 加快載入速度
-                    // timeout: 30000 設定 30 秒超時
-                    await page.goto('$url', {
+                    const targetUrl = '$url';
+                    let originUrl;
+                    try {
+                        const u = new URL(targetUrl);
+                        originUrl = u.origin + '/';
+                    } catch (e) {
+                        originUrl = targetUrl;
+                    }
+
+                    // Step 1: 先進入 domain 建立 cookie 上下文
+                    console.log('🌐 First navigating to domain (for cookie context):', originUrl);
+                    await page.goto(originUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const step1 = 'glc_step1_after_domain_' + timestamp + '.png';
+                    await page.screenshot({ path: step1, fullPage: false });
+                    stepScreenshots.push(step1);
+                    console.log('📸 Step 1: After navigating to domain');
+
+                    $cookiesCodeForPage
+
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    console.log('🌐 Navigating to:', targetUrl);
+
+                    // Step 2: 導航到目標頁面
+                    await page.goto(targetUrl, {
                         waitUntil: 'domcontentloaded',
                         timeout: 30000
                     });
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    const step2 = 'glc_step2_after_navigate_' + timestamp + '.png';
+                    await page.screenshot({ path: step2, fullPage: false });
+                    stepScreenshots.push(step2);
+                    console.log('📸 Step 2: After navigating to target URL');
 
+                    // 若被導向登入頁，重新設定 cookie 後再試
+                    const currentUrl = page.url();
+                    if (currentUrl.includes('/login') || /login|E-Mail|Password/i.test(await page.evaluate(() => document.body?.innerText || '').catch(() => ''))) {
+                        console.log('⚠️  Redirected to login page, re-applying cookies...');
+                        $cookiesCodeForPage
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        const step3 = 'glc_step3_after_login_retry_' + timestamp + '.png';
+                        await page.screenshot({ path: step3, fullPage: false });
+                        stepScreenshots.push(step3);
+                        console.log('📸 Step 3: After login retry');
+                    }
+
+                    // 等待頁面完全加載
+                    console.log('⏳ Waiting for page to fully load...');
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    
                     // 等待表格元素出現（Element UI 表格，支持多種選擇器）
-                    await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 10000 }).catch(() => {
-                        console.log('⚠️  Table not found, waiting 2 seconds...');
+                    console.log('🔍 Looking for table elements...');
+                    await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body, table', { timeout: 15000 }).catch(() => {
+                        console.log('⚠️  Table not found with standard selectors');
                     });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 2000));
 
-                    // 解析 date
+                    // Step 4: 等待表格後
+                    const step4 = 'glc_step4_after_wait_table_' + timestamp + '.png';
+                    await page.screenshot({ path: step4, fullPage: false });
+                    stepScreenshots.push(step4);
+                    console.log('📸 Step 4: After waiting for table');
+                    
+                    // 調試：列出頁面上所有的表格和主要元素
+                    const pageDebugInfo = await page.evaluate(() => {
+                        return {
+                            url: window.location.href,
+                            title: document.title,
+                            allTables: Array.from(document.querySelectorAll('table')).map(t => ({
+                                className: t.className,
+                                id: t.id,
+                                rowCount: t.querySelectorAll('tr').length
+                            })),
+                            allDivs: Array.from(document.querySelectorAll('div[class*="table"], div[class*="el-"]')).slice(0, 20).map(d => d.className),
+                            bodyHTML: document.body ? document.body.innerHTML.substring(0, 1000) : 'No body'
+                        };
+                    });
+                    console.log('📋 Page debug info:', JSON.stringify(pageDebugInfo, null, 2));
+
+                    // 解析 account_number 和 date
+                    let accountNumberParsed = null;
                     let dateStartParsed = null;
                     let dateEndParsed = null;
                     
                     try {
+                        if ($accountNumberJs && $accountNumberJs !== 'null' && $accountNumberJs !== '') {
+                            accountNumberParsed = JSON.parse($accountNumberJs);
+                        }
                         if ($dateStartJs && $dateStartJs !== 'null' && $dateStartJs !== '') {
                             dateStartParsed = JSON.parse($dateStartJs);
                         }
@@ -304,8 +379,52 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             dateEndParsed = JSON.parse($dateEndJs);
                         }
                     } catch (e) {
+                        accountNumberParsed = $accountNumberJs !== 'null' ? $accountNumberJs : null;
                         dateStartParsed = $dateStartJs !== 'null' ? $dateStartJs : null;
                         dateEndParsed = $dateEndJs !== 'null' ? $dateEndJs : null;
+                    }
+
+                    // 如果提供了 account_number，填入帳號輸入框
+                    if (accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '') {
+                        try {
+                            console.log('📝 Filling account number: ' + accountNumberParsed);
+                            
+                            // 等待輸入框出現（使用你提供的選擇器）
+                            await page.waitForSelector('input.el-input__inner[type="text"][placeholder="Please input "]', { timeout: 10000 }).catch(() => {
+                                console.log('⚠️  Account number input not found');
+                            });
+                            
+                            // 填入帳號
+                            await page.evaluate((accountNumber) => {
+                                const accountInput = document.querySelector('input.el-input__inner[type="text"][placeholder="Please input "]');
+                                
+                                if (accountInput) {
+                                    // 先清空輸入框
+                                    accountInput.value = '';
+                                    // 填入帳號
+                                    accountInput.value = accountNumber;
+                                    // 觸發相關事件，確保 Vue/Element UI 能夠偵測到變化
+                                    accountInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                    accountInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                                    console.log('✅ Account number filled: ' + accountNumber);
+                                } else {
+                                    console.log('❌ Account input element not found');
+                                }
+                            }, accountNumberParsed);
+                            
+                            // 等待一下讓輸入生效
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            
+                            console.log('✅ Account number filled successfully');
+                            const step5 = 'glc_step5_after_account_' + timestamp + '.png';
+                            await page.screenshot({ path: step5, fullPage: false });
+                            stepScreenshots.push(step5);
+                            console.log('📸 Step 5: After filling account');
+                        } catch (e) {
+                            console.log('⚠️  Error filling account number: ' + e.message);
+                            console.error(e);
+                        }
                     }
 
                     // 如果提供了 date_start 或 date_end，點擊 Start time input 打開日期選擇器
@@ -326,6 +445,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             
                             // 等待日期選擇器出現
                             await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            // Step 6: 日期 panel 打開後
+                            const step6 = 'glc_step6_date_panel_opened_' + timestamp + '.png';
+                            await page.screenshot({ path: step6, fullPage: false });
+                            stepScreenshots.push(step6);
+                            console.log('📸 Step 6: Date panel opened');
                             
                             // 如果提供了 date_start，填入 Start Date
                             if (dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') {
@@ -418,6 +543,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             
                             // 等待日期選擇器關閉
                             await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            // Step 7: 點擊 OK 後
+                            const step7 = 'glc_step7_after_date_ok_' + timestamp + '.png';
+                            await page.screenshot({ path: step7, fullPage: false });
+                            stepScreenshots.push(step7);
+                            console.log('📸 Step 7: After clicking OK');
                             
                             console.log('✅ Date range set successfully');
                         } catch (e) {
@@ -426,8 +557,9 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         }
                     }
 
-                    // 如果至少填入了其中一個日期，嘗試點擊搜尋按鈕
-                    if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
+                    // 如果至少填入了其中一個日期或帳號，嘗試點擊搜尋按鈕
+                    if ((accountNumberParsed && accountNumberParsed !== null && accountNumberParsed !== '') ||
+                        (dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') || 
                         (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
                             // 等待一下讓日期輸入完成
@@ -719,6 +851,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         }
                     }
 
+                    // Step 8: 點擊 Search 後
+                    const step8 = 'glc_step8_after_search_' + timestamp + '.png';
+                    await page.screenshot({ path: step8, fullPage: false });
+                    stepScreenshots.push(step8);
+                    console.log('📸 Step 8: After clicking Search');
+
                     // 提取表格資料的函數（可重用）
                     // @param {Page} pageObject - Puppeteer 頁面對象（可以是 page 或 newPage）
                     const extractTableData = async (pageObject) => {
@@ -774,17 +912,28 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 }
                             }
                             
+                            // 如果還是找不到 el-table，嘗試查找任何 table 元素
+                            if (!table && !headerTable && !bodyTable) {
+                                const allTables = document.querySelectorAll('table');
+                                if (allTables.length > 0) {
+                                    console.log('⚠️  el-table not found, using first available table');
+                                    table = allTables[0];
+                                }
+                            }
+                            
                             // 如果完全找不到表格，返回錯誤
                             if (!table && !headerTable && !bodyTable) {
                                 // 獲取調試信息
                                 const debugInfo = {
                                     allTables: document.querySelectorAll('table').length,
                                     elTableElements: document.querySelectorAll('.el-table, [class*="el-table"]').length,
-                                    tableClasses: Array.from(document.querySelectorAll('table')).map(t => t.className)
+                                    tableClasses: Array.from(document.querySelectorAll('table')).map(t => t.className),
+                                    allDivs: Array.from(document.querySelectorAll('div[class*="table"]')).slice(0, 10).map(d => d.className),
+                                    bodyText: document.body ? document.body.innerText.substring(0, 500) : 'No body'
                                 };
                                 return {
                                     found: false,
-                                    error: 'Table el-table not found',
+                                    error: 'No table found on page',
                                     debug: debugInfo
                                 };
                             }
@@ -981,15 +1130,13 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     console.log('📄 Step 1: Extracting first page and pagination info...');
                     
                     // 確保表格已載入（增加等待時間和重試機制）
-                    // Element UI 表格 (el-table)
                     let tableFound = false;
-                    for (let retry = 0; retry < 5; retry++) {
+                    for (let retry = 0; retry < 8; retry++) {
                         try {
-                            // 查找 Element UI 表格（支持多種選擇器）
-                            await page.waitForSelector('table.el-table, table.el-table__header, table.el-table__body, table[class*="el-table"], .el-table, .el-table__header, .el-table__body', { timeout: 10000 }).catch(() => {});
-                            // 等待表格內容出現
-                            await page.waitForSelector('table.el-table tbody tr, table.el-table__body tbody tr, table[class*="el-table"] tbody tr, .el-table tbody tr', { timeout: 5000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            // 查找任何表格（不限於 el-table）
+                            await page.waitForSelector('table', { timeout: 10000 }).catch(() => {});
+                            // 等待一下讓數據加載
+                            await new Promise(resolve => setTimeout(resolve, 2000));
                             
                             // 檢查表格是否存在且有內容
                             const tableCheck = await page.evaluate(() => {
@@ -1010,6 +1157,14 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                     }
                                 }
                                 
+                                // 如果還是找不到，使用任何 table
+                                if (!table && !bodyTable) {
+                                    const allTables = document.querySelectorAll('table');
+                                    if (allTables.length > 0) {
+                                        table = allTables[0];
+                                    }
+                                }
+                                
                                 const finalTable = bodyTable || table;
                                 if (!finalTable) return false;
                                 const rows = finalTable.querySelectorAll('tbody tr, tr');
@@ -1018,16 +1173,19 @@ class ScrapeBrowserGlcDOMDetail extends Command
                             
                             if (tableCheck) {
                                 tableFound = true;
+                                console.log('✅ Table found with data');
                                 break;
                             }
                         } catch (e) {
-                            console.log('⚠️  Retry ' + (retry + 1) + '/5: Table not found yet, waiting...');
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            console.log('⚠️  Retry ' + (retry + 1) + '/8: Table not found yet, waiting...');
+                            await new Promise(resolve => setTimeout(resolve, 3000));
                         }
                     }
                     
-                    // 如果還是找不到表格，獲取頁面信息以便調試
+                    // 如果還是找不到表格，獲取頁面信息以便調試並截圖
                     if (!tableFound) {
+                        console.log('⚠️  Table not found after all retries, collecting debug info...');
+                        
                         // 獲取頁面信息以便調試
                         const pageInfo = await page.evaluate(() => {
                             const allTables = Array.from(document.querySelectorAll('table'));
@@ -1040,9 +1198,18 @@ class ScrapeBrowserGlcDOMDetail extends Command
                                 tableCount: allTables.length,
                                 tableClasses: allTables.map(t => t.className),
                                 elTableClasses: elTableElements.map(el => el.className),
-                                bodyText: document.body ? document.body.innerText.substring(0, 500) : 'No body'
+                                allDivClasses: Array.from(document.querySelectorAll('div[class*="table"]')).slice(0, 20).map(d => d.className),
+                                bodyText: document.body ? document.body.innerText.substring(0, 1000) : 'No body'
                             };
                         });
+                        console.log('📋 Debug info:', JSON.stringify(pageInfo, null, 2));
+                        
+                        // 截圖以便調試
+                        await page.screenshot({ 
+                            path: 'debug_no_table_found.png',
+                            fullPage: true
+                        });
+                        console.log('📸 Debug screenshot saved: debug_no_table_found.png');
                     }
                     
                     // 提取第一頁的表格資料
@@ -1054,6 +1221,19 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         if (firstPageData.debug) {
                             console.error('📋 Debug info:', JSON.stringify(firstPageData.debug, null, 2));
                         }
+                        
+                        // 截圖以便調試
+                        await page.screenshot({ 
+                            path: 'debug_extraction_failed.png',
+                            fullPage: true
+                        });
+                        console.log('📸 Debug screenshot saved: debug_extraction_failed.png');
+                        
+                        // 保存頁面 HTML 以便分析
+                        const pageHTML = await page.content();
+                        fs.writeFileSync('debug_page.html', pageHTML);
+                        console.log('📄 Page HTML saved: debug_page.html');
+                        
                         throw new Error(errorMsg);
                     }
                     
@@ -1385,6 +1565,7 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     const domData = {
                         pageInfo: pageInfo,
                         queryParams: {
+                            account_number: accountNumberParsed,
                             date_start: dateStartParsed,
                             date_end: dateEndParsed
                         },
@@ -1399,10 +1580,16 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         totalRows += table.rowCount || 0;
                     });
 
-                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
+                    // Step 9: 提取資料後
+                    const step9 = 'glc_step9_after_extract_' + timestamp + '.png';
+                    await page.screenshot({ path: step9, fullPage: false });
+                    stepScreenshots.push(step9);
+                    console.log('📸 Step 9: After extraction');
+
+                    // 最終截圖
                     await page.screenshot({ 
                         path: 'scraped_page_screenshot.png',
-                        fullPage: false  // 改為 false，只截可見區域，速度更快
+                        fullPage: false
                     });
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
 
@@ -1411,10 +1598,12 @@ class ScrapeBrowserGlcDOMDetail extends Command
                         timestamp: new Date().toISOString(),
                         url: '$url',
                         queryParams: {
+                            account_number: accountNumberParsed,
                             date_start: dateStartParsed,
                             date_end: dateEndParsed
                         },
                         domData: domData,
+                        stepScreenshots: stepScreenshots,
                         success: true
                     };
 
@@ -1429,7 +1618,8 @@ class ScrapeBrowserGlcDOMDetail extends Command
                     fs.writeFileSync('scraped_result.json', JSON.stringify({
                         error: error.message,
                         success: false,
-                        timestamp: new Date().toISOString()
+                        timestamp: new Date().toISOString(),
+                        stepScreenshots: stepScreenshots
                     }, null, 2));
                     throw error;
                 } finally {
@@ -1519,6 +1709,41 @@ class ScrapeBrowserGlcDOMDetail extends Command
         // 檢查爬取是否成功
         if (!$result['success']) {
             $this->error("❌ Scraping failed: " . ($result['error'] ?? 'Unknown error'));
+            
+            // 將調試文件從臨時目錄移動到永久儲存目錄
+            $timestamp = date('Y-m-d_H-i-s');
+            $workingDir = storage_path('app/temp');
+            
+            $debugFiles = [
+                'debug_before_scrape.png',
+                'debug_no_table_found.png',
+                'debug_extraction_failed.png',
+                'debug_page.html'
+            ];
+            
+            foreach ($debugFiles as $file) {
+                $src = $workingDir . '/' . $file;
+                if (file_exists($src)) {
+                    $dst = storage_path("app/scraped_data/debug_{$timestamp}_{$file}");
+                    rename($src, $dst);
+                    $this->warn("📁 Debug file saved: {$dst}");
+                }
+            }
+
+            // 移動步驟截圖（失敗時仍可查看各步驟畫面）
+            $dstDir = storage_path('app/scraped_data');
+            foreach ($result['stepScreenshots'] ?? [] as $screenshotPath) {
+                $src = $workingDir . '/' . $screenshotPath;
+                if (file_exists($src)) {
+                    $base = basename($screenshotPath, '.png');
+                    $stepName = preg_replace('/_\d{4}-\d{2}-\d{2}T[\d-]+$/', '', $base);
+                    $dst = "{$dstDir}/glc_{$timestamp}_{$stepName}.png";
+                    rename($src, $dst);
+                    $this->info("📸 Step: {$dst}");
+                }
+            }
+            
+            $this->warn("💡 請檢查調試文件以了解問題原因");
             return;
         }
 
@@ -1573,7 +1798,11 @@ class ScrapeBrowserGlcDOMDetail extends Command
                 'metadata' => [
                     'timestamp' => $timestamp,
                     'url' => $result['url'] ?? '',
-                    'queryParams' => $queryParams,
+                    'queryParams' => [
+                        'account_number' => $queryParams['account_number'] ?? null,
+                        'date_start' => $queryParams['date_start'] ?? null,
+                        'date_end' => $queryParams['date_end'] ?? null
+                    ],
                     'totalPages' => $domData['totalPages'] ?? 1,
                     'totalRows' => $totalRows
                 ],
@@ -1593,12 +1822,26 @@ class ScrapeBrowserGlcDOMDetail extends Command
         }
 
         // 將截圖從臨時目錄移動到永久儲存目錄
-        $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
-        $screenshotDst = storage_path("app/scraped_data/dom_screenshot_{$timestamp}.png");
+        $tempDir = storage_path('app/temp');
+        $dstDir = storage_path('app/scraped_data');
+        $screenshotSrc = $tempDir . '/scraped_page_screenshot.png';
+        $screenshotDst = "{$dstDir}/dom_screenshot_{$timestamp}.png";
         
         if (file_exists($screenshotSrc)) {
             rename($screenshotSrc, $screenshotDst);
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
+        }
+
+        // 將步驟截圖移動到永久儲存目錄
+        foreach ($result['stepScreenshots'] ?? [] as $screenshotPath) {
+            $src = $tempDir . '/' . $screenshotPath;
+            if (file_exists($src)) {
+                $base = basename($screenshotPath, '.png');
+                $stepName = preg_replace('/_\d{4}-\d{2}-\d{2}T[\d-]+$/', '', $base);
+                $dst = "{$dstDir}/glc_{$timestamp}_{$stepName}.png";
+                rename($src, $dst);
+                $this->info("📸 Step: {$dst}");
+            }
         }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
