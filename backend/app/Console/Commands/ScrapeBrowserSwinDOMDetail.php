@@ -469,9 +469,33 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     }
                 });
             }
-            /**
-             * 將要爬取的表格用紅框框起來（截圖前呼叫）
-             */
+            async function scrollTableHeaderIntoView(pageObject) {
+                await pageObject.evaluate(() => {
+                    window.scrollTo(0, 0);
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
+                    if (table) {
+                        table.scrollIntoView({ behavior: 'instant', block: 'start' });
+                        const thead = table.querySelector('thead');
+                        const firstRow = thead ? thead.querySelector('tr') : table.querySelector('tr');
+                        if (firstRow) firstRow.scrollIntoView({ behavior: 'instant', block: 'start' });
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            async function scrollTotalRowIntoView(pageObject) {
+                await pageObject.evaluate(() => {
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
+                    if (!table) return;
+                    const rows = table.querySelectorAll('tbody tr, tr');
+                    for (let i = 0; i < rows.length; i++) {
+                        if (/Total[：:]|總計/.test(rows[i].textContent || '')) {
+                            rows[i].scrollIntoView({ behavior: 'instant', block: 'center' });
+                            break;
+                        }
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
             async function highlightScrapedTable(pageObject) {
                 await pageObject.evaluate(() => {
                     let table = document.querySelector('#simple-table') || null;
@@ -554,10 +578,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             const firstCellVal = cells[0] ? cells[0].textContent.trim() : '';
                             const totalMatch = firstCellVal.match(/Total[：:]\s*(\d+)\s*Records?/i);
                             if (totalMatch) {
-                                rowData.Bet_Times = totalMatch[1];
+                                rowData.Total_Bet_Times = totalMatch[1];
                                 rowData.Bet = cells[1] ? cells[1].textContent.trim() : null;
-                                rowData.Valid_Bet = cells[2] ? cells[2].textContent.trim() : null;
-                                rowData.Member_Win_Loss = cells[3] ? cells[3].textContent.trim() : null;
+                                rowData.Total_Bet_Amount = cells[2] ? cells[2].textContent.trim() : null;
+                                rowData.Total_Win_Loss = cells[3] ? cells[3].textContent.trim() : null;
                                 return rowData;
                             }
                             if (headers && headers.length > 0) {
@@ -638,7 +662,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             return rowData;
                         })
                         .filter(rowData => {
-                            if (rowData.Bet_Times != null) return true;
+                            if (rowData.Total_Bet_Times != null) return true;
                             const firstValue = Object.values(rowData)[0];
                             if (!firstValue) return false;
                             const valueStr = String(firstValue);
@@ -913,21 +937,35 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         platformParsed = $platformJs !== 'null' ? $platformJs : null;
                     }
 
-                    // 如果提供了 platform，選擇對應的平台
+                    // 如果提供了 platform，選擇對應的平台（先試 gm，再試 find6）
                     if (platformParsed && platformParsed !== null && platformParsed !== '') {
                         try {
-                            // 查找 select[name="gm"] 欄位
-                            await page.waitForSelector('select[name="gm"]', { timeout: 10000 });
-                            
-                            // 選擇平台
-                            await page.select('select[name="gm"]', platformParsed);
-                            console.log('✅ Platform selected: ' + platformParsed);
-                            
-                            // 減少等待時間
+                            const gmSelect = await page.$('select[name="gm"]');
+                            const find6Select = await page.$('select[name="find6"]');
+                            if (gmSelect) {
+                                await page.select('select[name="gm"]', platformParsed);
+                                console.log('✅ Platform selected (gm): ' + platformParsed);
+                            } else if (find6Select) {
+                                await page.select('select[name="find6"]', platformParsed);
+                                console.log('✅ Platform selected (find6): ' + platformParsed);
+                            } else {
+                                console.log('⚠️  No platform select (gm/find6) found');
+                            }
                             await new Promise(resolve => setTimeout(resolve, 500));
                         } catch (e) {
                             console.log('⚠️  Error selecting platform: ' + e.message);
                         }
+                    }
+
+                    try {
+                        const tzSelect = await page.$('select[name="find5"]');
+                        if (tzSelect) {
+                            await page.select('select[name="find5"]', '0');
+                            console.log('✅ Timezone selected: 0');
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                        }
+                    } catch (e) {
+                        console.log('⚠️  Timezone select (find5) skip: ' + e.message);
                     }
 
                     let dateRange = [];
