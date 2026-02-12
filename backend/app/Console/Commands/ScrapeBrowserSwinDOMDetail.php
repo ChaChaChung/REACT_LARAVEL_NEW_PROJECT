@@ -25,7 +25,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
      * {platform?} - 要選擇的平台（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-swin-dom-detail {url} {date_start?} {date_end?} {account_number?} {platform?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-swin-dom-detail {url} {date_start?} {date_end?} {platform?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -139,9 +139,9 @@ class ScrapeBrowserSwinDOMDetail extends Command
         // 獲取認證 cookies 程式碼片段（併發頁面用）
         $cookiesCodeForNewPage = $this->generateSwinPuppeteerCookiesCode('newPage');
 
-        // 將 date 轉換為 JavaScript 可用的格式
-        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
-        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        // 將 date 轉換為 JavaScript 可用的格式（開始日期 00:00:00，結束日期 23:59:59）
+        $dateStartJs = $date_start ? json_encode(date('Y-m-d 00:00:00', strtotime($date_start))) : 'null';
+        $dateEndJs = $date_end ? json_encode(date('Y-m-d 23:59:59', strtotime($date_end))) : 'null';
         $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
         $platformJs = $platform ? json_encode($platform) : 'null';
 
@@ -254,8 +254,6 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
                 if (searchButton.found) {
                     await page.click(searchButton.selector, { timeout: 5000 });
-                    await page.waitForSelector('#simple-table', { timeout: 8000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 1000));
                     return true;
                 }
                 
@@ -270,14 +268,9 @@ class ScrapeBrowserSwinDOMDetail extends Command
              */
             async function findAllAccountLinks(page, accountValue) {
                 return await page.evaluate((accountValue) => {
-                    const table = document.querySelector('#simple-table');
-                    
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
                     if (!table) {
-                        return {
-                            found: false,
-                            links: [],
-                            debug: { error: 'Table #simple-table not found' }
-                        };
+                        return { found: false, links: [], debug: { error: 'No table found' } };
                     }
                     
                     // 從表格中獲取所有連結
@@ -403,7 +396,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
-                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     }
@@ -419,7 +412,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         // 不關閉原始頁面，因為可能需要用於後續連結
                         // await page.close();
                         page = newPage;
-                        await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 15000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     } else {
@@ -427,7 +420,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
-                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     }
@@ -437,7 +430,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         waitUntil: 'domcontentloaded',
                         timeout: 30000
                     });
-                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                    await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     return page;
                 }
@@ -463,6 +456,28 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     }
                 });
             }
+            /**
+             * 將要爬取的表格用紅框框起來（截圖前呼叫）
+             */
+            async function highlightScrapedTable(pageObject) {
+                await pageObject.evaluate(() => {
+                    let table = document.querySelector('#simple-table') || null;
+                    if (!table) {
+                        const tables = document.querySelectorAll('table');
+                        let maxRows = 0;
+                        tables.forEach(t => {
+                            const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
+                            if (rows > maxRows) { maxRows = rows; table = t; }
+                        });
+                    }
+                    if (table) {
+                        table.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        table.style.setProperty('border', '6px solid #e60000', 'important');
+                        table.style.setProperty('box-shadow', '0 0 0 4px #e60000', 'important');
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
 
             /**
              * 提取表格資料的函數（可重用）
@@ -471,14 +486,17 @@ class ScrapeBrowserSwinDOMDetail extends Command
              */
             async function extractTableData(pageObject) {
                 return await pageObject.evaluate(() => {
-                    // 查找 id="simple-table" 的表格
-                    const table = document.querySelector('#simple-table');
-                    
+                    const table = document.querySelector('#simple-table') || (() => {
+                        const tables = document.querySelectorAll('table');
+                        let best = null, maxRows = 0;
+                        tables.forEach(t => {
+                            const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
+                            if (rows > maxRows) { maxRows = rows; best = t; }
+                        });
+                        return best;
+                    })();
                     if (!table) {
-                        return {
-                            found: false,
-                            error: 'Table #simple-table not found'
-                        };
+                        return { found: false, error: 'No table found' };
                     }
 
                     // 提取表頭
@@ -558,15 +576,32 @@ class ScrapeBrowserSwinDOMDetail extends Command
                                             } 
                                             // 特殊處理：如果字段是 Bet_Time_Order_Number，則分割成兩個字段
                                             else if (cellValue && (cleanHeader === 'Bet_Time_Order_Number' || cleanHeader.toLowerCase() === 'bet_time_order_number')) {
-                                                // 分割換行符
                                                 const parts = cellValue.split(new RegExp('[\\n\\r]+'));
                                                 if (parts.length >= 2) {
-                                                    // 分割成 Bet_Time 和 Order_Number 兩個字段
                                                     rowData['Bet_Time'] = parts[0].trim();
-                                                    // 合併剩餘部分並去除多餘空白
                                                     rowData['Order_Number'] = parts.slice(1).map(p => p.trim()).filter(p => p).join('').trim();
                                                 } else {
-                                                    // 如果沒有換行符，保持原值
+                                                    rowData[finalHeader] = cellValue;
+                                                }
+                                            }
+                                            // Account: 換行前為帳號，換行後為姓名
+                                            else if (cellValue && (cleanHeader === 'Account' || cleanHeader === '帳號')) {
+                                                const parts = cellValue.split(new RegExp('[\\n\\r]+')).map(p => p.trim()).filter(p => p);
+                                                if (parts.length >= 2) {
+                                                    rowData['帳號'] = parts[0];
+                                                    rowData['姓名'] = parts.slice(1).join(' ').trim();
+                                                } else {
+                                                    rowData['帳號'] = parts[0] || cellValue.trim();
+                                                    rowData['姓名'] = '';
+                                                }
+                                            }
+                                            // Bet: 括號前為金額，括號內為數量
+                                            else if (cellValue && (cleanHeader === 'Bet' || cleanHeader === '注額' || cleanHeader === '下注')) {
+                                                const match = cellValue.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+                                                if (match) {
+                                                    rowData['Bet'] = match[1].trim();
+                                                    rowData['Bet_Records'] = match[2].replace(/\D/g, '') || '';
+                                                } else {
                                                     rowData[finalHeader] = cellValue;
                                                 }
                                             } else {
@@ -644,9 +679,8 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 console.log('📄 Processing detail page ' + (linkIndex + 1) + ' for account: ' + accountValue);
                 
                 try {
-                    // 等待表格載入
-                    await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await detailPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
                     // 獲取當前頁面 URL（用於識別平台）
                     const pageUrl = detailPage.url();
@@ -663,11 +697,8 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     // 使用 while 循環和"下一頁"按鈕來遍歷所有頁面
                     while (hasNextPage) {
                         console.log('📄 Crawling page ' + currentPageNum + '...');
-                        
-                        // 等待表格載入
-                        await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
+                        await detailPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         // 提取當前頁面的數據
                         const pageData = await extractTableData(detailPage);
                         allPagesData.push({
@@ -752,7 +783,8 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         pages: allPagesData
                     };
                     
-                    // 截圖（為每個連結生成獨立的截圖文件）- 截取最後一頁
+                    // 紅框標示表格後截圖
+                    await highlightScrapedTable(detailPage);
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                     const screenshotFilename = 'account_' + accountValue + '_link_' + (linkIndex + 1) + '_' + timestamp + '.png';
                     await detailPage.screenshot({ 
@@ -851,10 +883,8 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     });
 
                     // 等待表格元素出現，而不是固定等待時間
-                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {
-                        console.log('⚠️  Table not found, waiting 2 seconds...');
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
 
                     // 解析 date
                     let dateStartParsed = null;
@@ -885,11 +915,11 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     // 如果提供了 platform，選擇對應的平台
                     if (platformParsed && platformParsed !== null && platformParsed !== '') {
                         try {
-                            // 查找 select[name="find6"] 欄位
-                            await page.waitForSelector('select[name="find6"]', { timeout: 10000 });
+                            // 查找 select[name="gm"] 欄位
+                            await page.waitForSelector('select[name="gm"]', { timeout: 10000 });
                             
                             // 選擇平台
-                            await page.select('select[name="find6"]', platformParsed);
+                            await page.select('select[name="gm"]', platformParsed);
                             console.log('✅ Platform selected: ' + platformParsed);
                             
                             // 減少等待時間
@@ -899,17 +929,15 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         }
                     }
 
-                    // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
+                    // 如果提供了 date_start 和 date_end，填入開始日期／結束日期欄位（支援英文或中文 placeholder）
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
-                            // 查找 input#find1 和 input#find2 欄位
-                            await page.waitForSelector('#find1', { timeout: 10000 });
-                            await page.waitForSelector('#find2', { timeout: 10000 });
+                            await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="開始日期"]', { timeout: 10000 });
+                            await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
                             
-                            // 清空並填入日期到兩個欄位
                             await page.evaluate((dateStartValue, dateEndValue) => {
-                                const input1 = document.querySelector('#find1');
-                                const input2 = document.querySelector('#find2');
+                                const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
+                                const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
                                 
                                 if (input1) {
                                     input1.value = '';
@@ -929,8 +957,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
 
-                            // 查找並點擊搜尋按鈕
                             await clickSearchButton(page);
+                            console.log('⏳ Waiting 30s for search to complete...');
+                            await new Promise(resolve => setTimeout(resolve, 30000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 15000 }).catch(() => {});
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
                         }
@@ -957,8 +987,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
 
-                            // 查找並點擊搜尋按鈕
                             await clickSearchButton(page);
+                            console.log('⏳ Waiting 30s for search to complete...');
+                            await new Promise(resolve => setTimeout(resolve, 30000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 15000 }).catch(() => {});
                         } catch (e) {
                             console.log('⚠️  Error filling account number: ' + e.message);
                         }
@@ -969,10 +1001,8 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         // ========== 步驟 1：遍歷所有分頁，收集所有帳號連結 ==========
                         console.log('📄 Step 1: Collecting all account links from all pages...');
                         
-                        // 等待表格行出現
-                        await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
+                        await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         // 用於存儲所有頁面的帳號連結
                         const allAccountLinks = [];
                         let currentPageNum = 1;
@@ -982,19 +1012,12 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         while (hasNextPage && currentPageNum <= 100) { // 限制最多100頁
                             console.log('🔍 Page ' + currentPageNum + ': Searching for account links...');
                             
-                            // 等待表格載入
-                            await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                            await new Promise(resolve => setTimeout(resolve, 500));
                             // 查找當前頁面的所有帳號連結
                             const pageAccountLinks = await page.evaluate((pageNum) => {
-                                const table = document.querySelector('#simple-table');
-                                
-                                if (!table) {
-                                    return [];
-                                }
-                                
-                                // 從表格中獲取所有連結
+                                const table = document.querySelector('#simple-table') || document.querySelector('table');
+                                if (!table) return [];
                                 const tableLinks = Array.from(table.querySelectorAll('a'));
                                 const matchedLinks = [];
                                 
@@ -1069,72 +1092,47 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         
                         console.log('✅ Total account links collected: ' + allAccountLinks.length + ' from ' + currentPageNum + ' page(s)');
                         
-                        // ========== 步驟 2：依次處理所有帳號連結 ==========
+                        // ========== 步驟 2：併發處理所有帳號連結（使用 --concurrency 控制同時處理數量）==========
                         if (allAccountLinks.length > 0) {
-                            console.log('🚀 Step 2: Processing all account detail pages...');
+                            const DETAIL_CONCURRENCY = Math.min($concurrency, 4);
+                            console.log('🚀 Step 2: Processing all account detail pages (concurrency: ' + DETAIL_CONCURRENCY + ')...');
                             
-                            // 存儲所有詳情頁面的結果
-                            const allDetailResults = [];
-                            
-                            // 依次處理每個連結
-                            for (let i = 0; i < allAccountLinks.length; i++) {
-                                const accountLink = allAccountLinks[i];
-                                console.log('📄 [' + (i + 1) + '/' + allAccountLinks.length + '] Processing account: ' + accountLink.text);
-                                
+                            const itemsWithIndex = allAccountLinks.map((accountLink, i) => ({ accountLink, index: i }));
+                            const allDetailResults = await promiseAllWithLimit(itemsWithIndex, DETAIL_CONCURRENCY, async (item) => {
+                                const { accountLink, index: i } = item;
                                 let detailPage = null;
                                 try {
-                                    // 創建新頁面
+                                    console.log('📄 [' + (i + 1) + '/' + allAccountLinks.length + '] Processing account: ' + accountLink.text);
                                     detailPage = await browser.newPage();
                                     await setupPage(detailPage);
-                                    
-                                    // 設置 cookies
                                     const newPage = detailPage;
                                     $cookiesCodeForNewPage
-                                    
-                                    // 導航到帳號詳情頁面
                                     await detailPage.goto(accountLink.href, {
                                         waitUntil: 'domcontentloaded',
                                         timeout: 30000
                                     });
-                                    await detailPage.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {
-                                        console.log('⚠️  Table not found on detail page, continuing...');
-                                    });
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                    
-                                    // 處理詳情頁面（爬取數據並截圖，支持分頁）
+                                    await detailPage.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
                                     const detailResult = await processAccountLinkDetail(detailPage, accountLink, i, accountLink.text);
-                                    allDetailResults.push(detailResult);
-                                    
-                                    console.log('✅ [' + (i + 1) + '/' + allAccountLinks.length + '] Account ' + accountLink.text + ' processed successfully');
-                                    
-                                    // 關閉詳情頁面
-                                    await detailPage.close();
-                                    
+                                    console.log('✅ [' + (i + 1) + '/' + allAccountLinks.length + '] Account ' + accountLink.text + ' done');
+                                    return detailResult;
                                 } catch (error) {
-                                    console.error('❌ [' + (i + 1) + '/' + allAccountLinks.length + '] Error processing account ' + accountLink.text + ': ' + error.message);
-                                    allDetailResults.push({
+                                    console.error('❌ [' + (i + 1) + '/' + allAccountLinks.length + '] Error: ' + accountLink.text + ': ' + error.message);
+                                    return {
                                         linkIndex: i,
                                         accountLink: accountLink,
                                         success: false,
                                         error: error.message,
                                         errorStack: error.stack || ''
-                                    });
-                                    
-                                    // 確保在錯誤時關閉頁面
-                                    if (detailPage) {
-                                        try {
-                                            if (!detailPage.isClosed()) {
-                                                await detailPage.close();
-                                            }
-                                        } catch (closeError) {
-                                            console.log('⚠️  Could not close page: ' + closeError.message);
-                                        }
+                                    };
+                                } finally {
+                                    if (detailPage && !detailPage.isClosed()) {
+                                        try { await detailPage.close(); } catch (e) {}
                                     }
                                 }
-                            }
+                            });
                             
-                            // 將詳情結果存儲到函數作用域變量中
-                            accountDetailResults = allDetailResults;
+                            accountDetailResults = allDetailResults.sort((a, b) => (a.linkIndex || 0) - (b.linkIndex || 0));
                             
                             console.log('✅ All ' + allAccountLinks.length + ' account detail pages processed!');
                             
@@ -1168,9 +1166,9 @@ class ScrapeBrowserSwinDOMDetail extends Command
                                 success: true
                             };
 
-                            // 嘗試截圖（如果頁面仍然有效）
                             try {
                                 if (page && !page.isClosed && !page.isClosed()) {
+                                    await highlightScrapedTable(page);
                                     await page.screenshot({ 
                                         path: 'scraped_page_screenshot.png',
                                         fullPage: false
@@ -1194,15 +1192,25 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     // ========== 步驟 1：爬取第一頁，獲取所有分頁 URL ==========
                     console.log('📄 Step 1: Extracting first page and collecting all page URLs...');
                     
-                    // 確保表格已載入
-                    await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    // 提取第一頁的表格資料
                     const firstPageData = await extractTableData(page);
                     
                     if (!firstPageData.found) {
-                        throw new Error('No table found on first page');
+                        console.log('⚠️  No table found on first page. Page may need more time to load.');
+                        const result = {
+                            timestamp: new Date().toISOString(),
+                            url: '$url',
+                            queryParams: { date_start: dateStartParsed, date_end: dateEndParsed, account_number: accountNumberParsed, platform: platformParsed },
+                            domData: { pageInfo: { title: '', url: page.url() }, tables: [], totalPages: 0 },
+                            accountDetailResults: [],
+                            success: false,
+                            error: 'No table found on first page. Check URL/date/platform or if the page loaded correctly.'
+                        };
+                        fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
+                        console.log('💾 Result (no data) saved to: scraped_result.json');
+                        return result;
                     }
                     
                     // 使用"下一頁"按鈕來收集所有頁面的 URL
@@ -1244,7 +1252,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                                     waitUntil: 'domcontentloaded',
                                     timeout: 30000
                                 });
-                                await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
+                                await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 5000 }).catch(() => {});
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             } catch (e) {
                                 console.log('⚠️  Failed to navigate to page ' + currentPageNum + ': ' + e.message);
@@ -1289,7 +1297,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             });
                             
                             // 等待表格載入
-                            await newPage.waitForSelector('#simple-table tbody tr', { timeout: 8000 }).catch(() => {});
+                            await newPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
                             await new Promise(resolve => setTimeout(resolve, 500));
                             
                             // 提取表格資料
@@ -1369,10 +1377,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         totalRows += table.rowCount || 0;
                     });
 
-                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
+                    await highlightScrapedTable(page);
                     await page.screenshot({ 
                         path: 'scraped_page_screenshot.png',
-                        fullPage: false  // 改為 false，只截可見區域，速度更快
+                        fullPage: false
                     });
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
