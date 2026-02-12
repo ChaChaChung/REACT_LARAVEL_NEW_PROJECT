@@ -142,6 +142,19 @@ class ScrapeBrowserSwinDOMDetail extends Command
         // 將 date 轉換為 JavaScript 可用的格式（開始日期 00:00:00，結束日期 23:59:59）
         $dateStartJs = $date_start ? json_encode(date('Y-m-d 00:00:00', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d 23:59:59', strtotime($date_end))) : 'null';
+        // 若同時有開始與結束日期，產生逐日陣列供迴圈使用（一天一天搜尋）
+        $dateRangeJs = 'null';
+        $dateRangeJsLiteral = '[]'; // 給 JS 用的字串字面，避免 heredoc 插值變成陣列
+        if ($date_start && $date_end) {
+            $start = strtotime($date_start);
+            $end = strtotime($date_end);
+            $dates = [];
+            for ($t = $start; $t <= $end; $t += 86400) {
+                $dates[] = date('Y-m-d', $t);
+            }
+            $dateRangeJs = json_encode($dates);
+            $dateRangeJsLiteral = json_encode($dateRangeJs);
+        }
         $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
         $platformJs = $platform ? json_encode($platform) : 'null';
 
@@ -538,8 +551,16 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         .map((row, rowIndex) => {
                             const cells = Array.from(row.querySelectorAll('td'));
                             const rowData = {};
-                            
-                                    if (headers && headers.length > 0) {
+                            const firstCellVal = cells[0] ? cells[0].textContent.trim() : '';
+                            const totalMatch = firstCellVal.match(/Total[：:]\s*(\d+)\s*Records?/i);
+                            if (totalMatch) {
+                                rowData.Bet_Times = totalMatch[1];
+                                rowData.Bet = cells[1] ? cells[1].textContent.trim() : null;
+                                rowData.Valid_Bet = cells[2] ? cells[2].textContent.trim() : null;
+                                rowData.Member_Win_Loss = cells[3] ? cells[3].textContent.trim() : null;
+                                return rowData;
+                            }
+                            if (headers && headers.length > 0) {
                                         headers.forEach((header, colIndex) => {
                                             // 清理字段名
                                             let cleanHeader = header
@@ -614,27 +635,15 @@ class ScrapeBrowserSwinDOMDetail extends Command
                                             rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
                                         });
                                     }
-                            
-                            // 添加原始行索引
-                            rowData._rowIndex = rowIndex;
-                            
                             return rowData;
                         })
                         .filter(rowData => {
-                            // 過濾掉小計和總計行
-                            // 檢查第一個欄位（通常是日期欄位）是否包含"小計"、"總計"、"Current Total："或"Total："
+                            if (rowData.Bet_Times != null) return true;
                             const firstValue = Object.values(rowData)[0];
-                            if (!firstValue) return true;
+                            if (!firstValue) return false;
                             const valueStr = String(firstValue);
                             const lowerValue = valueStr.toLowerCase();
-                            return firstValue !== '小計' && 
-                                   firstValue !== '總計' && 
-                                   lowerValue !== 'current total' && 
-                                   lowerValue !== 'total' &&
-                                   valueStr !== 'Current Total：' &&
-                                   valueStr !== 'Total：' &&
-                                   !valueStr.startsWith('Current Total') &&
-                                   !valueStr.startsWith('Total：');
+                            return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
                         });
 
                     return {
@@ -647,20 +656,12 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         rawRows: rows.slice(dataStartIndex)
                             .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
                             .filter(rowArray => {
-                                // 過濾掉小計和總計行
                                 if (rowArray.length === 0) return false;
                                 const firstValue = rowArray[0];
-                                if (!firstValue) return true;
+                                if (!firstValue) return false;
                                 const valueStr = String(firstValue);
                                 const lowerValue = valueStr.toLowerCase();
-                                return firstValue !== '小計' && 
-                                       firstValue !== '總計' && 
-                                       lowerValue !== 'current total' && 
-                                       lowerValue !== 'total' &&
-                                       valueStr !== 'Current Total：' &&
-                                       valueStr !== 'Total：' &&
-                                       !valueStr.startsWith('Current Total') &&
-                                       !valueStr.startsWith('Total：');
+                                return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
                             }),
                         data: dataRows
                     };
@@ -929,34 +930,95 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         }
                     }
 
-                    // 如果提供了 date_start 和 date_end，填入開始日期／結束日期欄位（支援英文或中文 placeholder）
+                    let dateRange = [];
+                    try {
+                        dateRange = JSON.parse($dateRangeJsLiteral);
+                        if (!Array.isArray(dateRange)) dateRange = [];
+                    } catch (e) {}
+
+                    if (dateRange && dateRange.length > 0) {
+                        console.log('📅 Day-by-day mode: ' + dateRange.length + ' day(s) from ' + dateRange[0] + ' to ' + dateRange[dateRange.length - 1]);
+                        await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="開始日期"]', { timeout: 10000 });
+                        await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
+                        const allCollectedTables = [];
+                        for (let d = 0; d < dateRange.length; d++) {
+                            const day = dateRange[d];
+                            const startVal = day + ' 00:00:00';
+                            const endVal = day + ' 23:59:59';
+                            await page.evaluate((s, e) => {
+                                const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
+                                const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
+                                if (input1) { input1.value = s; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
+                                if (input2) { input2.value = e; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
+                            }, startVal, endVal);
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            await clickSearchButton(page);
+                            console.log('⏳ [' + (d + 1) + '/' + dateRange.length + '] ' + day + ' - Waiting for table...');
+                            await new Promise(resolve => setTimeout(resolve, 3000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 15000 }).catch(() => {});
+                            let firstPageData = await extractTableData(page);
+                            let dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
+                            let hasNextPage = true;
+                            while (hasNextPage) {
+                                const nextPageInfo = await page.evaluate(() => {
+                                    const nextLink = document.querySelector('a[rel="next"]');
+                                    if (nextLink && nextLink.href) {
+                                        const style = window.getComputedStyle(nextLink);
+                                        const visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && !nextLink.classList.contains('disabled');
+                                        if (visible) return { hasNext: true, nextUrl: nextLink.href };
+                                    }
+                                    return { hasNext: false };
+                                });
+                                if (nextPageInfo.hasNext) {
+                                    await page.goto(nextPageInfo.nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                                    await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    const pageData = await extractTableData(page);
+                                    if (pageData.data) dayRows = dayRows.concat(pageData.data);
+                                } else {
+                                    hasNextPage = false;
+                                }
+                            }
+                            if (dayRows.length > 0) {
+                                dayRows = dayRows.map(row => ({ Date: day, ...row }));
+                                allCollectedTables.push({ data: dayRows, rowCount: dayRows.length });
+                                console.log('✅ ' + day + ': ' + dayRows.length + ' row(s)');
+                            }
+                        }
+                        const mergedData = [];
+                        allCollectedTables.forEach(t => {
+                            if (t.data) mergedData.push(...t.data);
+                        });
+                        const result = {
+                            timestamp: new Date().toISOString(),
+                            url: '$url',
+                            queryParams: { date_start: dateRange[0] + ' 00:00:00', date_end: dateRange[dateRange.length - 1] + ' 23:59:59', account_number: accountNumberParsed, platform: platformParsed },
+                            domData: {
+                                pageInfo: { title: '', url: page.url() },
+                                queryParams: { date_start: dateRange[0], date_end: dateRange[dateRange.length - 1] },
+                                totalPages: dateRange.length,
+                                pages: [],
+                                tables: [{ data: mergedData, rowCount: mergedData.length }]
+                            },
+                            accountDetailResults: [],
+                            success: true
+                        };
+                        fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
+                        console.log('💾 Results saved: ' + mergedData.length + ' total row(s)');
+                        return result;
+                    }
+
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
                             await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="開始日期"]', { timeout: 10000 });
                             await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
-                            
                             await page.evaluate((dateStartValue, dateEndValue) => {
                                 const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
                                 const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
-                                
-                                if (input1) {
-                                    input1.value = '';
-                                    input1.value = dateStartValue;
-                                    input1.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input1.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                                
-                                if (input2) {
-                                    input2.value = '';
-                                    input2.value = dateEndValue;
-                                    input2.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input2.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
+                                if (input1) { input1.value = ''; input1.value = dateStartValue; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
+                                if (input2) { input2.value = ''; input2.value = dateEndValue; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
                             }, dateStartParsed, dateEndParsed);
-
-                            // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
-
                             await clickSearchButton(page);
                             console.log('⏳ Waiting 30s for search to complete...');
                             await new Promise(resolve => setTimeout(resolve, 30000));
@@ -1478,16 +1540,24 @@ class ScrapeBrowserSwinDOMDetail extends Command
             return null;
         }
 
-        // 讀取腳本生成的結果文件
+        // 讀取腳本生成的結果文件（寫在腳本所在目錄 = storage/app/temp/）
         $resultFile = $workingDir . '/scraped_result.json';
 
         if (file_exists($resultFile)) {
-            // 讀取並解析 JSON 文件
+            $this->info("📄 Result file: " . realpath($resultFile));
             $content = file_get_contents($resultFile);
-            return json_decode($content, true);
+            $data = json_decode($content, true);
+            $copyPath = storage_path('app/scraped_data/scraped_result_' . date('Y-m-d_H-i-s') . '.json');
+            $copyDir = dirname($copyPath);
+            if (!is_dir($copyDir)) {
+                mkdir($copyDir, 0755, true);
+            }
+            copy($resultFile, $copyPath);
+            $this->info("📋 Copy saved to: {$copyPath}");
+            return $data;
         }
 
-        $this->error("❌ No result file found");
+        $this->error("❌ No result file found at: {$resultFile}");
         return null;
     }
     
