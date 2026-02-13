@@ -142,15 +142,18 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         // 將 date 轉換為 JavaScript 可用的格式（開始日期 00:00:00，結束日期 23:59:59）
         $dateStartJs = $date_start ? json_encode(date('Y-m-d 00:00:00', strtotime($date_start))) : 'null';
         $dateEndJs = $date_end ? json_encode(date('Y-m-d 23:59:59', strtotime($date_end))) : 'null';
-        // 若同時有開始與結束日期，產生逐日陣列供迴圈使用（一天一天搜尋）
+        // 若同時有開始與結束日期，產生逐日陣列供迴圈使用（一天一天搜尋，依日曆日迭代避免時區/DST 漏日）
         $dateRangeJs = 'null';
-        $dateRangeJsLiteral = '[]'; // 給 JS 用的字串字面，避免 heredoc 插值變成陣列
+        $dateRangeJsLiteral = '[]';
         if ($date_start && $date_end) {
-            $start = strtotime($date_start);
-            $end = strtotime($date_end);
+            $start = new \DateTime($date_start);
+            $end = new \DateTime($date_end);
+            $end->modify('+1 day');
+            $interval = new \DateInterval('P1D');
+            $period = new \DatePeriod($start, $interval, $end);
             $dates = [];
-            for ($t = $start; $t <= $end; $t += 86400) {
-                $dates[] = date('Y-m-d', $t);
+            foreach ($period as $d) {
+                $dates[] = $d->format('Y-m-d');
             }
             $dateRangeJs = json_encode($dates);
             $dateRangeJsLiteral = json_encode($dateRangeJs);
@@ -1018,54 +1021,65 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
                         const allCollectedTables = [];
                         const dayScreenshotFiles = [];
+                        const TABLE_SELECTOR = '#simple-table, table.simple-table, table';
+                        const TABLE_BODY_SELECTOR = '#simple-table tbody tr, table.simple-table tbody tr, table tbody tr';
                         for (let d = 0; d < dateRange.length; d++) {
                             const day = dateRange[d];
-                            const startVal = day + ' 00:00:00';
-                            const endVal = day + ' 23:59:59';
-                            await page.evaluate((s, e) => {
-                                const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
-                                const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
-                                if (input1) { input1.value = s; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
-                                if (input2) { input2.value = e; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
-                            }, startVal, endVal);
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                            await clickSearchButton(page);
-                            console.log('⏳ [' + (d + 1) + '/' + dateRange.length + '] ' + day + ' - Waiting for table...');
-                            await new Promise(resolve => setTimeout(resolve, 6000));
-                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 20000 }).catch(() => {});
-                            let firstPageData = await extractTableData(page);
-                            let dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
-                            if (dayRows.length === 0) {
-                                await new Promise(resolve => setTimeout(resolve, 2000));
-                                firstPageData = await extractTableData(page);
+                            let dayRows = [];
+                            try {
+                                const startVal = day + ' 00:00:00';
+                                const endVal = day + ' 23:59:59';
+                                await page.evaluate((s, e) => {
+                                    const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
+                                    const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
+                                    if (input1) { input1.value = s; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
+                                    if (input2) { input2.value = e; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
+                                }, startVal, endVal);
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                await clickSearchButton(page);
+                                console.log('⏳ [' + (d + 1) + '/' + dateRange.length + '] ' + day + ' - Waiting for table...');
+                                await new Promise(resolve => setTimeout(resolve, 6000));
+                                await page.waitForSelector(TABLE_SELECTOR, { timeout: 15000 }).catch(() => {});
+                                await page.waitForSelector(TABLE_BODY_SELECTOR, { timeout: 15000 }).catch(() => {});
+                                let firstPageData = await extractTableData(page);
                                 dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
-                            }
-                            let hasNextPage = true;
-                            while (hasNextPage) {
-                                const nextPageInfo = await page.evaluate(() => {
-                                    const nextLink = document.querySelector('a[rel="next"]');
-                                    if (nextLink && nextLink.href) {
-                                        const style = window.getComputedStyle(nextLink);
-                                        const visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && !nextLink.classList.contains('disabled');
-                                        if (visible) return { hasNext: true, nextUrl: nextLink.href };
-                                    }
-                                    return { hasNext: false };
-                                });
-                                if (nextPageInfo.hasNext) {
-                                    await page.goto(nextPageInfo.nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                                    await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                    const pageData = await extractTableData(page);
-                                    if (pageData.data) dayRows = dayRows.concat(pageData.data);
-                                } else {
-                                    hasNextPage = false;
+                                if (dayRows.length === 0) {
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
+                                    firstPageData = await extractTableData(page);
+                                    dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
                                 }
+                                let hasNextPage = true;
+                                while (hasNextPage) {
+                                    const nextPageInfo = await page.evaluate(() => {
+                                        const nextLink = document.querySelector('a[rel="next"]');
+                                        if (nextLink && nextLink.href) {
+                                            const style = window.getComputedStyle(nextLink);
+                                            const visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && !nextLink.classList.contains('disabled');
+                                            if (visible) return { hasNext: true, nextUrl: nextLink.href };
+                                        }
+                                        return { hasNext: false };
+                                    });
+                                    if (nextPageInfo.hasNext) {
+                                        await page.goto(nextPageInfo.nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                                        await page.waitForSelector(TABLE_BODY_SELECTOR, { timeout: 8000 }).catch(() => {});
+                                        await new Promise(resolve => setTimeout(resolve, 500));
+                                        const pageData = await extractTableData(page);
+                                        if (pageData.data) dayRows = dayRows.concat(pageData.data);
+                                    } else {
+                                        hasNextPage = false;
+                                    }
+                                }
+                            } catch (dayErr) {
+                                console.log('⚠️  Day ' + day + ' error: ' + dayErr.message);
                             }
                             const dayScreenshotName = 'scraped_page_screenshot_day_' + day.replace(/-/g, '') + '.png';
                             const dayScreenshotPath = path.join(SCREENSHOT_DIR, dayScreenshotName);
                             try {
                                 if (page) {
-                                    await highlightScrapedTable(page);
+                                    await page.waitForSelector(TABLE_SELECTOR, { timeout: 3000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 800));
+                                    await highlightScrapedTable(page, false);
+                                    await new Promise(resolve => setTimeout(resolve, 300));
                                     await page.screenshot({ path: dayScreenshotPath, fullPage: false });
                                     dayScreenshotFiles.push(dayScreenshotName);
                                     console.log('📸 Day screenshot: ' + dayScreenshotName);
@@ -1079,7 +1093,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                 console.log('✅ ' + day + ': ' + dayRows.length + ' row(s)');
                             } else {
                                 allCollectedTables.push({ data: [{ Date: day, Total_Bet_Times: '-', Bet: '-', Total_Bet_Amount: '-', Total_Win_Loss: '-' }], rowCount: 1 });
-                                console.log('⚠️  ' + day + ': 0 row(s) (placeholder added, check screenshot)');
+                                console.log('⚠️  ' + day + ': 0 row(s) (placeholder added)');
                             }
                             if (d < dateRange.length - 1) {
                                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1684,13 +1698,16 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             $this->info("📄 Result file: " . realpath($resultFile));
             $content = file_get_contents($resultFile);
             $data = json_decode($content, true);
+            if (is_array($data)) {
+                $data = $this->normalizeScrapedResultNumbers($data);
+            }
             $copyPath = storage_path('app/scraped_data/scraped_result_' . date('Y-m-d_H-i-s') . '.json');
             $copyDir = dirname($copyPath);
             if (!is_dir($copyDir)) {
                 mkdir($copyDir, 0755, true);
             }
-            copy($resultFile, $copyPath);
-            $this->info("📋 Copy saved to: {$copyPath}");
+            file_put_contents($copyPath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("📋 Copy saved (normalized): {$copyPath}");
             return $data;
         }
 
@@ -1698,6 +1715,85 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         return null;
     }
     
+    /**
+     * 對爬取結果整份資料做數值正規化（僅去千分位，不改變正負）
+     * @param array $result 爬取結果
+     * @return array 正規化後的結果
+     */
+    private function normalizeScrapedResultNumbers(array $result): array
+    {
+        $normalizeRow = function (array $row) {
+            foreach ($row as $key => $val) {
+                if (is_string($val) && $val !== '') {
+                    $n = $this->normalizeNumericCell($val);
+                    if ($n !== null) {
+                        $row[$key] = $n;
+                    }
+                }
+            }
+            return $row;
+        };
+        if (!empty($result['domData']['tables'])) {
+            foreach ($result['domData']['tables'] as $ti => $table) {
+                if (!empty($table['data']) && is_array($table['data'])) {
+                    foreach ($table['data'] as $ri => $row) {
+                        if (is_array($row)) {
+                            $result['domData']['tables'][$ti]['data'][$ri] = $normalizeRow($row);
+                        }
+                    }
+                }
+            }
+        }
+        if (!empty($result['domData']['pages'])) {
+            foreach ($result['domData']['pages'] as $pi => $page) {
+                if (!empty($page['tables']) && is_array($page['tables'])) {
+                    foreach ($page['tables'] as $ti => $table) {
+                        if (!empty($table['data']) && is_array($table['data'])) {
+                            foreach ($table['data'] as $ri => $row) {
+                                if (is_array($row)) {
+                                    $result['domData']['pages'][$pi]['tables'][$ti]['data'][$ri] = $normalizeRow($row);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!empty($result['accountDetailResults']) && is_array($result['accountDetailResults'])) {
+            foreach ($result['accountDetailResults'] as $ai => $detail) {
+                if (!empty($detail['tableData']['data']) && is_array($detail['tableData']['data'])) {
+                    foreach ($detail['tableData']['data'] as $ri => $row) {
+                        if (is_array($row)) {
+                            $result['accountDetailResults'][$ai]['tableData']['data'][$ri] = $normalizeRow($row);
+                        }
+                    }
+                }
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * 正規化數值欄位：僅移除千分位，保留正負號
+     * @param string $value 欄位值
+     * @return string|null 正規化後字串，若非數值則返回 null 表示不替換
+     */
+    private function normalizeNumericCell($value)
+    {
+        $value = trim($value);
+        if ($value === '' || $value === '-') {
+            return null;
+        }
+        $stripped = str_replace(',', '', $value);
+        if (preg_match('/^-?\d+\.?\d*$/', $stripped)) {
+            $num = (float) $stripped;
+            return strpos($stripped, '.') !== false
+                ? number_format(round($num, 2), 2, '.', '')
+                : (string) (int) $num;
+        }
+        return null;
+    }
+
     /**
      * 處理和保存爬取的資料
      * @param array $result 爬取的結果資料
@@ -1769,16 +1865,22 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
-            // 清理"代理"欄位：移除"公司主站代理線"字樣
+            // 數值正規化：千分位移除、轉為正數；並清理「代理」欄位
             foreach ($allData as &$row) {
+                foreach ($row as $key => $val) {
+                    if (is_string($val) && $val !== '') {
+                        $normalized = $this->normalizeNumericCell($val);
+                        if ($normalized !== null) {
+                            $row[$key] = $normalized;
+                        }
+                    }
+                }
                 if (isset($row['代理'])) {
-                    // 移除"公司主站代理線"，只保留前面的部分
                     $row['代理'] = str_replace('公司主站代理線', '', $row['代理']);
-                    // 去除多餘的空白
                     $row['代理'] = trim($row['代理']);
                 }
             }
-            unset($row); // 解除引用
+            unset($row);
             
             // 按照平台分類數資料
             // 平台欄位名稱

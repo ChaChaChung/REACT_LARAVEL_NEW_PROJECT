@@ -506,6 +506,8 @@ trait HasAgentAuth
     {
         $domain = env('ATGSLOT_AGENT_DOMAIN', '');
         $domainJs = json_encode($domain);
+        $lang = env('ATGSLOT_AGENT_LANG', 'zh-TW');
+        $langJs = json_encode($lang);
 
         // 驗證並轉義 loginInfo JSON
         $loginInfo = json_decode($loginInfoJson, true);
@@ -516,6 +518,9 @@ trait HasAgentAuth
                 throw new Error('Invalid loginInfo JSON format');
             JS;
         }
+
+        // 將 lang 存到 key=languageFamily 的資料中
+        $loginInfo['languageFamily'] = $lang;
 
         $loginInfoJs = json_encode($loginInfo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -561,6 +566,18 @@ trait HasAgentAuth
                     return false;
                 }
             }, $loginInfoJs);
+            
+            // 將 languageFamily 寫入 localStorage（key = languageFamily）
+            await {$pageVar}.evaluate((langVal) => {
+                try {
+                    if (langVal != null && langVal !== '') {
+                        localStorage.setItem('languageFamily', langVal);
+                        console.log('✅ languageFamily set to localStorage:', langVal);
+                    }
+                } catch (e) {
+                    console.error('❌ Error setting languageFamily:', e.message);
+                }
+            }, $langJs);
             
             // 等待一下讓頁面處理 localStorage 更新
             await new Promise(resolve => setTimeout(resolve, 1000));
