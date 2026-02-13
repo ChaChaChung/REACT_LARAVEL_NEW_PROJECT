@@ -25,7 +25,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
      * {platform?} - 要選擇的平台（可選參數）
      * {--concurrency=4} - 併發數量（可選，預設為 4）
      */
-    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {account_number?} {platform?} {--concurrency=4}';
+    protected $signature = 'agent:scrape-foqq-dom-detail {url} {date_start?} {date_end?} {platform?} {account_number?} {--concurrency=4}';
 
     /**
      * 命令描述
@@ -139,9 +139,22 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         // 獲取認證 cookies 程式碼片段（併發頁面用）
         $cookiesCodeForNewPage = $this->generateFoqqPuppeteerCookiesCode('newPage');
 
-        // 將 date 轉換為 JavaScript 可用的格式
-        $dateStartJs = $date_start ? json_encode(date('Y-m-d', strtotime($date_start))) : 'null';
-        $dateEndJs = $date_end ? json_encode(date('Y-m-d', strtotime($date_end))) : 'null';
+        // 將 date 轉換為 JavaScript 可用的格式（開始日期 00:00:00，結束日期 23:59:59）
+        $dateStartJs = $date_start ? json_encode(date('Y-m-d 00:00:00', strtotime($date_start))) : 'null';
+        $dateEndJs = $date_end ? json_encode(date('Y-m-d 23:59:59', strtotime($date_end))) : 'null';
+        // 若同時有開始與結束日期，產生逐日陣列供迴圈使用（一天一天搜尋）
+        $dateRangeJs = 'null';
+        $dateRangeJsLiteral = '[]'; // 給 JS 用的字串字面，避免 heredoc 插值變成陣列
+        if ($date_start && $date_end) {
+            $start = strtotime($date_start);
+            $end = strtotime($date_end);
+            $dates = [];
+            for ($t = $start; $t <= $end; $t += 86400) {
+                $dates[] = date('Y-m-d', $t);
+            }
+            $dateRangeJs = json_encode($dates);
+            $dateRangeJsLiteral = json_encode($dateRangeJs);
+        }
         $accountNumberJs = $account_number ? json_encode($account_number) : 'null';
         $platformJs = $platform ? json_encode($platform) : 'null';
 
@@ -149,6 +162,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
         $script = <<<JS
             const puppeteer = require('puppeteer');
             const fs = require('fs');
+            const path = require('path');
+            const SCREENSHOT_DIR = __dirname;
 
             /**
              * 併發控制器：限制同時執行的 Promise 數量
@@ -254,8 +269,6 @@ class ScrapeBrowserFoqqDOMDetail extends Command
 
                 if (searchButton.found) {
                     await page.click(searchButton.selector, { timeout: 5000 });
-                    await page.waitForSelector('#simple-table', { timeout: 8000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 1000));
                     return true;
                 }
                 
@@ -270,14 +283,9 @@ class ScrapeBrowserFoqqDOMDetail extends Command
              */
             async function findAllAccountLinks(page, accountValue) {
                 return await page.evaluate((accountValue) => {
-                    const table = document.querySelector('#simple-table');
-                    
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
                     if (!table) {
-                        return {
-                            found: false,
-                            links: [],
-                            debug: { error: 'Table #simple-table not found' }
-                        };
+                        return { found: false, links: [], debug: { error: 'No table found' } };
                     }
                     
                     // 從表格中獲取所有連結
@@ -403,7 +411,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
-                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     }
@@ -419,7 +427,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         // 不關閉原始頁面，因為可能需要用於後續連結
                         // await page.close();
                         page = newPage;
-                        await page.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 15000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     } else {
@@ -427,7 +435,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             waitUntil: 'domcontentloaded',
                             timeout: 30000
                         });
-                        await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                        await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         return page;
                     }
@@ -437,7 +445,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         waitUntil: 'domcontentloaded',
                         timeout: 30000
                     });
-                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {});
+                    await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     return page;
                 }
@@ -463,6 +471,88 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     }
                 });
             }
+            async function scrollTableHeaderIntoView(pageObject) {
+                await pageObject.evaluate(() => {
+                    window.scrollTo(0, 0);
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
+                    if (table) {
+                        table.scrollIntoView({ behavior: 'instant', block: 'start' });
+                        const thead = table.querySelector('thead');
+                        const firstRow = thead ? thead.querySelector('tr') : table.querySelector('tr');
+                        if (firstRow) firstRow.scrollIntoView({ behavior: 'instant', block: 'start' });
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            async function scrollTotalRowIntoView(pageObject) {
+                await pageObject.evaluate(() => {
+                    const table = document.querySelector('#simple-table') || document.querySelector('table');
+                    if (!table) return;
+                    const rows = table.querySelectorAll('tbody tr, tr');
+                    for (let i = 0; i < rows.length; i++) {
+                        if (/Total[：:]|總計/.test(rows[i].textContent || '')) {
+                            rows[i].scrollIntoView({ behavior: 'instant', block: 'center' });
+                            break;
+                        }
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            async function highlightScrapedTable(pageObject) {
+                await pageObject.evaluate(() => {
+                    let table = document.querySelector('#simple-table') || null;
+                    if (!table) {
+                        const tables = document.querySelectorAll('table');
+                        let maxRows = 0;
+                        tables.forEach(t => {
+                            const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
+                            if (rows > maxRows) { maxRows = rows; table = t; }
+                        });
+                    }
+                    if (table) {
+                        table.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        table.style.setProperty('border', '6px solid #e60000', 'important');
+                        table.style.setProperty('box-shadow', '0 0 0 4px #e60000', 'important');
+                    }
+                });
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+
+            /**
+             * 查詢完圖片後的頁面截圖：開新分頁載入同一 URL（不攔截圖片），等待圖片載入後截圖
+             * @param {Browser} browser - Puppeteer 瀏覽器實例
+             * @param {Page} pageWithCookies - 已登入的頁面（用於複製 cookies）
+             * @param {string} targetUrl - 要截圖的頁面 URL
+             * @param {string} outputPath - 截圖儲存路徑
+             * @returns {Promise<boolean>} 是否成功
+             */
+            async function screenshotPageAfterImagesLoaded(browser, pageWithCookies, targetUrl, outputPath) {
+                let imagePage = null;
+                try {
+                    imagePage = await browser.newPage();
+                    await imagePage.setViewport({ width: 1920, height: 1080 });
+                    await imagePage.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+                    const cookies = await pageWithCookies.cookies();
+                    if (cookies && cookies.length > 0) {
+                        await imagePage.setCookie(...cookies);
+                    }
+                    await imagePage.goto(targetUrl, {
+                        waitUntil: 'networkidle2',
+                        timeout: 25000
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await imagePage.screenshot({ path: outputPath, fullPage: false });
+                    console.log('📸 Screenshot (after images loaded) saved: ' + outputPath);
+                    return true;
+                } catch (err) {
+                    console.log('⚠️  Could not take screenshot after images: ' + err.message);
+                    return false;
+                } finally {
+                    if (imagePage && !imagePage.isClosed()) {
+                        await imagePage.close();
+                    }
+                }
+            }
 
             /**
              * 提取表格資料的函數（可重用）
@@ -471,14 +561,17 @@ class ScrapeBrowserFoqqDOMDetail extends Command
              */
             async function extractTableData(pageObject) {
                 return await pageObject.evaluate(() => {
-                    // 查找 id="simple-table" 的表格
-                    const table = document.querySelector('#simple-table');
-                    
+                    const table = document.querySelector('#simple-table') || (() => {
+                        const tables = document.querySelectorAll('table');
+                        let best = null, maxRows = 0;
+                        tables.forEach(t => {
+                            const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
+                            if (rows > maxRows) { maxRows = rows; best = t; }
+                        });
+                        return best;
+                    })();
                     if (!table) {
-                        return {
-                            found: false,
-                            error: 'Table #simple-table not found'
-                        };
+                        return { found: false, error: 'No table found' };
                     }
 
                     // 提取表頭
@@ -520,8 +613,16 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         .map((row, rowIndex) => {
                             const cells = Array.from(row.querySelectorAll('td'));
                             const rowData = {};
-                            
-                                    if (headers && headers.length > 0) {
+                            const firstCellVal = cells[0] ? cells[0].textContent.trim() : '';
+                            const totalMatch = firstCellVal.match(/Total[：:]\s*(\d+)\s*Records?/i);
+                            if (totalMatch) {
+                                rowData.Total_Bet_Times = totalMatch[1];
+                                rowData.Bet = cells[1] ? cells[1].textContent.trim() : null;
+                                rowData.Total_Bet_Amount = cells[2] ? cells[2].textContent.trim() : null;
+                                rowData.Total_Win_Loss = cells[3] ? cells[3].textContent.trim() : null;
+                                return rowData;
+                            }
+                            if (headers && headers.length > 0) {
                                         headers.forEach((header, colIndex) => {
                                             // 清理字段名
                                             let cleanHeader = header
@@ -558,15 +659,32 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                             } 
                                             // 特殊處理：如果字段是 Bet_Time_Order_Number，則分割成兩個字段
                                             else if (cellValue && (cleanHeader === 'Bet_Time_Order_Number' || cleanHeader.toLowerCase() === 'bet_time_order_number')) {
-                                                // 分割換行符
                                                 const parts = cellValue.split(new RegExp('[\\n\\r]+'));
                                                 if (parts.length >= 2) {
-                                                    // 分割成 Bet_Time 和 Order_Number 兩個字段
                                                     rowData['Bet_Time'] = parts[0].trim();
-                                                    // 合併剩餘部分並去除多餘空白
                                                     rowData['Order_Number'] = parts.slice(1).map(p => p.trim()).filter(p => p).join('').trim();
                                                 } else {
-                                                    // 如果沒有換行符，保持原值
+                                                    rowData[finalHeader] = cellValue;
+                                                }
+                                            }
+                                            // Account: 換行前為帳號，換行後為姓名
+                                            else if (cellValue && (cleanHeader === 'Account' || cleanHeader === '帳號')) {
+                                                const parts = cellValue.split(new RegExp('[\\n\\r]+')).map(p => p.trim()).filter(p => p);
+                                                if (parts.length >= 2) {
+                                                    rowData['帳號'] = parts[0];
+                                                    rowData['姓名'] = parts.slice(1).join(' ').trim();
+                                                } else {
+                                                    rowData['帳號'] = parts[0] || cellValue.trim();
+                                                    rowData['姓名'] = '';
+                                                }
+                                            }
+                                            // Bet: 括號前為金額，括號內為數量
+                                            else if (cellValue && (cleanHeader === 'Bet' || cleanHeader === '注額' || cleanHeader === '下注')) {
+                                                const match = cellValue.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+                                                if (match) {
+                                                    rowData['Bet'] = match[1].trim();
+                                                    rowData['Bet_Records'] = match[2].replace(/\D/g, '') || '';
+                                                } else {
                                                     rowData[finalHeader] = cellValue;
                                                 }
                                             } else {
@@ -579,27 +697,15 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                             rowData['column_' + colIndex] = cell ? cell.textContent.trim() : null;
                                         });
                                     }
-                            
-                            // 添加原始行索引
-                            rowData._rowIndex = rowIndex;
-                            
                             return rowData;
                         })
                         .filter(rowData => {
-                            // 過濾掉小計和總計行
-                            // 檢查第一個欄位（通常是日期欄位）是否包含"小計"、"總計"、"Current Total："或"Total："
+                            if (rowData.Total_Bet_Times != null) return true;
                             const firstValue = Object.values(rowData)[0];
-                            if (!firstValue) return true;
+                            if (!firstValue) return false;
                             const valueStr = String(firstValue);
                             const lowerValue = valueStr.toLowerCase();
-                            return firstValue !== '小計' && 
-                                   firstValue !== '總計' && 
-                                   lowerValue !== 'current total' && 
-                                   lowerValue !== 'total' &&
-                                   valueStr !== 'Current Total：' &&
-                                   valueStr !== 'Total：' &&
-                                   !valueStr.startsWith('Current Total') &&
-                                   !valueStr.startsWith('Total：');
+                            return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
                         });
 
                     return {
@@ -612,20 +718,12 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         rawRows: rows.slice(dataStartIndex)
                             .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
                             .filter(rowArray => {
-                                // 過濾掉小計和總計行
                                 if (rowArray.length === 0) return false;
                                 const firstValue = rowArray[0];
-                                if (!firstValue) return true;
+                                if (!firstValue) return false;
                                 const valueStr = String(firstValue);
                                 const lowerValue = valueStr.toLowerCase();
-                                return firstValue !== '小計' && 
-                                       firstValue !== '總計' && 
-                                       lowerValue !== 'current total' && 
-                                       lowerValue !== 'total' &&
-                                       valueStr !== 'Current Total：' &&
-                                       valueStr !== 'Total：' &&
-                                       !valueStr.startsWith('Current Total') &&
-                                       !valueStr.startsWith('Total：');
+                                return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
                             }),
                         data: dataRows
                     };
@@ -644,9 +742,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                 console.log('📄 Processing detail page ' + (linkIndex + 1) + ' for account: ' + accountValue);
                 
                 try {
-                    // 等待表格載入
-                    await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await detailPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     
                     // 獲取當前頁面 URL（用於識別平台）
                     const pageUrl = detailPage.url();
@@ -663,11 +760,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // 使用 while 循環和"下一頁"按鈕來遍歷所有頁面
                     while (hasNextPage) {
                         console.log('📄 Crawling page ' + currentPageNum + '...');
-                        
-                        // 等待表格載入
-                        await detailPage.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
+                        await detailPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         // 提取當前頁面的數據
                         const pageData = await extractTableData(detailPage);
                         allPagesData.push({
@@ -752,7 +846,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         pages: allPagesData
                     };
                     
-                    // 截圖（為每個連結生成獨立的截圖文件）- 截取最後一頁
+                    // 紅框標示表格後截圖
+                    await highlightScrapedTable(detailPage);
                     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
                     const screenshotFilename = 'account_' + accountValue + '_link_' + (linkIndex + 1) + '_' + timestamp + '.png';
                     await detailPage.screenshot({ 
@@ -851,10 +946,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     });
 
                     // 等待表格元素出現，而不是固定等待時間
-                    await page.waitForSelector('#simple-table', { timeout: 10000 }).catch(() => {
-                        console.log('⚠️  Table not found, waiting 2 seconds...');
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await page.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 500));
 
                     // 解析 date
                     let dateStartParsed = null;
@@ -882,55 +975,170 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         platformParsed = $platformJs !== 'null' ? $platformJs : null;
                     }
 
-                    // 如果提供了 platform，選擇對應的平台
+                    // 如果提供了 platform，選擇對應的平台（先試 gm，再試 find6）
                     if (platformParsed && platformParsed !== null && platformParsed !== '') {
                         try {
-                            // 查找 select[name="find6"] 欄位
-                            await page.waitForSelector('select[name="find6"]', { timeout: 10000 });
-                            
-                            // 選擇平台
-                            await page.select('select[name="find6"]', platformParsed);
-                            console.log('✅ Platform selected: ' + platformParsed);
-                            
-                            // 減少等待時間
+                            const gmSelect = await page.$('select[name="gm"]');
+                            const find6Select = await page.$('select[name="find6"]');
+                            if (gmSelect) {
+                                await page.select('select[name="gm"]', platformParsed);
+                                console.log('✅ Platform selected (gm): ' + platformParsed);
+                            } else if (find6Select) {
+                                await page.select('select[name="find6"]', platformParsed);
+                                console.log('✅ Platform selected (find6): ' + platformParsed);
+                            } else {
+                                console.log('⚠️  No platform select (gm/find6) found');
+                            }
                             await new Promise(resolve => setTimeout(resolve, 500));
                         } catch (e) {
                             console.log('⚠️  Error selecting platform: ' + e.message);
                         }
                     }
 
-                    // 如果提供了 date_start 和 date_end，填入 input#find1 和 input#find2
+                    // try {
+                    //     const tzSelect = await page.$('select[name="find5"]');
+                    //     if (tzSelect) {
+                    //         await page.select('select[name="find5"]', '0');
+                    //         console.log('✅ Timezone selected: 0');
+                    //         await new Promise(resolve => setTimeout(resolve, 300));
+                    //     }
+                    // } catch (e) {
+                    //     console.log('⚠️  Timezone select (find5) skip: ' + e.message);
+                    // }
+
+                    let dateRange = [];
+                    try {
+                        dateRange = JSON.parse($dateRangeJsLiteral);
+                        if (!Array.isArray(dateRange)) dateRange = [];
+                    } catch (e) {}
+
+                    if (dateRange && dateRange.length > 0) {
+                        console.log('📅 Day-by-day mode: ' + dateRange.length + ' day(s) from ' + dateRange[0] + ' to ' + dateRange[dateRange.length - 1]);
+                        await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="開始日期"]', { timeout: 10000 });
+                        await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
+                        const allCollectedTables = [];
+                        const dayScreenshotFiles = [];
+                        for (let d = 0; d < dateRange.length; d++) {
+                            const day = dateRange[d];
+                            const startVal = day + ' 00:00:00';
+                            const endVal = day + ' 23:59:59';
+                            await page.evaluate((s, e) => {
+                                const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
+                                const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
+                                if (input1) { input1.value = s; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
+                                if (input2) { input2.value = e; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
+                            }, startVal, endVal);
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                            await clickSearchButton(page);
+                            console.log('⏳ [' + (d + 1) + '/' + dateRange.length + '] ' + day + ' - Waiting for table...');
+                            await new Promise(resolve => setTimeout(resolve, 6000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 20000 }).catch(() => {});
+                            let firstPageData = await extractTableData(page);
+                            let dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
+                            if (dayRows.length === 0) {
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                firstPageData = await extractTableData(page);
+                                dayRows = Array.isArray(firstPageData.data) ? firstPageData.data : [];
+                            }
+                            let hasNextPage = true;
+                            while (hasNextPage) {
+                                const nextPageInfo = await page.evaluate(() => {
+                                    const nextLink = document.querySelector('a[rel="next"]');
+                                    if (nextLink && nextLink.href) {
+                                        const style = window.getComputedStyle(nextLink);
+                                        const visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && !nextLink.classList.contains('disabled');
+                                        if (visible) return { hasNext: true, nextUrl: nextLink.href };
+                                    }
+                                    return { hasNext: false };
+                                });
+                                if (nextPageInfo.hasNext) {
+                                    await page.goto(nextPageInfo.nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                                    await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                    const pageData = await extractTableData(page);
+                                    if (pageData.data) dayRows = dayRows.concat(pageData.data);
+                                } else {
+                                    hasNextPage = false;
+                                }
+                            }
+                            const dayScreenshotName = 'scraped_page_screenshot_day_' + day.replace(/-/g, '') + '.png';
+                            const dayScreenshotPath = path.join(SCREENSHOT_DIR, dayScreenshotName);
+                            try {
+                                if (page) {
+                                    await highlightScrapedTable(page);
+                                    await page.screenshot({ path: dayScreenshotPath, fullPage: false });
+                                    dayScreenshotFiles.push(dayScreenshotName);
+                                    console.log('📸 Day screenshot: ' + dayScreenshotName);
+                                }
+                            } catch (scrErr) {
+                                console.log('⚠️  Day screenshot failed ' + day + ': ' + scrErr.message);
+                            }
+                            if (dayRows.length > 0) {
+                                dayRows = dayRows.map(row => ({ Date: day, ...row }));
+                                allCollectedTables.push({ data: dayRows, rowCount: dayRows.length });
+                                console.log('✅ ' + day + ': ' + dayRows.length + ' row(s)');
+                            } else {
+                                allCollectedTables.push({ data: [{ Date: day, Total_Bet_Times: '-', Bet: '-', Total_Bet_Amount: '-', Total_Win_Loss: '-' }], rowCount: 1 });
+                                console.log('⚠️  ' + day + ': 0 row(s) (placeholder added, check screenshot)');
+                            }
+                            if (d < dateRange.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                            }
+                        }
+                        const mergedData = [];
+                        allCollectedTables.forEach(t => {
+                            if (t.data) mergedData.push(...t.data);
+                        });
+                        const result = {
+                            timestamp: new Date().toISOString(),
+                            url: '$url',
+                            queryParams: { date_start: dateRange[0] + ' 00:00:00', date_end: dateRange[dateRange.length - 1] + ' 23:59:59', account_number: accountNumberParsed, platform: platformParsed },
+                            domData: {
+                                pageInfo: { title: '', url: page.url() },
+                                queryParams: { date_start: dateRange[0], date_end: dateRange[dateRange.length - 1] },
+                                totalPages: dateRange.length,
+                                pages: [],
+                                tables: [{ data: mergedData, rowCount: mergedData.length }]
+                            },
+                            accountDetailResults: [],
+                            dayScreenshotFiles: dayScreenshotFiles,
+                            success: true
+                        };
+                        try {
+                            if (page) {
+                                await highlightScrapedTable(page);
+                                await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'scraped_page_screenshot.png'), fullPage: false });
+                                console.log('📸 Screenshot saved: scraped_page_screenshot.png');
+                                try {
+                                    const listUrl = await page.url();
+                                    await screenshotPageAfterImagesLoaded(browser, page, listUrl, path.join(SCREENSHOT_DIR, 'scraped_page_screenshot_after_images.png'));
+                                } catch (imgErr) {
+                                    console.log('⚠️  Screenshot after images skipped: ' + imgErr.message);
+                                }
+                            }
+                        } catch (screenshotError) {
+                            console.log('⚠️  Could not take screenshot: ' + screenshotError.message);
+                        }
+                        fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
+                        console.log('💾 Results saved: ' + mergedData.length + ' total row(s)');
+                        return result;
+                    }
+
                     if ((dateStartParsed && dateStartParsed !== null && dateStartParsed !== '') && (dateEndParsed && dateEndParsed !== null && dateEndParsed !== '')) {
                         try {
-                            // 查找 input#find1 和 input#find2 欄位
-                            await page.waitForSelector('#find1', { timeout: 10000 });
-                            await page.waitForSelector('#find2', { timeout: 10000 });
-                            
-                            // 清空並填入日期到兩個欄位
+                            await page.waitForSelector('input[placeholder="Start Date"], input[placeholder="開始日期"]', { timeout: 10000 });
+                            await page.waitForSelector('input[placeholder="End Date"], input[placeholder="結束日期"]', { timeout: 10000 });
                             await page.evaluate((dateStartValue, dateEndValue) => {
-                                const input1 = document.querySelector('#find1');
-                                const input2 = document.querySelector('#find2');
-                                
-                                if (input1) {
-                                    input1.value = '';
-                                    input1.value = dateStartValue;
-                                    input1.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input1.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
-                                
-                                if (input2) {
-                                    input2.value = '';
-                                    input2.value = dateEndValue;
-                                    input2.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input2.dispatchEvent(new Event('change', { bubbles: true }));
-                                }
+                                const input1 = document.querySelector('input[placeholder="Start Date"]') || document.querySelector('input[placeholder="開始日期"]');
+                                const input2 = document.querySelector('input[placeholder="End Date"]') || document.querySelector('input[placeholder="結束日期"]');
+                                if (input1) { input1.value = ''; input1.value = dateStartValue; input1.dispatchEvent(new Event('input', { bubbles: true })); input1.dispatchEvent(new Event('change', { bubbles: true })); }
+                                if (input2) { input2.value = ''; input2.value = dateEndValue; input2.dispatchEvent(new Event('input', { bubbles: true })); input2.dispatchEvent(new Event('change', { bubbles: true })); }
                             }, dateStartParsed, dateEndParsed);
-
-                            // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
-
-                            // 查找並點擊搜尋按鈕
                             await clickSearchButton(page);
+                            console.log('⏳ Waiting 30s for search to complete...');
+                            await new Promise(resolve => setTimeout(resolve, 30000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 15000 }).catch(() => {});
                         } catch (e) {
                             console.log('⚠️  Error filling date: ' + e.message);
                         }
@@ -957,8 +1165,10 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             // 減少等待時間
                             await new Promise(resolve => setTimeout(resolve, 500));
 
-                            // 查找並點擊搜尋按鈕
                             await clickSearchButton(page);
+                            console.log('⏳ Waiting 30s for search to complete...');
+                            await new Promise(resolve => setTimeout(resolve, 30000));
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 15000 }).catch(() => {});
                         } catch (e) {
                             console.log('⚠️  Error filling account number: ' + e.message);
                         }
@@ -969,10 +1179,8 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         // ========== 步驟 1：遍歷所有分頁，收集所有帳號連結 ==========
                         console.log('📄 Step 1: Collecting all account links from all pages...');
                         
-                        // 等待表格行出現
-                        await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                        
+                        await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                        await new Promise(resolve => setTimeout(resolve, 500));
                         // 用於存儲所有頁面的帳號連結
                         const allAccountLinks = [];
                         let currentPageNum = 1;
@@ -982,19 +1190,12 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         while (hasNextPage && currentPageNum <= 100) { // 限制最多100頁
                             console.log('🔍 Page ' + currentPageNum + ': Searching for account links...');
                             
-                            // 等待表格載入
-                            await page.waitForSelector('#simple-table tbody tr', { timeout: 10000 }).catch(() => {});
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                            
+                            await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                            await new Promise(resolve => setTimeout(resolve, 500));
                             // 查找當前頁面的所有帳號連結
                             const pageAccountLinks = await page.evaluate((pageNum) => {
-                                const table = document.querySelector('#simple-table');
-                                
-                                if (!table) {
-                                    return [];
-                                }
-                                
-                                // 從表格中獲取所有連結
+                                const table = document.querySelector('#simple-table') || document.querySelector('table');
+                                if (!table) return [];
                                 const tableLinks = Array.from(table.querySelectorAll('a'));
                                 const matchedLinks = [];
                                 
@@ -1069,72 +1270,47 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         
                         console.log('✅ Total account links collected: ' + allAccountLinks.length + ' from ' + currentPageNum + ' page(s)');
                         
-                        // ========== 步驟 2：依次處理所有帳號連結 ==========
+                        // ========== 步驟 2：併發處理所有帳號連結（使用 --concurrency 控制同時處理數量）==========
                         if (allAccountLinks.length > 0) {
-                            console.log('🚀 Step 2: Processing all account detail pages...');
+                            const DETAIL_CONCURRENCY = Math.min($concurrency, 4);
+                            console.log('🚀 Step 2: Processing all account detail pages (concurrency: ' + DETAIL_CONCURRENCY + ')...');
                             
-                            // 存儲所有詳情頁面的結果
-                            const allDetailResults = [];
-                            
-                            // 依次處理每個連結
-                            for (let i = 0; i < allAccountLinks.length; i++) {
-                                const accountLink = allAccountLinks[i];
-                                console.log('📄 [' + (i + 1) + '/' + allAccountLinks.length + '] Processing account: ' + accountLink.text);
-                                
+                            const itemsWithIndex = allAccountLinks.map((accountLink, i) => ({ accountLink, index: i }));
+                            const allDetailResults = await promiseAllWithLimit(itemsWithIndex, DETAIL_CONCURRENCY, async (item) => {
+                                const { accountLink, index: i } = item;
                                 let detailPage = null;
                                 try {
-                                    // 創建新頁面
+                                    console.log('📄 [' + (i + 1) + '/' + allAccountLinks.length + '] Processing account: ' + accountLink.text);
                                     detailPage = await browser.newPage();
                                     await setupPage(detailPage);
-                                    
-                                    // 設置 cookies
                                     const newPage = detailPage;
                                     $cookiesCodeForNewPage
-                                    
-                                    // 導航到帳號詳情頁面
                                     await detailPage.goto(accountLink.href, {
                                         waitUntil: 'domcontentloaded',
                                         timeout: 30000
                                     });
-                                    await detailPage.waitForSelector('#simple-table', { timeout: 15000 }).catch(() => {
-                                        console.log('⚠️  Table not found on detail page, continuing...');
-                                    });
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
-                                    
-                                    // 處理詳情頁面（爬取數據並截圖，支持分頁）
+                                    await detailPage.waitForSelector('#simple-table, table', { timeout: 10000 }).catch(() => {});
+                                    await new Promise(resolve => setTimeout(resolve, 500));
                                     const detailResult = await processAccountLinkDetail(detailPage, accountLink, i, accountLink.text);
-                                    allDetailResults.push(detailResult);
-                                    
-                                    console.log('✅ [' + (i + 1) + '/' + allAccountLinks.length + '] Account ' + accountLink.text + ' processed successfully');
-                                    
-                                    // 關閉詳情頁面
-                                    await detailPage.close();
-                                    
+                                    console.log('✅ [' + (i + 1) + '/' + allAccountLinks.length + '] Account ' + accountLink.text + ' done');
+                                    return detailResult;
                                 } catch (error) {
-                                    console.error('❌ [' + (i + 1) + '/' + allAccountLinks.length + '] Error processing account ' + accountLink.text + ': ' + error.message);
-                                    allDetailResults.push({
+                                    console.error('❌ [' + (i + 1) + '/' + allAccountLinks.length + '] Error: ' + accountLink.text + ': ' + error.message);
+                                    return {
                                         linkIndex: i,
                                         accountLink: accountLink,
                                         success: false,
                                         error: error.message,
                                         errorStack: error.stack || ''
-                                    });
-                                    
-                                    // 確保在錯誤時關閉頁面
-                                    if (detailPage) {
-                                        try {
-                                            if (!detailPage.isClosed()) {
-                                                await detailPage.close();
-                                            }
-                                        } catch (closeError) {
-                                            console.log('⚠️  Could not close page: ' + closeError.message);
-                                        }
+                                    };
+                                } finally {
+                                    if (detailPage && !detailPage.isClosed()) {
+                                        try { await detailPage.close(); } catch (e) {}
                                     }
                                 }
-                            }
+                            });
                             
-                            // 將詳情結果存儲到函數作用域變量中
-                            accountDetailResults = allDetailResults;
+                            accountDetailResults = allDetailResults.sort((a, b) => (a.linkIndex || 0) - (b.linkIndex || 0));
                             
                             console.log('✅ All ' + allAccountLinks.length + ' account detail pages processed!');
                             
@@ -1168,13 +1344,19 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                 success: true
                             };
 
-                            // 嘗試截圖（如果頁面仍然有效）
                             try {
-                                if (page && !page.isClosed && !page.isClosed()) {
+                                if (page) {
+                                    await highlightScrapedTable(page);
                                     await page.screenshot({ 
-                                        path: 'scraped_page_screenshot.png',
+                                        path: path.join(SCREENSHOT_DIR, 'scraped_page_screenshot.png'),
                                         fullPage: false
                                     });
+                                    try {
+                                        const listUrl = await page.url();
+                                        await screenshotPageAfterImagesLoaded(browser, page, listUrl, path.join(SCREENSHOT_DIR, 'scraped_page_screenshot_after_images.png'));
+                                    } catch (imgErr) {
+                                        console.log('⚠️  Screenshot after images skipped: ' + imgErr.message);
+                                    }
                                 }
                             } catch (screenshotError) {
                                 console.log('⚠️  Could not take screenshot: ' + screenshotError.message);
@@ -1194,15 +1376,33 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                     // ========== 步驟 1：爬取第一頁，獲取所有分頁 URL ==========
                     console.log('📄 Step 1: Extracting first page and collecting all page URLs...');
                     
-                    // 確保表格已載入
-                    await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    // 提取第一頁的表格資料
                     const firstPageData = await extractTableData(page);
                     
                     if (!firstPageData.found) {
-                        throw new Error('No table found on first page');
+                        console.log('⚠️  No table found on first page. Page may need more time to load.');
+                        try {
+                            if (page) {
+                                await page.screenshot({ path: path.join(SCREENSHOT_DIR, 'scraped_page_screenshot.png'), fullPage: false });
+                                console.log('📸 Screenshot saved (no table): scraped_page_screenshot.png');
+                            }
+                        } catch (e) {
+                            console.log('⚠️  Could not take screenshot: ' + e.message);
+                        }
+                        const result = {
+                            timestamp: new Date().toISOString(),
+                            url: '$url',
+                            queryParams: { date_start: dateStartParsed, date_end: dateEndParsed, account_number: accountNumberParsed, platform: platformParsed },
+                            domData: { pageInfo: { title: '', url: page.url() }, tables: [], totalPages: 0 },
+                            accountDetailResults: [],
+                            success: false,
+                            error: 'No table found on first page. Check URL/date/platform or if the page loaded correctly.'
+                        };
+                        fs.writeFileSync('scraped_result.json', JSON.stringify(result, null, 2));
+                        console.log('💾 Result (no data) saved to: scraped_result.json');
+                        return result;
                     }
                     
                     // 使用"下一頁"按鈕來收集所有頁面的 URL
@@ -1244,7 +1444,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                                     waitUntil: 'domcontentloaded',
                                     timeout: 30000
                                 });
-                                await page.waitForSelector('#simple-table tbody tr', { timeout: 5000 }).catch(() => {});
+                                await page.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 5000 }).catch(() => {});
                                 await new Promise(resolve => setTimeout(resolve, 500));
                             } catch (e) {
                                 console.log('⚠️  Failed to navigate to page ' + currentPageNum + ': ' + e.message);
@@ -1289,7 +1489,7 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                             });
                             
                             // 等待表格載入
-                            await newPage.waitForSelector('#simple-table tbody tr', { timeout: 8000 }).catch(() => {});
+                            await newPage.waitForSelector('#simple-table tbody tr, table tbody tr', { timeout: 8000 }).catch(() => {});
                             await new Promise(resolve => setTimeout(resolve, 500));
                             
                             // 提取表格資料
@@ -1369,13 +1569,20 @@ class ScrapeBrowserFoqqDOMDetail extends Command
                         totalRows += table.rowCount || 0;
                     });
 
-                    // 截圖（用於調試和驗證）- 只截取可見區域，不截全頁（大幅提升速度）
+                    await highlightScrapedTable(page);
                     await page.screenshot({ 
-                        path: 'scraped_page_screenshot.png',
-                        fullPage: false  // 改為 false，只截可見區域，速度更快
+                        path: path.join(SCREENSHOT_DIR, 'scraped_page_screenshot.png'),
+                        fullPage: false
                     });
 
                     console.log('📸 Screenshot saved: scraped_page_screenshot.png');
+
+                    try {
+                        const listUrl = await page.url();
+                        await screenshotPageAfterImagesLoaded(browser, page, listUrl, path.join(SCREENSHOT_DIR, 'scraped_page_screenshot_after_images.png'));
+                    } catch (imgErr) {
+                        console.log('⚠️  Screenshot after images skipped: ' + imgErr.message);
+                    }
 
                     // 合併所有提取的資料（accountDetailResults 已在函數作用域內定義）
                     const result = {
@@ -1470,16 +1677,24 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             return null;
         }
 
-        // 讀取腳本生成的結果文件
+        // 讀取腳本生成的結果文件（寫在腳本所在目錄 = storage/app/temp/）
         $resultFile = $workingDir . '/scraped_result.json';
 
         if (file_exists($resultFile)) {
-            // 讀取並解析 JSON 文件
+            $this->info("📄 Result file: " . realpath($resultFile));
             $content = file_get_contents($resultFile);
-            return json_decode($content, true);
+            $data = json_decode($content, true);
+            $copyPath = storage_path('app/scraped_data/scraped_result_' . date('Y-m-d_H-i-s') . '.json');
+            $copyDir = dirname($copyPath);
+            if (!is_dir($copyDir)) {
+                mkdir($copyDir, 0755, true);
+            }
+            copy($resultFile, $copyPath);
+            $this->info("📋 Copy saved to: {$copyPath}");
+            return $data;
         }
 
-        $this->error("❌ No result file found");
+        $this->error("❌ No result file found at: {$resultFile}");
         return null;
     }
     
@@ -1639,13 +1854,42 @@ class ScrapeBrowserFoqqDOMDetail extends Command
             $this->info("✅ All " . count($platformData) . " platform-specific files saved!");
         }
 
+        // 確保截圖儲存目錄存在
+        $scrapedDataDir = storage_path('app/scraped_data');
+        if (!is_dir($scrapedDataDir)) {
+            mkdir($scrapedDataDir, 0755, true);
+            $this->info("📁 Created directory: {$scrapedDataDir}");
+        }
+
         // 將截圖從臨時目錄移動到永久儲存目錄
         $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
         $screenshotDst = storage_path("app/scraped_data/dom_screenshot_{$timestamp}.png");
-        
+
         if (file_exists($screenshotSrc)) {
             rename($screenshotSrc, $screenshotDst);
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
+        } else {
+            $this->warn("⚠️  Screenshot not found at: {$screenshotSrc} (script may have taken a different code path or screenshot failed)");
+        }
+
+        // 將「查詢完圖片後」的頁面截圖從臨時目錄移動到永久儲存目錄
+        $screenshotAfterImagesSrc = storage_path('app/temp/scraped_page_screenshot_after_images.png');
+        $screenshotAfterImagesDst = storage_path("app/scraped_data/dom_screenshot_after_images_{$timestamp}.png");
+
+        if (file_exists($screenshotAfterImagesSrc)) {
+            rename($screenshotAfterImagesSrc, $screenshotAfterImagesDst);
+            $this->info("📸 Screenshot (after images loaded) saved to: {$screenshotAfterImagesDst}");
+        }
+
+        // 將逐日截圖從臨時目錄移動到永久儲存目錄（檔名如 scraped_page_screenshot_day_20260122.png）
+        $dayScreenshotFiles = $result['dayScreenshotFiles'] ?? [];
+        foreach ($dayScreenshotFiles as $dayFilename) {
+            $src = storage_path('app/temp/' . $dayFilename);
+            $dst = storage_path('app/scraped_data/dom_screenshot_' . preg_replace('/^scraped_page_screenshot_day_|\.png$/i', '', $dayFilename) . "_{$timestamp}.png");
+            if (file_exists($src)) {
+                rename($src, $dst);
+                $this->info("📸 Day screenshot saved: " . basename($dst));
+            }
         }
 
         // 處理帳號詳情結果（如果有的話，也按平台合併到對應的平台檔案中）
