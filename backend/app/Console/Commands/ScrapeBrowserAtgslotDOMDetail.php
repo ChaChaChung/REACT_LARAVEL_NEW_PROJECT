@@ -63,7 +63,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
 
         // 如果執行成功，處理爬取的資料
         if ($result) {
-            $this->processScrapedData($result);
+            $this->processScrapedData($result, $date_start, $date_end);
             return 0;
         }
 
@@ -158,6 +158,17 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         $dateStartJs = $dateStartFormatted ? json_encode($dateStartFormatted) : 'null';
         $dateEndJs = $dateEndFormatted ? json_encode($dateEndFormatted) : 'null';
         $playerAccountJs = $player_account ? json_encode($player_account) : 'null';
+
+        // 若同時有開始與結束日期，產生逐日列表（一天一天查）
+        $dateList = [];
+        if ($date_start && $date_end && $dateStartFormatted && $dateEndFormatted) {
+            $startTs = strtotime($dateStartFormatted);
+            $endTs = strtotime($dateEndFormatted);
+            for ($t = $startTs; $t <= $endTs; $t += 86400) {
+                $dateList[] = date('Y-m-d', $t);
+            }
+        }
+        $dateListJs = json_encode($dateList);
 
         // 生成 Puppeteer JavaScript 腳本
         $script = <<<JS
@@ -295,7 +306,90 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                         // 即使導航失敗，也繼續執行
                     }
                     
-                    // 填入日期範圍（如果提供了 date_start 或 date_end）
+                    const dateList = $dateListJs;
+                    let result;
+                    if (dateList && Array.isArray(dateList) && dateList.length > 0) {
+                        // 逐日模式：每天 Start = End = 當日，搜尋後擷取摘要並收集
+                        console.log('📅 Daily mode: scraping ' + dateList.length + ' day(s) from ' + dateList[0] + ' to ' + dateList[dateList.length - 1]);
+                        const dailyData = [];
+                        const extractTagsInPage = async () => {
+                            return await page.evaluate(() => {
+                                const keywords = ['Profit', 'Unique player', 'Win/Bet amount', 'Win/Bet count'];
+                                let tagEls = document.querySelectorAll('.ivu-col.ivu-col-span-24 .ivu-tag .ivu-tag-text, .ivu-col.ivu-col-span-24 .ivu-tag-size-large .ivu-tag-text');
+                                if (tagEls.length === 0) tagEls = document.querySelectorAll('.ivu-tag .ivu-tag-text, .ivu-tag-size-large .ivu-tag-text, .ivu-tag-text');
+                                const all = Array.from(tagEls).map(el => (el.textContent || el.innerText || '').trim()).filter(t => t.length > 0);
+                                const summary = all.filter(t => keywords.some(kw => t.indexOf(kw) >= 0));
+                                return summary.length > 0 ? summary : all;
+                            });
+                        };
+                        const clickSearchButton = async () => {
+                            const buttonFound = await page.evaluate(() => {
+                                const allButtons = Array.from(document.querySelectorAll('button.ivu-btn.ivu-btn-primary, button.ivu-btn-primary, .ivu-btn-primary'));
+                                for (const btn of allButtons) {
+                                    const text = (btn.textContent || btn.innerText || '').trim().toLowerCase();
+                                    if (text.includes('搜尋') || text.includes('搜索') || text.includes('查詢') || text.includes('search')) {
+                                        if (btn.offsetParent !== null) { btn.click(); return true; }
+                                    }
+                                }
+                                if (allButtons.length > 0 && allButtons[0].offsetParent !== null) { allButtons[0].click(); return true; }
+                                return false;
+                            });
+                            return !!buttonFound;
+                        };
+                        for (let i = 0; i < dateList.length; i++) {
+                            const dateStr = dateList[i];
+                            console.log('📅 Day ' + (i + 1) + '/' + dateList.length + ': ' + dateStr);
+                            await page.evaluate((dateValue, index) => {
+                                const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
+                                if (inputs[index] != null) {
+                                    const input = inputs[index];
+                                    input.value = '';
+                                    input.value = dateValue;
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+                            }, dateStr, 0);
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            await page.evaluate((dateValue, index) => {
+                                const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
+                                if (inputs[index] != null) {
+                                    const input = inputs[index];
+                                    input.value = '';
+                                    input.value = dateValue;
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    input.dispatchEvent(new Event('blur', { bubbles: true }));
+                                }
+                            }, dateStr, 1);
+                            await new Promise(resolve => setTimeout(resolve, 800));
+                            await clickSearchButton();
+                            await new Promise(resolve => setTimeout(resolve, 4000));
+                            const tags = await extractTagsInPage();
+                            dailyData.push({ Date: dateStr, data: tags || [] });
+                            if (tags && tags.length > 0) {
+                                console.log('   ✅ ' + tags.length + ' tag(s)');
+                            } else {
+                                console.log('   ⚠️  No tags');
+                            }
+                            try {
+                                await page.screenshot({ path: 'daily_' + dateStr + '.png', fullPage: true });
+                                console.log('   📸 Screenshot saved: daily_' + dateStr + '.png');
+                            } catch (e) {
+                                console.log('   ⚠️  Screenshot failed: ' + e.message);
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                        result = {
+                            success: true,
+                            url: '$url',
+                            cookies: cookies,
+                            authData: authData,
+                            dailyData: dailyData,
+                            message: 'Daily data extracted: ' + dailyData.length + ' day(s)'
+                        };
+                    } else {
+                    // 單次查詢模式：填入日期範圍（如果提供了 date_start 或 date_end）
                     let dateStartValue = null;
                     let dateEndValue = null;
                     let playerAccountValue = null;
@@ -352,7 +446,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                             await new Promise(resolve => setTimeout(resolve, 2000));
                             
                             // 查找日期輸入框
-                            const dateInputs = await page.$$('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                            const dateInputs = await page.$$('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
                             console.log('📋 Found ' + dateInputs.length + ' date input(s)');
                             
                             if (dateInputs.length >= 2) {
@@ -360,7 +454,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                                 if (dateStartValue) {
                                     console.log('📝 Filling start date: ' + dateStartValue);
                                     await page.evaluate((dateValue, index) => {
-                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
                                         if (inputs[index]) {
                                             const input = inputs[index];
                                             input.value = '';
@@ -381,7 +475,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                                 if (dateEndValue) {
                                     console.log('📝 Filling end date: ' + dateEndValue);
                                     await page.evaluate((dateValue, index) => {
-                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        const inputs = document.querySelectorAll('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
                                         if (inputs[index]) {
                                             const input = inputs[index];
                                             input.value = '';
@@ -404,7 +498,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                                     // 嘗試填入範圍格式（根據實際需求調整格式）
                                     const dateRange = dateStartValue + ' ~ ' + dateEndValue;
                                     await page.evaluate((rangeValue) => {
-                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
                                         if (input) {
                                             input.value = '';
                                             input.value = rangeValue;
@@ -416,7 +510,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                                     console.log('✅ Date range filled: ' + dateRange);
                                 } else if (dateStartValue) {
                                     await page.evaluate((dateValue) => {
-                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="選擇日期"]');
+                                        const input = document.querySelector('input.ivu-input.ivu-input-default.ivu-input-with-suffix[placeholder="Select date"]');
                                         if (input) {
                                             input.value = '';
                                             input.value = dateValue;
@@ -651,58 +745,12 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                             return null;
                         });
                         
-                        // 同時等待表格出現並有數據行
-                        const tableReadyPromise = page.waitForFunction(() => {
-                            // 查找 iView UI 表格
-                            const ivuTable = document.querySelector('.ivu-table, table.ivu-table, .ivu-table-body');
-                            if (ivuTable) {
-                                const tbody = ivuTable.querySelector('tbody') || ivuTable.querySelector('.ivu-table-body tbody');
-                                if (tbody) {
-                                    const rows = tbody.querySelectorAll('tr');
-                                    // 確保有數據行（不只是空表格）
-                                    if (rows.length > 0) {
-                                        // 檢查第一行是否有實際內容
-                                        const firstRow = rows[0];
-                                        const cells = firstRow.querySelectorAll('td');
-                                        if (cells.length > 0) {
-                                            const firstCell = cells[0];
-                                            const text = firstCell.textContent.trim();
-                                            // 如果第一個單元格有內容且不是"無數據"或"加載中"
-                                            return text && 
-                                                   !text.includes('無數據') && 
-                                                   !text.includes('無資料') && 
-                                                   !text.includes('Loading') &&
-                                                   !text.includes('載入中');
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // 查找一般表格
-                            const table = document.querySelector('table');
-                            if (table) {
-                                const tbody = table.querySelector('tbody');
-                                if (tbody) {
-                                    const rows = tbody.querySelectorAll('tr');
-                                    if (rows.length > 0) {
-                                        const firstRow = rows[0];
-                                        const cells = firstRow.querySelectorAll('td');
-                                        if (cells.length > 0) {
-                                            const firstCell = cells[0];
-                                            const text = firstCell.textContent.trim();
-                                            return text && 
-                                                   !text.includes('無數據') && 
-                                                   !text.includes('無資料') && 
-                                                   !text.includes('Loading') &&
-                                                   !text.includes('載入中');
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            return false;
+                        // 等待紅框內的摘要 tag 出現（Profit、Unique player、Win/Bet amount、Win/Bet count）
+                        const tagsReadyPromise = page.waitForFunction(() => {
+                            const tagTexts = document.querySelectorAll('.ivu-tag .ivu-tag-text, .ivu-tag-size-large .ivu-tag-text');
+                            return tagTexts.length >= 1;
                         }, { timeout: 30000 }).catch(() => {
-                            console.log('⚠️  Table ready check timeout, continuing anyway...');
+                            console.log('⚠️  Summary tags check timeout, continuing anyway...');
                             return null;
                         });
                         
@@ -736,10 +784,10 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                             // 忽略錯誤，繼續執行
                         }
                         
-                        // 等待網絡請求或表格就緒（哪個先完成就用哪個）
+                        // 等待網絡請求或摘要 tag 就緒（哪個先完成就用哪個）
                         await Promise.race([
                             dataLoadedPromise,
-                            tableReadyPromise,
+                            tagsReadyPromise,
                             new Promise(resolve => setTimeout(resolve, 5000)) // 至少等待 5 秒
                         ]);
                         
@@ -755,527 +803,73 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
                         console.log('⚠️  Error taking screenshot: ' + e.message);
                     }
 
-                    // 等待表格數據載入（使用更智能的方式）
-                    console.log('📄 Waiting for table data to load...');
-                    let tableFound = false;
-                    
-                    // 嘗試使用 waitForSelector 等待表格出現
-                    try {
-                        await page.waitForSelector('.ivu-table table, table.ivu-table, .ivu-table-body table, table tbody', { 
-                            timeout: 15000,
-                            visible: true 
-                        }).catch(() => {
-                            console.log('⚠️  Table selector not found, trying alternative method...');
-                        });
-                    } catch (e) {
-                        console.log('⚠️  WaitForSelector failed: ' + e.message);
-                    }
-                    
-                    // 等待表格有數據行
-                    for (let retry = 0; retry < 15; retry++) {
+                    // 等待紅框內的摘要 tag 載入（不爬取 table），多等一會讓 API 回傳後再擷取
+                    console.log('📄 Waiting for summary tags (Profit, Unique player, Win/Bet amount, Win/Bet count)...');
+                    const tagSelectors = ['.ivu-tag .ivu-tag-text', '.ivu-tag-size-large .ivu-tag-text', '.ivu-tag-text', '[class*="ivu-tag"] span'];
+                    let tagSelectorFound = false;
+                    for (const sel of tagSelectors) {
                         try {
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 檢查表格是否存在且有數據
-                            const tableCheck = await page.evaluate(() => {
-                                // 查找 iView UI 表格（可能使用 ivu-table 類）
-                                const ivuTable = document.querySelector('.ivu-table, table.ivu-table, .ivu-table-body');
-                                if (ivuTable) {
-                                    const tbody = ivuTable.querySelector('tbody') || ivuTable.querySelector('.ivu-table-body tbody');
-                                    if (tbody) {
-                                        const rows = tbody.querySelectorAll('tr');
-                                        if (rows.length > 0) {
-                                            // 檢查第一行是否有實際數據
-                                            const firstRow = rows[0];
-                                            const cells = firstRow.querySelectorAll('td');
-                                            if (cells.length > 0) {
-                                                const firstCellText = cells[0].textContent.trim();
-                                                // 確保不是空行或無數據提示
-                                                if (firstCellText && 
-                                                    !firstCellText.includes('無數據') && 
-                                                    !firstCellText.includes('無資料') &&
-                                                    !firstCellText.includes('Loading') &&
-                                                    !firstCellText.includes('載入中')) {
-                                                    return { found: true, rowCount: rows.length, type: 'ivu-table' };
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // 查找一般表格
-                                const table = document.querySelector('table');
-                                if (table) {
-                                    const tbody = table.querySelector('tbody');
-                                    if (tbody) {
-                                        const rows = tbody.querySelectorAll('tr');
-                                        if (rows.length > 0) {
-                                            // 檢查第一行是否有實際數據
-                                            const firstRow = rows[0];
-                                            const cells = firstRow.querySelectorAll('td');
-                                            if (cells.length > 0) {
-                                                const firstCellText = cells[0].textContent.trim();
-                                                if (firstCellText && 
-                                                    !firstCellText.includes('無數據') && 
-                                                    !firstCellText.includes('無資料') &&
-                                                    !firstCellText.includes('Loading') &&
-                                                    !firstCellText.includes('載入中')) {
-                                                    return { found: true, rowCount: rows.length, type: 'standard-table' };
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                return { found: false };
-                            });
-                            
-                            if (tableCheck.found) {
-                                tableFound = true;
-                                console.log('✅ Table found after ' + (retry + 1) + ' retry(ies), type: ' + tableCheck.type + ', rows: ' + tableCheck.rowCount);
+                            await page.waitForSelector(sel, { timeout: 8000, visible: true });
+                            tagSelectorFound = true;
+                            console.log('✅ Summary tag selector found: ' + sel);
+                            break;
+                        } catch (e) {
+                            console.log('⚠️  Selector timeout: ' + sel);
+                        }
+                    }
+                    if (!tagSelectorFound) {
+                        console.log('⚠️  No summary tag selector matched, will try extraction anyway');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+
+                    // 提取紅框內的摘要 tag 資料（可重試幾次，等資料渲染）
+                    console.log('📊 Extracting summary tag data...');
+                    let tagData = { found: false, tags: [], error: null };
+                    const extractTags = async () => {
+                        return await page.evaluate(() => {
+                            const keywords = ['Profit', 'Unique player', 'Win/Bet amount', 'Win/Bet count'];
+                            // 先試 .ivu-col-span-24 內
+                            let tagEls = document.querySelectorAll('.ivu-col.ivu-col-span-24 .ivu-tag .ivu-tag-text, .ivu-col.ivu-col-span-24 .ivu-tag-size-large .ivu-tag-text');
+                            if (tagEls.length === 0) {
+                                tagEls = document.querySelectorAll('.ivu-tag .ivu-tag-text, .ivu-tag-size-large .ivu-tag-text, .ivu-tag-text');
+                            }
+                            const all = Array.from(tagEls).map(el => (el.textContent || el.innerText || '').trim()).filter(t => t.length > 0);
+                            const summary = all.filter(t => keywords.some(kw => t.indexOf(kw) >= 0));
+                            return summary.length > 0 ? summary : all;
+                        });
+                    };
+                    for (let retry = 0; retry < 5; retry++) {
+                        try {
+                            const tags = await extractTags();
+                            if (tags && tags.length > 0) {
+                                tagData = { found: true, tags: tags, error: null };
+                                console.log('✅ Extracted ' + tagData.tags.length + ' summary tag(s): ' + tagData.tags.join(' | '));
                                 break;
-                            } else {
-                                console.log('⚠️  Retry ' + (retry + 1) + '/15: Table not found or no data yet, waiting...');
+                            }
+                            if (retry < 4) {
+                                console.log('⚠️  No summary tags yet, retry ' + (retry + 1) + '/5 in 2s...');
+                                await new Promise(resolve => setTimeout(resolve, 2000));
                             }
                         } catch (e) {
-                            console.log('⚠️  Retry ' + (retry + 1) + '/15: Error checking table: ' + e.message);
+                            console.log('⚠️  Error extracting tag data: ' + e.message);
+                            tagData.error = e.message;
+                            break;
                         }
                     }
-
-                    // 如果表格已找到，實現無限滾動加載所有數據
-                    if (tableFound) {
-                        console.log('🔄 Starting infinite scroll to load all data...');
-                        
-                        // 獲取當前表格行數的輔助函數
-                        const getTableRowCount = async () => {
-                            return await page.evaluate(() => {
-                                // 查找 iView UI 表格
-                                const ivuTable = document.querySelector('.ivu-table, table.ivu-table, .ivu-table-body');
-                                if (ivuTable) {
-                                    const tbody = ivuTable.querySelector('tbody') || ivuTable.querySelector('.ivu-table-body tbody') || ivuTable;
-                                    if (tbody) {
-                                        const rows = tbody.querySelectorAll('tbody tr, .ivu-table-tbody tr, tr');
-                                        // 過濾掉表頭行和空行
-                                        return Array.from(rows).filter(row => {
-                                            const cells = row.querySelectorAll('td');
-                                            return cells.length > 0 && !row.querySelector('th');
-                                        }).length;
-                                    }
-                                }
-                                
-                                // 查找一般表格
-                                const table = document.querySelector('table');
-                                if (table) {
-                                    const tbody = table.querySelector('tbody');
-                                    if (tbody) {
-                                        const rows = tbody.querySelectorAll('tr');
-                                        // 過濾掉表頭行
-                                        return Array.from(rows).filter(row => {
-                                            return !row.querySelector('th') && row.querySelectorAll('td').length > 0;
-                                        }).length;
-                                    }
-                                }
-                                return 0;
-                            });
-                        };
-                        
-                        // 獲取初始行數
-                        let previousRowCount = await getTableRowCount();
-                        console.log('📊 Initial row count: ' + previousRowCount);
-                        
-                        let scrollAttempts = 0;
-                        const maxScrollAttempts = 200; // 最多滾動200次，防止無限循環
-                        let noNewDataCount = 0;
-                        const maxNoNewDataCount = 5; // 連續5次沒有新數據就停止
-                        
-                        while (scrollAttempts < maxScrollAttempts) {
-                            scrollAttempts++;
-                            console.log('⬇️  Scroll attempt ' + scrollAttempts + ' (current rows: ' + previousRowCount + ')...');
-                            
-                            // 滾動到頁面底部
-                            await page.evaluate(() => {
-                                const scrollHeight = document.body.scrollHeight || document.documentElement.scrollHeight;
-                                window.scrollTo(0, scrollHeight);
-                            });
-                            
-                            // 等待滾動完成（減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 800));
-                            
-                            // 監聽網絡請求（等待新的 API 請求完成）
-                            const scrollDataLoadedPromise = page.waitForResponse((response) => {
-                                const url = response.url();
-                                // 檢查是否是數據 API 請求
-                                const isDataRequest = response.status() === 200 && 
-                                       (url.includes('/betrecord') || 
-                                        url.includes('/record') || 
-                                        url.includes('/data') || 
-                                        url.includes('/list') ||
-                                        url.includes('/api') ||
-                                        (response.headers()['content-type'] && response.headers()['content-type'].includes('application/json')));
-                                
-                                if (isDataRequest) {
-                                    console.log('📡 API request detected: ' + url);
-                                }
-                                return isDataRequest;
-                            }, { timeout: 20000 }).catch(() => {
-                                // 如果沒有新的 API 請求，可能已經到底了
-                                return null;
-                            });
-                            
-                            // 等待 API 請求完成或超時（減少超時時間）
-                            await Promise.race([
-                                scrollDataLoadedPromise,
-                                new Promise(resolve => setTimeout(resolve, 3000)) // 如果沒有 API 請求，只等待 3 秒
-                            ]);
-                            
-                            // 等待新數據渲染到表格（減少等待時間）
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            
-                            // 再次檢查行數
-                            const newRowCount = await getTableRowCount();
-                            
-                            // 檢查是否有新數據
-                            if (newRowCount > previousRowCount) {
-                                const addedRows = newRowCount - previousRowCount;
-                                console.log('✅ New data loaded! Row count increased from ' + previousRowCount + ' to ' + newRowCount + ' (+' + addedRows + ' rows)');
-                                noNewDataCount = 0; // 重置計數器
-                                previousRowCount = newRowCount;
-                            } else {
-                                noNewDataCount++;
-                                console.log('⚠️  No new data loaded (' + noNewDataCount + '/' + maxNoNewDataCount + '). Current rows: ' + newRowCount);
-                                
-                                // 如果連續多次沒有新數據，停止滾動
-                                if (noNewDataCount >= maxNoNewDataCount) {
-                                    console.log('✅ No more data to load. Stopping scroll.');
-                                    console.log('📊 Final row count: ' + newRowCount);
-                                    break;
-                                }
-                            }
-                            
-                            // 每20次滾動顯示一次進度
-                            if (scrollAttempts % 20 === 0) {
-                                console.log('📊 Progress: ' + scrollAttempts + ' scrolls completed, ' + newRowCount + ' total rows loaded');
-                            }
-                        }
-                        
-                        if (scrollAttempts >= maxScrollAttempts) {
-                            console.log('⚠️  Reached maximum scroll attempts (' + maxScrollAttempts + '). Stopping.');
-                        }
-                        
-                        const finalRowCount = await getTableRowCount();
-                        console.log('✅ Infinite scroll completed. Final row count: ' + finalRowCount);
-                        
-                        // 等待最後一次加載完成（減少等待時間）
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        
-                        // 滾動回頂部，方便查看數據
-                        await page.evaluate(() => {
-                            window.scrollTo(0, 0);
-                        });
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                    if (!tagData.found && !tagData.error) {
+                        console.log('⚠️  No summary tags found after retries');
                     }
 
-                    // 提取表格數據
-                    console.log('📊 Extracting table data...');
-                    let tableData = { found: false, data: [], headers: [], error: null };
-                    
-                    if (tableFound) {
-                        try {
-                            tableData = await page.evaluate(() => {
-                                // 嘗試查找 iView UI 表格
-                                let table = document.querySelector('.ivu-table table, table.ivu-table, .ivu-table-body table');
-                                if (!table) {
-                                    // 如果找不到，查找任何表格
-                                    const allTables = document.querySelectorAll('table');
-                                    for (let t of allTables) {
-                                        // 優先選擇包含 tbody 且有數據行的表格
-                                        const tbody = t.querySelector('tbody');
-                                        if (tbody && tbody.querySelectorAll('tr').length > 0) {
-                                            table = t;
-                                            break;
-                                        }
-                                    }
-                                    // 如果還是找不到，使用第一個表格
-                                    if (!table && allTables.length > 0) {
-                                        table = allTables[0];
-                                    }
-                                }
-
-                                if (!table) {
-                                    return {
-                                        found: false,
-                                        error: 'No table found',
-                                        debug: {
-                                            tableCount: document.querySelectorAll('table').length,
-                                            ivuTableExists: !!document.querySelector('.ivu-table'),
-                                            bodyText: document.body ? document.body.innerText.substring(0, 200) : 'No body'
-                                        }
-                                    };
-                                }
-
-                                // 提取表頭
-                                let headers = [];
-                                const thead = table.querySelector('thead');
-                                if (thead) {
-                                    const headerRows = Array.from(thead.querySelectorAll('tr'));
-                                    if (headerRows.length > 0) {
-                                        const headerCells = headerRows[0].querySelectorAll('th, td');
-                                        headers = Array.from(headerCells).map(cell => {
-                                            // iView UI 表格的表頭可能在 span 或其他元素中
-                                            const span = cell.querySelector('span');
-                                            if (span) {
-                                                return span.textContent.trim();
-                                            }
-                                            return cell.textContent.trim();
-                                        });
-                                    }
-                                } else {
-                                    // 如果沒有 thead，嘗試從第一個 tr 提取（可能是表頭行）
-                                    const firstRow = table.querySelector('tr');
-                                    if (firstRow) {
-                                        const firstRowCells = firstRow.querySelectorAll('th, td');
-                                        // 檢查是否是表頭行（包含 th 或樣式類似表頭）
-                                        if (firstRowCells.length > 0 && (firstRowCells[0].tagName === 'TH' || firstRow.querySelector('th'))) {
-                                            headers = Array.from(firstRowCells).map(cell => {
-                                                const span = cell.querySelector('span');
-                                                if (span) {
-                                                    return span.textContent.trim();
-                                                }
-                                                return cell.textContent.trim();
-                                            });
-                                        }
-                                    }
-                                }
-
-                                // 提取數據行 - iView UI 表格可能使用不同的結構
-                                let rows = [];
-                                let dataStartIndex = 0;
-                                
-                                // 優先查找 iView UI 表格的 tbody（可能是 .ivu-table-body 或 .ivu-table-tbody）
-                                const ivuTableBody = document.querySelector('.ivu-table-body, .ivu-table-tbody');
-                                const tbody = table.querySelector('tbody') || 
-                                             (ivuTableBody ? ivuTableBody.querySelector('tbody') : null) ||
-                                             ivuTableBody;
-                                
-                                if (tbody) {
-                                    rows = Array.from(tbody.querySelectorAll('tr'));
-                                    // 如果還是沒有行，嘗試在整個 tbody 中查找（可能是虛擬滾動）
-                                    if (rows.length === 0) {
-                                        rows = Array.from(tbody.querySelectorAll('tbody tr, .ivu-table-tbody tr, tr'));
-                                    }
-                                } else {
-                                    // 嘗試查找 .ivu-table-body 中的行
-                                    const ivuBody = document.querySelector('.ivu-table-body');
-                                    if (ivuBody) {
-                                        rows = Array.from(ivuBody.querySelectorAll('tr'));
-                                    }
-                                    
-                                    // 如果還是沒有，從整個表格查找
-                                    if (rows.length === 0) {
-                                        rows = Array.from(table.querySelectorAll('tr'));
-                                        // 如果有表頭，跳過第一行
-                                        if (thead || (rows.length > 0 && rows[0].querySelectorAll('th').length > 0)) {
-                                            dataStartIndex = 1;
-                                        }
-                                    }
-                                }
-                                
-                                // 調試信息：記錄找到的行數
-                                console.log('Found ' + rows.length + ' rows in tbody, dataStartIndex: ' + dataStartIndex);
-
-                                // 將數據行轉換為對象數組
-                                const dataRows = rows.slice(dataStartIndex)
-                                    .map((row, rowIndex) => {
-                                        const cells = Array.from(row.querySelectorAll('td'));
-                                        
-                                        // 跳過表頭行（如果包含 th）
-                                        if (row.querySelector('th')) {
-                                            return null;
-                                        }
-                                        
-                                        // 如果沒有 td，跳過這一行
-                                        if (cells.length === 0) {
-                                            return null;
-                                        }
-                                        
-                                        const rowData = {};
-                                        
-                                        if (headers && headers.length > 0) {
-                                            headers.forEach((header, colIndex) => {
-                                                // 清理字段名
-                                                let cleanHeader = header
-                                                    .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-                                                    .replace(/^_+|_+$/g, '');
-                                                
-                                                if (!cleanHeader || cleanHeader === '') {
-                                                    cleanHeader = 'column_' + colIndex;
-                                                }
-                                                
-                                                // 確保字段名唯一
-                                                let finalHeader = cleanHeader;
-                                                let counter = 1;
-                                                while (rowData.hasOwnProperty(finalHeader)) {
-                                                    finalHeader = cleanHeader + '_' + counter;
-                                                    counter++;
-                                                }
-                                                
-                                                // 提取單元格內容（iView UI 可能使用 span 或其他元素）
-                                                let cellValue = null;
-                                                if (cells[colIndex]) {
-                                                    // 嘗試多種方式提取內容
-                                                    const cell = cells[colIndex];
-                                                    
-                                                    // 優先查找 .ivu-table-cell 或特定類名
-                                                    const cellContent = cell.querySelector('.ivu-table-cell, .ivu-table-cell-main, span, div');
-                                                    
-                                                    if (cellContent) {
-                                                        cellValue = cellContent.textContent.trim();
-                                                    } else {
-                                                        // 直接獲取文本內容
-                                                        cellValue = cell.textContent.trim();
-                                                    }
-                                                    
-                                                    // 如果還是空的，嘗試 innerText
-                                                    if (!cellValue) {
-                                                        cellValue = cell.innerText.trim();
-                                                    }
-                                                }
-                                                rowData[finalHeader] = cellValue;
-                                            });
-                                        } else {
-                                            // 如果沒有表頭，使用索引作為 key
-                                            cells.forEach((cell, colIndex) => {
-                                                const cellContent = cell.querySelector('.ivu-table-cell, .ivu-table-cell-main, span, div');
-                                                let cellValue = null;
-                                                if (cellContent) {
-                                                    cellValue = cellContent.textContent.trim();
-                                                } else {
-                                                    cellValue = cell ? cell.textContent.trim() : null;
-                                                }
-                                                if (!cellValue) {
-                                                    cellValue = cell ? cell.innerText.trim() : null;
-                                                }
-                                                rowData['column_' + colIndex] = cellValue;
-                                            });
-                                        }
-                                        
-                                        // 添加原始行索引
-                                        rowData._rowIndex = rowIndex;
-                                        
-                                        return rowData;
-                                    })
-                                    .filter(rowData => {
-                                        // 過濾掉 null（表頭行或空行）
-                                        if (!rowData) return false;
-                                        
-                                        // 過濾掉完全空的行
-                                        const values = Object.values(rowData).filter(v => {
-                                            if (v === null || v === undefined) return false;
-                                            if (typeof v === 'string' && v.trim() === '') return false;
-                                            if (typeof v === 'number' && v === '_rowIndex') return false; // 保留 _rowIndex
-                                            return true;
-                                        });
-                                        
-                                        // 如果只有 _rowIndex，則認為是空行
-                                        if (values.length <= 1 && rowData._rowIndex !== undefined) return false;
-                                        
-                                        // 檢查是否包含"小計"或"總計"
-                                        const firstValue = values[0];
-                                        if (typeof firstValue === 'string' && (firstValue.includes('小計') || firstValue.includes('總計'))) {
-                                            return false;
-                                        }
-                                        
-                                        return true;
-                                    });
-                                
-                                // 調試信息：記錄提取的行數
-                                console.log('Extracted ' + dataRows.length + ' data rows');
-
-                                // 如果沒有找到數據行，提供調試信息
-                                if (dataRows.length === 0) {
-                                    const debugInfo = {
-                                        tableFound: !!table,
-                                        tableTag: table ? table.tagName : null,
-                                        tableClass: table ? table.className : null,
-                                        theadFound: !!thead,
-                                        tbodyFound: !!tbody,
-                                        tbodyTag: tbody ? tbody.tagName : null,
-                                        tbodyClass: tbody ? tbody.className : null,
-                                        ivuTableBodyFound: !!ivuTableBody,
-                                        totalRowsFound: rows.length,
-                                        dataStartIndex: dataStartIndex,
-                                        firstRowHTML: rows.length > 0 ? rows[0].outerHTML.substring(0, 500) : null,
-                                        allTableBodies: Array.from(document.querySelectorAll('tbody, .ivu-table-body, .ivu-table-tbody')).map(el => ({
-                                            tag: el.tagName,
-                                            class: el.className,
-                                            rowCount: el.querySelectorAll('tr').length
-                                        }))
-                                    };
-                                    
-                                    return {
-                                        found: true,
-                                        headers: headers,
-                                        data: dataRows,
-                                        rowCount: dataRows.length,
-                                        debug: debugInfo
-                                    };
-                                }
-                                
-                                return {
-                                    found: true,
-                                    headers: headers,
-                                    data: dataRows,
-                                    rowCount: dataRows.length
-                                };
-                            });
-                            
-                            if (tableData.found) {
-                                if (tableData.rowCount > 0) {
-                                    console.log('✅ Successfully extracted ' + tableData.rowCount + ' rows from table');
-                                    console.log('📋 Table headers: ' + tableData.headers.join(', '));
-                                } else {
-                                    console.log('⚠️  Table found but no data rows extracted (rowCount: 0)');
-                                    console.log('📋 Table headers found: ' + tableData.headers.join(', '));
-                                    if (tableData.debug) {
-                                        console.log('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
-                                    }
-                                }
-                            } else {
-                                console.log('⚠️  Table data extraction failed: ' + (tableData.error || 'Unknown error'));
-                                if (tableData.debug) {
-                                    console.log('📋 Debug info:', JSON.stringify(tableData.debug, null, 2));
-                                }
-                            }
-                        } catch (e) {
-                            console.log('⚠️  Error extracting table data: ' + e.message);
-                            tableData.error = e.message;
-                        }
-                    } else {
-                        console.log('⚠️  Table not found after waiting, attempting extraction anyway...');
-                        // 即使沒找到，也嘗試提取
-                        try {
-                            tableData = await page.evaluate(() => {
-                                const allTables = document.querySelectorAll('table');
-                                return {
-                                    found: allTables.length > 0,
-                                    tableCount: allTables.length,
-                                    tableClasses: Array.from(allTables).map(t => t.className),
-                                    bodyText: document.body ? document.body.innerText.substring(0, 300) : 'No body'
-                                };
-                            });
-                        } catch (e) {
-                            console.log('⚠️  Error during fallback extraction: ' + e.message);
-                        }
-                    }
-
-                    // 返回結果
-                    const result = {
+                    // 單次模式結果
+                    result = {
                         success: true,
                         url: '$url',
                         cookies: cookies,
                         authData: authData,
-                        tableData: tableData,
-                        message: tableData.found ? 'Data extraction completed' : 'Login completed, but table data extraction failed'
+                        tagData: tagData,
+                        message: tagData.found ? 'Summary tag data extracted' : 'Login completed, but summary tag extraction failed'
                     };
+                    }
 
                     // 保存結果
                     fs.writeFileSync('scrape_result.json', JSON.stringify(result, null, 2));
@@ -1344,8 +938,10 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
     /**
      * 處理和保存爬取的資料
      * @param array $result 爬取的結果資料
+     * @param string|null $date_start 查詢開始日期（可選）
+     * @param string|null $date_end 查詢結束日期（可選）
      */
-    private function processScrapedData($result)
+    private function processScrapedData($result, $date_start = null, $date_end = null)
     {
         $this->info('4. Processing scraped data...');
 
@@ -1358,8 +954,93 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
         if (isset($result['success']) && $result['success']) {
             $this->info('✅ Scraping completed successfully!');
             $this->info('📍 URL: ' . ($result['url'] ?? 'N/A'));
+
+            // 組日期字串（Date）：若有 date_start/date_end 則為區間，否則為當日
+            $formatDate = function ($d) {
+                if (!$d) {
+                    return '';
+                }
+                return preg_match('/^\d{8}$/', $d) ? substr($d, 0, 4) . '-' . substr($d, 4, 2) . '-' . substr($d, 6, 2) : $d;
+            };
+            $start = $formatDate($date_start);
+            $end = $formatDate($date_end);
+            $dateStr = ($start && $end) ? ($start . ' ~ ' . $end) : ($start ?: $end ?: date('Y-m-d'));
+
+            // 移除千分位並格式化成小數點兩位
+            $formatValue = function ($v) {
+                $v = str_replace(',', '', trim($v));
+                if (preg_match('/^(.+)%$/u', $v, $m) && is_numeric(trim($m[1]))) {
+                    return number_format((float)trim($m[1]), 2, '.', '') . '%';
+                }
+                if (is_numeric($v)) {
+                    return number_format((float)$v, 2, '.', '');
+                }
+                return $v;
+            };
+            // 將 tag 陣列轉成物件：key 為欄位名、value 為數值（千分位已移除、小數點兩位）
+            // Profit 拆成 Profit、Profit rate；Win/Bet amount 拆成 Win amount、Bet amount；Win/Bet count 拆成 Win count、Bet count
+            $expandSummaryTags = function (array $tags) use ($formatValue) {
+                $out = [];
+                foreach ($tags as $t) {
+                    if (preg_match('/^Profit:\s*(.+?)\(([^)]+%)\)\s*$/u', $t, $m)) {
+                        $out['Total_Win_Loss'] = $formatValue(trim($m[1]));
+                    } elseif (preg_match('/^Profit:\s*(.+)$/u', $t, $m)) {
+                        $out['Total_Win_Loss'] = $formatValue(trim($m[1]));
+                    } elseif (preg_match('/^Win\/Bet amount:\s*(.+?)\s*\/\s*(.+)$/u', $t, $m)) {
+                        $out['Total_Bet_Amount'] = $formatValue(trim($m[2]));
+                    } elseif (preg_match('/^Win\/Bet count:\s*(.+?)\s*\/\s*(.+)$/u', $t, $m)) {
+                        $out['Total_Bet_Times'] = $formatValue(trim($m[2]));
+                    } elseif (preg_match('/^([^:]+):\s*(.+)$/u', $t, $m)) {
+                        $out[trim($m[1])] = $formatValue(trim($m[2]));
+                    }
+                }
+                return $out;
+            };
+
+            // 逐日模式：保存 dailyData 為一份 JSON（每天一筆 { Date, data }，data 為物件）
+            if (isset($result['dailyData']) && is_array($result['dailyData'])) {
+                $tagFileName = "scraped_data/atgslot_tag_data_{$timestamp}.json";
+                $dailyDataExpanded = array_map(function ($day) use ($expandSummaryTags) {
+                    $fields = $expandSummaryTags($day['data'] ?? []);
+                    return array_merge(['Date' => $day['Date'] ?? ''], $fields);
+                }, $result['dailyData']);
+                $tagFileData = [
+                    'Date' => $dateStr,
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'url' => $result['url'] ?? '',
+                        'dayCount' => count($result['dailyData']),
+                    ],
+                    'data' => $dailyDataExpanded,
+                ];
+                Storage::put($tagFileName, json_encode($tagFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("✅ Daily summary data saved: {$tagFileName} (" . count($result['dailyData']) . " days)");
+            }
+            // 單次查詢模式：保存紅框內的摘要資料（data 為物件）
+            elseif (isset($result['tagData']) && is_array($result['tagData']) && !empty($result['tagData']['tags'])) {
+                $tagData = $result['tagData'];
+                $dataObj = $expandSummaryTags($tagData['tags'] ?? []);
+                $tagFileName = "scraped_data/atgslot_tag_data_{$timestamp}.json";
+                $tagFileData = [
+                    'Date' => $dateStr,
+                    'metadata' => [
+                        'timestamp' => $timestamp,
+                        'url' => $result['url'] ?? '',
+                    ],
+                    'data' => $dataObj,
+                ];
+                Storage::put($tagFileName, json_encode($tagFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $this->info("✅ Summary tag data saved: {$tagFileName}");
+                foreach ($dataObj as $key => $value) {
+                    $this->line("   {$key}: {$value}");
+                }
+            } elseif (isset($result['tagData']['error'])) {
+                $this->warn('⚠️  Summary tag extraction failed: ' . $result['tagData']['error']);
+            } else {
+                $this->warn('⚠️  No summary tag data in result');
+            }
             
-            // 如果有表格數據，保存表格數據到單獨的文件
+            // 若有表格數據也可保存（此腳本已改為只爬 tag，不爬 table）
             if (isset($result['tableData']) && is_array($result['tableData'])) {
                 $tableData = $result['tableData'];
                 
@@ -1428,6 +1109,7 @@ class ScrapeBrowserAtgslotDOMDetail extends Command
             '07_after_confirm_button_clicked.png',
             '08_login_completed_final_page.png',
             '10_after_search_clicked.png',
+            'daily_*.png',  // 逐日模式：每天的查詢結果截圖
         ];
         
         // 截圖直接保存在 scraped_data 資料夾，與數據文件同級（不使用子資料夾）
