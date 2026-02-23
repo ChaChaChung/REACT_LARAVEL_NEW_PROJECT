@@ -349,7 +349,7 @@ trait HasAgentAuth
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateBngPuppeteerCookiesCode(string $pageVar = 'page', ?string $domainOverride = null): string
+    protected function generateBngPuppeteerCookiesCode(string $pageVar = 'page'): string
     {
         $token = env('BNG_AGENT_TOKEN', '');
         $lang = env('BNG_AGENT_LANG', 'zh-TW');
