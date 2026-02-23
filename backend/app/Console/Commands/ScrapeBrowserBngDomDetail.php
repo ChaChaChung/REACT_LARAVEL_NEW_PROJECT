@@ -17,15 +17,15 @@ class ScrapeBrowserBngDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-bng-dom-detail {url}
+     * 執行方式：php artisan agent:scrape-bng-dom-detail {url} {date_start?} {date_end?}
      */
-    protected $signature = 'agent:scrape-bng-dom-detail {url}';
+    protected $signature = 'agent:scrape-bng-dom-detail {url} {date_start?} {date_end?}';
 
     /**
      * 命令描述
      * @var string
      */
-    protected $description = 'BNG: Set session/language cookies (login) then navigate to url';
+    protected $description = 'BNG: Login, navigate, open date picker (optional date_start/date_end), screenshot';
 
     /**
      * 執行命令的主要處理方法
@@ -34,11 +34,15 @@ class ScrapeBrowserBngDomDetail extends Command
     public function handle()
     {
         $url = $this->argument('url');
+        $dateStart = $this->argument('date_start');
+        $dateEnd = $this->argument('date_end');
         $domain = env('BNG_AGENT_DOMAIN', '');
 
         $this->info('=== BNG Browser Login & Navigate ===');
         $this->info("Login Domain: " . ($domain ?: '(derive from url)'));
         $this->info("Target URL: {$url}");
+        $this->info("Date Start: " . ($dateStart ?: '—'));
+        $this->info("Date End: " . ($dateEnd ?: '—'));
         $this->info('Start time: ' . date('Y-m-d H:i:s'));
 
         if (empty($url)) {
@@ -50,7 +54,7 @@ class ScrapeBrowserBngDomDetail extends Command
             return 1;
         }
 
-        $scriptPath = $this->createPuppeteerScript($url, $domain);
+        $scriptPath = $this->createPuppeteerScript($url, $domain, $dateStart, $dateEnd);
         $result = $this->runPuppeteerScript($scriptPath);
 
         if ($result && !empty($result['success'])) {
@@ -92,9 +96,9 @@ class ScrapeBrowserBngDomDetail extends Command
     }
 
     /**
-     * 創建 Puppeteer 腳本：先進入 domain 設定 cookie（登入），再跳轉到 url
+     * 創建 Puppeteer 腳本：先進入 domain 設定 cookie（登入），再跳轉到 url，若有 date_start/date_end 則點開 date picker 後截圖
      */
-    private function createPuppeteerScript(string $url, string $domain): string
+    private function createPuppeteerScript(string $url, string $domain, ?string $dateStart = null, ?string $dateEnd = null): string
     {
         $this->info('2. Creating browser automation script...');
 
@@ -109,6 +113,8 @@ class ScrapeBrowserBngDomDetail extends Command
 
         $urlJs = json_encode($url);
         $domainJs = json_encode($domain);
+        $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
+        $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         $cookiesCode = $this->generateBngPuppeteerCookiesCode('page', $domainForCookies !== '' ? $domainForCookies : null);
 
         $script = <<<JS
@@ -118,6 +124,8 @@ class ScrapeBrowserBngDomDetail extends Command
 
             const targetUrl = $urlJs;
             const configDomain = $domainJs;
+            const dateStart = $dateStartJs;
+            const dateEnd = $dateEndJs;
 
             async function run() {
                 console.log('🚀 BNG: Starting login and navigate...');
@@ -179,6 +187,87 @@ class ScrapeBrowserBngDomDetail extends Command
 
                     const finalUrl = page.url();
                     console.log('✅ Reached URL:', finalUrl);
+
+                    // 若有帶 date_start 或 date_end：點開 date picker → 在日曆上點選日期 → Apply
+                    const openPickerSelector = 'input.form-control.input-sm.app-date-picker, input.app-date-picker';
+                    const startInputSelector = 'div.range.start .datepicker input, div.range.start input[name="_date"]';
+                    const endInputSelector = 'div.range.end .datepicker input, div.range.end input[name="_date"]';
+                    const hasDates = (dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null');
+                    if (hasDates) {
+                        try {
+                            await page.waitForSelector(openPickerSelector, { timeout: 10000 }).catch(() => null);
+                            const openPickerInput = await page.$(openPickerSelector);
+                            if (openPickerInput) {
+                                await openPickerInput.click();
+                                console.log('📅 Opened date picker');
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                            }
+
+                            const parseDate = (dateStr) => {
+                                const [y, m, d] = dateStr.split('-').map(Number);
+                                return { year: y, month: m, day: d };
+                            };
+
+                            // 依 td 的 debug 屬性點選日期（debug="2026-02-01T00:00:00Z"），排除 .off
+                            const clickDateByDebug = async (dateStr) => {
+                                const debugPrefix = dateStr + 'T';
+                                const clicked = await page.evaluate((prefix) => {
+                                    const calendars = document.querySelectorAll('div.calendar');
+                                    for (const cal of calendars) {
+                                        const tds = cal.querySelectorAll('tbody td:not(.off)');
+                                        for (const td of tds) {
+                                            const debug = td.getAttribute('debug');
+                                            if (debug && debug.indexOf(prefix) === 0) {
+                                                td.click();
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                    return false;
+                                }, debugPrefix);
+                                return clicked;
+                            };
+
+                            if (dateStart && dateStart !== 'null') {
+                                const startEl = await page.$(startInputSelector);
+                                if (startEl) {
+                                    await startEl.click();
+                                    await new Promise(resolve => setTimeout(resolve, 400));
+                                }
+                                const ok = await clickDateByDebug(dateStart);
+                                if (ok) console.log('📅 Clicked start date:', dateStart);
+                                else console.log('⚠️  Could not click start date (debug)');
+                                await new Promise(resolve => setTimeout(resolve, 400));
+                            }
+
+                            if (dateEnd && dateEnd !== 'null') {
+                                const endEl = await page.$(endInputSelector);
+                                if (endEl) {
+                                    await endEl.click();
+                                    await new Promise(resolve => setTimeout(resolve, 400));
+                                }
+                                const ok = await clickDateByDebug(dateEnd);
+                                if (ok) console.log('📅 Clicked end date:', dateEnd);
+                                else console.log('⚠️  Could not click end date (debug)');
+                                await new Promise(resolve => setTimeout(resolve, 400));
+                            }
+
+                            const applyBtn = await page.$('div.apply-btn');
+                            if (applyBtn) {
+                                await applyBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                                await applyBtn.click();
+                                console.log('📅 Clicked Apply');
+                                await new Promise(resolve => setTimeout(resolve, 1200));
+                            } else {
+                                console.log('⚠️  Apply button (div.apply-btn) not found');
+                            }
+
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } catch (pickerErr) {
+                            console.log('⚠️  Date picker step: ' + pickerErr.message);
+                        }
+                    }
 
                     const workingDir = require('path').dirname(process.argv[1]);
                     const screenshotFilename = 'bng_scraped_page.png';
