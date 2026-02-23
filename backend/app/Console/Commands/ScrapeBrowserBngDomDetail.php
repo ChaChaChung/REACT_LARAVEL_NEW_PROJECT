@@ -324,7 +324,8 @@ class ScrapeBrowserBngDomDetail extends Command
                         const data = dataRows.map(row => {
                             const obj = {};
                             keyList.forEach((k, idx) => {
-                                obj[k] = row[idx] !== undefined ? row[idx] : '';
+                                const val = row[idx] !== undefined ? row[idx] : '';
+                                obj[k] = String(val).trim().replace(/\s/g, '');
                             });
                             return obj;
                         });
@@ -510,23 +511,30 @@ class ScrapeBrowserBngDomDetail extends Command
         }
 
         $headers = $tableData['headers'] ?? [];
+        $keys = $tableData['keys'] ?? $headers;
         $allData = $tableData['data'] ?? [];
+        // 去除每筆資料每個值的前後空白，以及值內所有空白（含千分位空格）
+        $allData = array_map(function ($row) {
+            if (!is_array($row)) {
+                return $row;
+            }
+            return array_map(function ($v) {
+                if (!is_string($v)) {
+                    return $v;
+                }
+                return preg_replace('/\s+/u', '', trim($v));
+            }, $row);
+        }, $allData);
         $totalRows = count($allData);
 
         $this->info('📋 Table rows: ' . $totalRows);
 
-        $headers = $tableData['headers'] ?? [];
-        $allData = $tableData['data'] ?? [];
-        $totalRows = count($allData);
-
-        $this->info('📋 Table rows: ' . $totalRows);
-
-        // Console 預覽：data 為 key-value 陣列，依 headers 順序轉成表格列
+        // Console 預覽：data 為 key-value 陣列，依 keys 順序轉成表格列
         $headerRow = $headers;
         $dataPreview = array_slice($allData, 0, 10);
-        $previewAsRows = array_map(function ($row) use ($headers) {
+        $previewAsRows = array_map(function ($row) use ($keys) {
             if (is_array($row) && !array_is_list($row)) {
-                return array_map(fn ($k) => $row[$k] ?? '', $headers);
+                return array_map(fn ($k) => $row[$k] ?? '', $keys);
             }
             return is_array($row) ? $row : [];
         }, $dataPreview);
@@ -550,6 +558,7 @@ class ScrapeBrowserBngDomDetail extends Command
                 'totalRows' => $totalRows,
             ],
             'headers' => $headers,
+            'keys' => $keys,
             'headerCount' => count($headers),
             'rowCount' => $totalRows,
             'data' => $allData,
@@ -558,25 +567,6 @@ class ScrapeBrowserBngDomDetail extends Command
         $mergedFileName = "scraped_data/bng_scraped_data_{$timestamp}.json";
         Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->info("📊 Table data saved: storage/app/{$mergedFileName} ({$totalRows} rows)");
-
-        // 額外存一份 CSV 方便檢視（依 headers 順序輸出）
-        $csvPath = "{$dstDir}/bng_scraped_data_{$timestamp}.csv";
-        $fp = fopen($csvPath, 'w');
-        if ($fp) {
-            if (!empty($headers)) {
-                fputcsv($fp, $headers);
-            }
-            foreach ($allData as $row) {
-                if (is_array($row) && !array_is_list($row)) {
-                    $ordered = array_map(fn ($k) => $row[$k] ?? '', $headers);
-                    fputcsv($fp, $ordered);
-                } else {
-                    fputcsv($fp, is_array($row) ? $row : []);
-                }
-            }
-            fclose($fp);
-            $this->info("📄 Table CSV: {$csvPath}");
-        }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info('✅ BNG scraping completed!');
