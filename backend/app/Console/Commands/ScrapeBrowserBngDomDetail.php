@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Console\Commands\Traits\HasAgentAuth;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Process;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * BNG 瀏覽器登入並跳轉命令
@@ -60,6 +61,7 @@ class ScrapeBrowserBngDomDetail extends Command
         if ($result && !empty($result['success'])) {
             $this->info('✅ Login and navigation completed.');
             $this->processScreenshot($result);
+            $this->processTableData($result);
             return 0;
         }
 
@@ -280,6 +282,67 @@ class ScrapeBrowserBngDomDetail extends Command
                         }
                     }
 
+                    // 抓取 table.table.table-condensed.table-hover.table-striped 的資料（格式與 FG/Atgslot 一致：found, headers, data）
+                    const tableData = await page.evaluate(() => {
+                        const selector = 'table.table.table-condensed.table-hover.table-striped';
+                        const table = document.querySelector(selector);
+                        if (!table) return { found: false, error: 'Table not found' };
+                        const thead = table.querySelector('thead');
+                        let headers = [];
+                        let dataRows = [];
+                        if (thead) {
+                            const headerCells = thead.querySelectorAll('tr th, tr td');
+                            headers = Array.from(headerCells).map(c => (c.textContent || '').trim());
+                        }
+                        const tbody = table.querySelector('tbody');
+                        const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
+                        for (let i = 0; i < trs.length; i++) {
+                            const tr = trs[i];
+                            const ths = tr.querySelectorAll('th');
+                            const tds = tr.querySelectorAll('td');
+                            const cells = (ths.length ? ths : tds);
+                            const row = Array.from(cells).map(c => (c.textContent || '').trim());
+                            if (row.length === 0) continue;
+                            if (!thead && i === 0) {
+                                headers = row;
+                                continue;
+                            }
+                            dataRows.push(row);
+                        }
+                        // 將每列陣列轉成以 headers 為 key 的物件（重複表頭時自動加 _1, _2）
+                        const makeKey = (h, idx) => {
+                            const s = (h || '').trim();
+                            return s ? s.replace(/\s+/g, '_') : ('column_' + idx);
+                        };
+                        const keyList = [];
+                        const seen = {};
+                        headers.forEach((h, idx) => {
+                            let k = makeKey(h, idx);
+                            if (seen[k]) { seen[k]++; k = k + '_' + seen[k]; } else { seen[k] = 1; }
+                            keyList.push(k);
+                        });
+                        const data = dataRows.map(row => {
+                            const obj = {};
+                            keyList.forEach((k, idx) => {
+                                obj[k] = row[idx] !== undefined ? row[idx] : '';
+                            });
+                            return obj;
+                        });
+                        return {
+                            found: true,
+                            headers: headers,
+                            rowCount: data.length,
+                            data: data
+                        };
+                    });
+                    if (tableData && tableData.found && tableData.data && tableData.data.length > 0) {
+                        console.log('📋 Table rows scraped: ' + tableData.rowCount);
+                    } else if (tableData && !tableData.found) {
+                        console.log('⚠️  Table (table.table-condensed.table-hover.table-striped) not found');
+                    } else {
+                        console.log('⚠️  Table found but no data rows');
+                    }
+
                     const workingDir = require('path').dirname(process.argv[1]);
                     const screenshotFilename = 'bng_scraped_page.png';
                     const screenshotPath = path.join(workingDir, screenshotFilename);
@@ -291,12 +354,26 @@ class ScrapeBrowserBngDomDetail extends Command
                     }
 
                     const resultPath = path.join(workingDir, 'scraped_result.json');
-                    fs.writeFileSync(resultPath, JSON.stringify({
+                    const pageInfo = { title: (await page.title()).trim(), url: finalUrl };
+                    const queryParams = { date_start: dateStart || null, date_end: dateEnd || null };
+                    const result = {
                         success: true,
                         url: finalUrl,
                         screenshotPath: screenshotFilename,
+                        date_start: dateStart || null,
+                        date_end: dateEnd || null,
+                        queryParams: queryParams,
+                        domData: {
+                            pageInfo: pageInfo,
+                            queryParams: queryParams,
+                            totalPages: 1,
+                            pages: [],
+                            tables: [tableData]
+                        },
+                        tableData: tableData,
                         timestamp: new Date().toISOString()
-                    }, null, 2));
+                    };
+                    fs.writeFileSync(resultPath, JSON.stringify(result, null, 2));
                     console.log('💾 Result written to scraped_result.json');
                 } catch (error) {
                     console.error('❌ Error:', error.message);
@@ -350,15 +427,24 @@ class ScrapeBrowserBngDomDetail extends Command
 
         $resultFile = $workingDir . '/scraped_result.json';
         if (file_exists($resultFile)) {
+            $this->info("📄 Result file: " . realpath($resultFile));
             $content = file_get_contents($resultFile);
-            return json_decode($content, true);
+            $data = json_decode($content, true);
+            $copyPath = storage_path('app/scraped_data/scraped_result_' . date('Y-m-d_H-i-s') . '.json');
+            $copyDir = dirname($copyPath);
+            if (!is_dir($copyDir)) {
+                mkdir($copyDir, 0755, true);
+            }
+            copy($resultFile, $copyPath);
+            $this->info("📋 Copy saved to: {$copyPath}");
+            return $data;
         }
         $this->error("❌ No result file found");
         return null;
     }
 
     /**
-     * 將截圖從 temp 移到 scraped_data 並輸出路徑
+     * 將截圖從 temp 移到 scraped_data 並輸出路徑（與 SwinDOMDetail 一致：時間戳 Y-m-d_H-i-s）
      */
     private function processScreenshot(array $result): void
     {
@@ -374,7 +460,7 @@ class ScrapeBrowserBngDomDetail extends Command
             return;
         }
 
-        $timestamp = date('Ymd_His');
+        $timestamp = date('Y-m-d_H-i-s');
         $dstDir = storage_path('app/scraped_data');
         if (!is_dir($dstDir)) {
             mkdir($dstDir, 0755, true);
@@ -385,5 +471,114 @@ class ScrapeBrowserBngDomDetail extends Command
         } else {
             $this->warn("⚠️  Could not move screenshot to {$dst}");
         }
+    }
+
+    /**
+     * 處理並儲存表格資料（與 SwinDOMDetail 一致：從 domData.tables 或 tableData 讀取，metadata + headers + data）
+     */
+    private function processTableData(array $result): void
+    {
+        $this->info('4. Processing scraped data...');
+
+        $timestamp = date('Y-m-d_H-i-s');
+        $dstDir = storage_path('app/scraped_data');
+        if (!is_dir($dstDir)) {
+            mkdir($dstDir, 0755, true);
+        }
+
+        // 表格資料來源：與 Swin 一致，優先 domData.tables，否則 tableData
+        $tableData = null;
+        $domData = $result['domData'] ?? [];
+        if (!empty($domData['tables']) && is_array($domData['tables'])) {
+            $firstTable = $domData['tables'][0] ?? null;
+            if ($firstTable && is_array($firstTable)) {
+                $tableData = $firstTable;
+            }
+        }
+        if ($tableData === null) {
+            $tableData = $result['tableData'] ?? null;
+        }
+
+        if ($tableData === null || !is_array($tableData)) {
+            $this->warn('⚠️  No table data in result.');
+            return;
+        }
+
+        if (!($tableData['found'] ?? false) || !isset($tableData['data'])) {
+            $this->warn('⚠️  Table not found or empty: ' . ($tableData['error'] ?? 'no data'));
+            return;
+        }
+
+        $headers = $tableData['headers'] ?? [];
+        $allData = $tableData['data'] ?? [];
+        $totalRows = count($allData);
+
+        $this->info('📋 Table rows: ' . $totalRows);
+
+        $headers = $tableData['headers'] ?? [];
+        $allData = $tableData['data'] ?? [];
+        $totalRows = count($allData);
+
+        $this->info('📋 Table rows: ' . $totalRows);
+
+        // Console 預覽：data 為 key-value 陣列，依 headers 順序轉成表格列
+        $headerRow = $headers;
+        $dataPreview = array_slice($allData, 0, 10);
+        $previewAsRows = array_map(function ($row) use ($headers) {
+            if (is_array($row) && !array_is_list($row)) {
+                return array_map(fn ($k) => $row[$k] ?? '', $headers);
+            }
+            return is_array($row) ? $row : [];
+        }, $dataPreview);
+        if (!empty($headerRow) || !empty($previewAsRows)) {
+            $this->table($headerRow ?: $headers, $previewAsRows);
+        }
+        if ($totalRows > 10) {
+            $this->line('... and ' . ($totalRows - 10) . ' more rows.');
+        }
+
+        $queryParams = $result['queryParams'] ?? array_filter([
+            'date_start' => $result['date_start'] ?? $this->argument('date_start'),
+            'date_end' => $result['date_end'] ?? $this->argument('date_end'),
+        ]);
+        $mergedData = [
+            'metadata' => [
+                'timestamp' => $timestamp,
+                'url' => $result['url'] ?? '',
+                'queryParams' => $queryParams,
+                'totalPages' => $domData['totalPages'] ?? 1,
+                'totalRows' => $totalRows,
+            ],
+            'headers' => $headers,
+            'headerCount' => count($headers),
+            'rowCount' => $totalRows,
+            'data' => $allData,
+        ];
+
+        $mergedFileName = "scraped_data/bng_scraped_data_{$timestamp}.json";
+        Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $this->info("📊 Table data saved: storage/app/{$mergedFileName} ({$totalRows} rows)");
+
+        // 額外存一份 CSV 方便檢視（依 headers 順序輸出）
+        $csvPath = "{$dstDir}/bng_scraped_data_{$timestamp}.csv";
+        $fp = fopen($csvPath, 'w');
+        if ($fp) {
+            if (!empty($headers)) {
+                fputcsv($fp, $headers);
+            }
+            foreach ($allData as $row) {
+                if (is_array($row) && !array_is_list($row)) {
+                    $ordered = array_map(fn ($k) => $row[$k] ?? '', $headers);
+                    fputcsv($fp, $ordered);
+                } else {
+                    fputcsv($fp, is_array($row) ? $row : []);
+                }
+            }
+            fclose($fp);
+            $this->info("📄 Table CSV: {$csvPath}");
+        }
+
+        $this->info('End of command at: ' . date('Y-m-d H:i:s'));
+        $this->info('✅ BNG scraping completed!');
     }
 }
