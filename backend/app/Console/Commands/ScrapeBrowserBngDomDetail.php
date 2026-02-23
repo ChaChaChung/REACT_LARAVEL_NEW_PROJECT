@@ -282,63 +282,145 @@ class ScrapeBrowserBngDomDetail extends Command
                         }
                     }
 
-                    // 抓取 table.table.table-condensed.table-hover.table-striped 的資料（格式與 FG/Atgslot 一致：found, headers, data）
-                    const tableData = await page.evaluate(() => {
-                        const selector = 'table.table.table-condensed.table-hover.table-striped';
-                        const table = document.querySelector(selector);
-                        if (!table) return { found: false, error: 'Table not found' };
-                        const thead = table.querySelector('thead');
-                        let headers = [];
-                        let dataRows = [];
-                        if (thead) {
-                            const headerCells = thead.querySelectorAll('tr th, tr td');
-                            headers = Array.from(headerCells).map(c => (c.textContent || '').trim());
-                        }
-                        const tbody = table.querySelector('tbody');
-                        const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
-                        for (let i = 0; i < trs.length; i++) {
-                            const tr = trs[i];
-                            const ths = tr.querySelectorAll('th');
-                            const tds = tr.querySelectorAll('td');
-                            const cells = (ths.length ? ths : tds);
-                            const row = Array.from(cells).map(c => (c.textContent || '').trim());
-                            if (row.length === 0) continue;
-                            if (!thead && i === 0) {
-                                headers = row;
-                                continue;
+                    // ── 翻頁爬取：抓完當前頁後自動點 >> 直到沒有下一頁 ──
+                    const scrapeCurrentPage = async () => {
+                        return await page.evaluate(() => {
+                            const selector = 'table.table.table-condensed.table-hover.table-striped';
+                            const table = document.querySelector(selector);
+                            if (!table) return { found: false, error: 'Table not found' };
+                            const thead = table.querySelector('thead');
+                            let headers = [];
+                            let dataRows = [];
+                            if (thead) {
+                                const headerCells = thead.querySelectorAll('tr th, tr td');
+                                headers = Array.from(headerCells).map(c => (c.textContent || '').trim());
                             }
-                            dataRows.push(row);
-                        }
-                        // 將每列陣列轉成以 headers 為 key 的物件（重複表頭時自動加 _1, _2）
-                        const makeKey = (h, idx) => {
-                            const s = (h || '').trim();
-                            return s ? s.replace(/\s+/g, '_') : ('column_' + idx);
-                        };
-                        const keyList = [];
-                        const seen = {};
-                        headers.forEach((h, idx) => {
-                            let k = makeKey(h, idx);
-                            if (seen[k]) { seen[k]++; k = k + '_' + seen[k]; } else { seen[k] = 1; }
-                            keyList.push(k);
-                        });
-                        const data = dataRows.map(row => {
-                            const obj = {};
-                            keyList.forEach((k, idx) => {
-                                const val = row[idx] !== undefined ? row[idx] : '';
-                                obj[k] = String(val).trim().replace(/\s/g, '');
+                            const tbody = table.querySelector('tbody');
+                            const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
+                            for (let i = 0; i < trs.length; i++) {
+                                const tr = trs[i];
+                                const ths = tr.querySelectorAll('th');
+                                const tds = tr.querySelectorAll('td');
+                                const cells = (ths.length ? ths : tds);
+                                const row = Array.from(cells).map(c => (c.textContent || '').trim());
+                                if (row.length === 0) continue;
+                                if (!thead && i === 0) { headers = row; continue; }
+                                dataRows.push(row);
+                            }
+                            const makeKey = (h, idx) => {
+                                const s = (h || '').trim();
+                                return s ? s.replace(/\s+/g, '_') : ('column_' + idx);
+                            };
+                            const keyList = [];
+                            const seen = {};
+                            headers.forEach((h, idx) => {
+                                let k = makeKey(h, idx);
+                                if (seen[k]) { seen[k]++; k = k + '_' + seen[k]; } else { seen[k] = 1; }
+                                keyList.push(k);
                             });
-                            return obj;
+                            const data = dataRows.map(row => {
+                                const obj = {};
+                                keyList.forEach((k, idx) => {
+                                    const val = row[idx] !== undefined ? row[idx] : '';
+                                    obj[k] = String(val).trim().replace(/\s/g, '');
+                                });
+                                return obj;
+                            });
+                            return { found: true, headers: headers, keyList: keyList, data: data };
                         });
-                        return {
-                            found: true,
-                            headers: headers,
-                            rowCount: data.length,
-                            data: data
-                        };
-                    });
-                    if (tableData && tableData.found && tableData.data && tableData.data.length > 0) {
-                        console.log('📋 Table rows scraped: ' + tableData.rowCount);
-                    } else if (tableData && !tableData.found) {
+                    };
+
+                    // 取得目前 active 頁碼（用於等待換頁完成）
+                    const getActivePage = async () => {
+                        return await page.evaluate(() => {
+                            const el = document.querySelector('ul.pagination li.active a');
+                            return el ? el.textContent.trim() : null;
+                        });
+                    };
+
+                    // 判斷是否還有「>>」可點（li.mg-available 內含 >> 的 <a>）
+                    const hasNextPage = async () => {
+                        return await page.evaluate(() => {
+                            const items = document.querySelectorAll('ul.pagination li.mg-available a');
+                            for (const a of items) {
+                                if (a.textContent.trim() === '>>') return true;
+                            }
+                            return false;
+                        });
+                    };
+
+                    // 點擊下一頁並等待 active 頁碼改變
+                    const clickNextPage = async (currentActivePage) => {
+                        const clicked = await page.evaluate(() => {
+                            const items = document.querySelectorAll('ul.pagination li.mg-available a');
+                            for (const a of items) {
+                                if (a.textContent.trim() === '>>') {
+                                    a.click();
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                        if (!clicked) return false;
+                        // 等待 active 頁碼變化（最多 10 秒）
+                        const deadline = Date.now() + 10000;
+                        while (Date.now() < deadline) {
+                            await new Promise(r => setTimeout(r, 500));
+                            const newPage = await getActivePage();
+                            if (newPage !== null && newPage !== currentActivePage) {
+                                return true;
+                            }
+                        }
+                        console.log('⚠️  Page did not change after clicking >>');
+                        return false;
+                    };
+
+                    // ── 主翻頁迴圈 ──
+                    let allHeaders = [];
+                    let allKeyList = [];
+                    let allData = [];
+                    let totalPages = 0;
+
+                    while (true) {
+                        totalPages++;
+                        console.log('📄 Scraping page ' + totalPages + '...');
+                        const pageResult = await scrapeCurrentPage();
+
+                        if (!pageResult || !pageResult.found) {
+                            console.log('⚠️  Table not found on page ' + totalPages + ': ' + (pageResult && pageResult.error || ''));
+                            break;
+                        }
+
+                        if (allHeaders.length === 0) {
+                            allHeaders = pageResult.headers;
+                            allKeyList = pageResult.keyList;
+                        }
+                        allData = allData.concat(pageResult.data);
+                        console.log('📋 Page ' + totalPages + ' rows: ' + pageResult.data.length + ' (total so far: ' + allData.length + ')');
+
+                        const hasNext = await hasNextPage();
+                        if (!hasNext) {
+                            console.log('✅ No more pages (>> not found). Done at page ' + totalPages);
+                            break;
+                        }
+
+                        const currentActivePage = await getActivePage();
+                        const moved = await clickNextPage(currentActivePage);
+                        if (!moved) {
+                            console.log('⚠️  Could not navigate to next page. Stopping.');
+                            break;
+                        }
+                        // 等待表格重新渲染
+                        await new Promise(r => setTimeout(r, 800));
+                    }
+
+                    const tableData = allHeaders.length > 0
+                        ? { found: true, headers: allHeaders, keys: allKeyList, rowCount: allData.length, data: allData }
+                        : { found: false, error: 'Table not found' };
+
+                    if (tableData.found && tableData.data.length > 0) {
+                        console.log('📋 Total table rows scraped: ' + tableData.rowCount + ' (across ' + totalPages + ' pages)');
+                    } else if (!tableData.found) {
                         console.log('⚠️  Table (table.table-condensed.table-hover.table-striped) not found');
                     } else {
                         console.log('⚠️  Table found but no data rows');
@@ -367,7 +449,7 @@ class ScrapeBrowserBngDomDetail extends Command
                         domData: {
                             pageInfo: pageInfo,
                             queryParams: queryParams,
-                            totalPages: 1,
+                            totalPages: totalPages,
                             pages: [],
                             tables: [tableData]
                         },
@@ -525,9 +607,65 @@ class ScrapeBrowserBngDomDetail extends Command
                 return preg_replace('/\s+/u', '', trim($v));
             }, $row);
         }, $allData);
-        $totalRows = count($allData);
 
-        $this->info('📋 Table rows: ' . $totalRows);
+        // ── 依 Player 加總數值欄位，並移除 Game 欄位 ──
+        // 找出 Player key（對應 header 含 "Player" 的欄位，不分大小寫）
+        $playerKey = null;
+        foreach ($keys as $k) {
+            if (stripos($k, 'player') !== false) {
+                $playerKey = $k;
+                break;
+            }
+        }
+
+        // 找出 Game key（對應 header 含 "Game" 的欄位，不分大小寫）
+        $gameKey = null;
+        foreach ($keys as $k) {
+            if (stripos($k, 'game') !== false) {
+                $gameKey = $k;
+                break;
+            }
+        }
+
+        if ($playerKey !== null) {
+            $grouped = [];
+            foreach ($allData as $row) {
+                if (!is_array($row)) continue;
+                $player = $row[$playerKey] ?? '';
+                if (!isset($grouped[$player])) {
+                    $grouped[$player] = $row;
+                } else {
+                    // 數值欄位加總，非數值保留原值
+                    foreach ($row as $k => $v) {
+                        if ($k === $playerKey) continue;
+                        $existing = $grouped[$player][$k] ?? '';
+                        // 判斷是否為數字（允許負號與小數）
+                        if (is_numeric(str_replace(',', '', (string)$existing)) && is_numeric(str_replace(',', '', (string)$v))) {
+                            $grouped[$player][$k] = (string)((float)str_replace(',', '', (string)$existing) + (float)str_replace(',', '', (string)$v));
+                        }
+                    }
+                }
+            }
+            $allData = array_values($grouped);
+        }
+
+        // 移除 Game 欄位（從 headers、keys、data 全部剔除）
+        if ($gameKey !== null) {
+            $gameHeaderIdx = array_search($gameKey, $keys);
+            if ($gameHeaderIdx !== false) {
+                array_splice($headers, $gameHeaderIdx, 1);
+                array_splice($keys, $gameHeaderIdx, 1);
+            }
+            $allData = array_map(function ($row) use ($gameKey) {
+                if (is_array($row)) {
+                    unset($row[$gameKey]);
+                }
+                return $row;
+            }, $allData);
+        }
+
+        $totalRows = count($allData);
+        $this->info('📋 Table rows (after grouping by Player): ' . $totalRows);
 
         // Console 預覽：data 為 key-value 陣列，依 keys 順序轉成表格列
         $headerRow = $headers;
@@ -558,7 +696,6 @@ class ScrapeBrowserBngDomDetail extends Command
                 'totalRows' => $totalRows,
             ],
             'headers' => $headers,
-            'keys' => $keys,
             'headerCount' => count($headers),
             'rowCount' => $totalRows,
             'data' => $allData,
