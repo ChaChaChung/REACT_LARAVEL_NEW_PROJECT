@@ -346,17 +346,16 @@ trait HasAgentAuth
 
     /**
      * 生成 BNG Puppeteer cookies 設定程式碼片段
-     * BNG_AGENT_TOKEN → session, BNG_AGENT_LANG → language（登入用）
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
-     * @param string|null $domainOverride 若提供則用此 domain 設定 cookie（可從目標 url 推導，解決 BNG_AGENT_DOMAIN 為空時不設 cookie 的問題）
      * @return string 返回 JavaScript 程式碼片段
      */
     protected function generateBngPuppeteerCookiesCode(string $pageVar = 'page', ?string $domainOverride = null): string
     {
         $token = env('BNG_AGENT_TOKEN', '');
         $lang = env('BNG_AGENT_LANG', 'zh-TW');
-        $domainRaw = $domainOverride !== null ? $domainOverride : env('BNG_AGENT_DOMAIN', '');
+        $domainRaw = env('BNG_AGENT_DOMAIN', '');
 
+        // BNG_AGENT_DOMAIN 可能是完整網址，取 host 作為 cookie domain
         $domain = $domainRaw;
         if ($domainRaw && preg_match('#^https?://#i', $domainRaw)) {
             $parsed = parse_url($domainRaw);
@@ -374,9 +373,8 @@ trait HasAgentAuth
             const bngDomain = {$domainJs};
             if (bngDomain && bngDomain !== '') {
                 const path = '/';
-                const useSecure = typeof targetUrl !== 'undefined' && targetUrl.startsWith('https');
-                if ({$tokenJs}) cookies.push({ name: 'session', value: {$tokenJs}, domain: bngDomain, path, secure: useSecure, sameSite: 'Lax' });
-                if ({$langJs}) cookies.push({ name: 'language', value: {$langJs}, domain: bngDomain, path, secure: useSecure, sameSite: 'Lax' });
+                if ({$tokenJs}) cookies.push({ name: 'session', value: {$tokenJs}, domain: bngDomain, path });
+                if ({$langJs}) cookies.push({ name: 'language', value: {$langJs}, domain: bngDomain, path });
             }
 
             if (cookies.length > 0) {

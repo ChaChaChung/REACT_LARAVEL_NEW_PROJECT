@@ -263,6 +263,17 @@ class ScrapeBrowserBngDomDetail extends Command
                                 console.log('⚠️  Apply button (div.apply-btn) not found');
                             }
 
+                            const submitBtn = await page.$('div.btn.btn-default.submit-btn');
+                            if (submitBtn) {
+                                await submitBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                                await submitBtn.click();
+                                console.log('📅 Clicked 搜尋 (submit)');
+                                await new Promise(resolve => setTimeout(resolve, 1500));
+                            } else {
+                                console.log('⚠️  Submit button (div.submit-btn) not found');
+                            }
+
                             await new Promise(resolve => setTimeout(resolve, 500));
                         } catch (pickerErr) {
                             console.log('⚠️  Date picker step: ' + pickerErr.message);
