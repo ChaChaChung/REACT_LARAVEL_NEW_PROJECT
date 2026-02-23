@@ -302,7 +302,7 @@ class ScrapeBrowserBngDomDetail extends Command
                                 const ths = tr.querySelectorAll('th');
                                 const tds = tr.querySelectorAll('td');
                                 const cells = (ths.length ? ths : tds);
-                                const row = Array.from(cells).map(c => (c.textContent || '').trim());
+                                const row = Array.from(cells).map(c => (c.textContent || '').trim().replace(/（[^）]*）|\([^)]*\)/g, '').trim());
                                 if (row.length === 0) continue;
                                 if (!thead && i === 0) { headers = row; continue; }
                                 dataRows.push(row);
@@ -604,68 +604,12 @@ class ScrapeBrowserBngDomDetail extends Command
                 if (!is_string($v)) {
                     return $v;
                 }
-                return preg_replace('/\s+/u', '', trim($v));
+                return preg_replace('/\s+/u', '', trim(preg_replace('/[（(][^）)]*[）)]/u', '', $v)));
             }, $row);
         }, $allData);
 
-        // ── 依 Player 加總數值欄位，並移除 Game 欄位 ──
-        // 找出 Player key（對應 header 含 "Player" 的欄位，不分大小寫）
-        $playerKey = null;
-        foreach ($keys as $k) {
-            if (stripos($k, 'player') !== false) {
-                $playerKey = $k;
-                break;
-            }
-        }
-
-        // 找出 Game key（對應 header 含 "Game" 的欄位，不分大小寫）
-        $gameKey = null;
-        foreach ($keys as $k) {
-            if (stripos($k, 'game') !== false) {
-                $gameKey = $k;
-                break;
-            }
-        }
-
-        if ($playerKey !== null) {
-            $grouped = [];
-            foreach ($allData as $row) {
-                if (!is_array($row)) continue;
-                $player = $row[$playerKey] ?? '';
-                if (!isset($grouped[$player])) {
-                    $grouped[$player] = $row;
-                } else {
-                    // 數值欄位加總，非數值保留原值
-                    foreach ($row as $k => $v) {
-                        if ($k === $playerKey) continue;
-                        $existing = $grouped[$player][$k] ?? '';
-                        // 判斷是否為數字（允許負號與小數）
-                        if (is_numeric(str_replace(',', '', (string)$existing)) && is_numeric(str_replace(',', '', (string)$v))) {
-                            $grouped[$player][$k] = (string)((float)str_replace(',', '', (string)$existing) + (float)str_replace(',', '', (string)$v));
-                        }
-                    }
-                }
-            }
-            $allData = array_values($grouped);
-        }
-
-        // 移除 Game 欄位（從 headers、keys、data 全部剔除）
-        if ($gameKey !== null) {
-            $gameHeaderIdx = array_search($gameKey, $keys);
-            if ($gameHeaderIdx !== false) {
-                array_splice($headers, $gameHeaderIdx, 1);
-                array_splice($keys, $gameHeaderIdx, 1);
-            }
-            $allData = array_map(function ($row) use ($gameKey) {
-                if (is_array($row)) {
-                    unset($row[$gameKey]);
-                }
-                return $row;
-            }, $allData);
-        }
-
         $totalRows = count($allData);
-        $this->info('📋 Table rows (after grouping by Player): ' . $totalRows);
+        $this->info('📋 Table rows: ' . $totalRows);
 
         // Console 預覽：data 為 key-value 陣列，依 keys 順序轉成表格列
         $headerRow = $headers;
