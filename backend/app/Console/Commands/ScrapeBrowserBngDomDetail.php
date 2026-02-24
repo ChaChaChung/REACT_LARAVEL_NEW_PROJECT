@@ -282,31 +282,93 @@ class ScrapeBrowserBngDomDetail extends Command
                         }
                     }
 
-                    // ── 翻頁爬取：抓完當前頁後自動點 >> 直到沒有下一頁 ──
+                    // ── 多輪展開：每輪點完所有 fa-plus 後等待新增的子行出現，直到沒有 fa-plus ──
+                    const expandAllToggleRows = async () => {
+                        let totalClicked = 0;
+                        let round = 0;
+                        while (true) {
+                            round++;
+                            const count = await page.evaluate(() => {
+                                return document.querySelectorAll('div.btn.btn-xs.app-toggle-btn i.fa-plus').length;
+                            });
+                            if (count === 0) {
+                                console.log('🔽 No more toggles to expand (total clicked: ' + totalClicked + ', rounds: ' + (round - 1) + ')');
+                                break;
+                            }
+                            console.log('🔽 Round ' + round + ': found ' + count + ' toggle(s), clicking one by one...');
+                            // 逐一點擊，每次等待 DOM 更新
+                            for (let i = 0; i < count; i++) {
+                                await page.evaluate((idx) => {
+                                    const btns = Array.from(document.querySelectorAll('div.btn.btn-xs.app-toggle-btn'))
+                                        .filter(btn => btn.querySelector('i.fa-plus'));
+                                    if (btns[idx]) btns[idx].click();
+                                }, i);
+                                await new Promise(r => setTimeout(r, 100));
+                            }
+                            totalClicked += count;
+                            // 等待子行 DOM 渲染完成，再進行下一輪
+                            await new Promise(r => setTimeout(r, 800));
+                            console.log('🔽 Round ' + round + ' done, checking for more...');
+                        }
+                        return totalClicked;
+                    };
+
+                    // ── debug：印出表格 tr 結構，顯示所有 cell 內容，定位 BSCD 欄位 ──
+                    const debugTableRows = async () => {
+                        const info = await page.evaluate(() => {
+                            const selector = 'table.table.table-condensed.table-hover.table-striped';
+                            const table = document.querySelector(selector);
+                            if (!table) return { found: false };
+                            const tbody = table.querySelector('tbody');
+                            const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
+                            // 找出含有 BSCD 文字的 tr（不限欄位）
+                            let bscdTrIdx = -1;
+                            const rows = Array.from(trs).slice(0, 50).map((tr, i) => {
+                                const cells = tr.querySelectorAll('td, th');
+                                const cellTexts = Array.from(cells).map(c => (c.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 40));
+                                const hasBscd = cellTexts.some(t => t === 'BSCD' || t.includes('BSCD'));
+                                if (hasBscd && bscdTrIdx === -1) bscdTrIdx = i;
+                                return {
+                                    class: tr.className,
+                                    display: tr.style.display,
+                                    cellCount: cells.length,
+                                    hasBscd: hasBscd,
+                                    cells: cellTexts
+                                };
+                            });
+                            return { found: true, totalRows: trs.length, bscdTrIdx, rows };
+                        });
+                        if (!info.found) {
+                            console.log('🔍 DEBUG: table not found');
+                        } else {
+                            console.log('🔍 DEBUG: table has ' + info.totalRows + ' tr(s), BSCD found at tr[' + info.bscdTrIdx + ']');
+                            // 印出前 6 行，以及含 BSCD 的行
+                            info.rows.forEach((r, i) => {
+                                if (i < 6 || r.hasBscd) {
+                                    const marker = r.hasBscd ? ' ⭐ BSCD ROW' : '';
+                                    console.log('  tr[' + i + '] class="' + r.class + '" display="' + r.display + '"' + marker);
+                                    console.log('    cells: ' + JSON.stringify(r.cells));
+                                }
+                            });
+                        }
+                        return info;
+                    };
+
+                    // ── 翻頁爬取：只抓第一欄為 "BSCD" 的行（含隱藏行）──
                     const scrapeCurrentPage = async () => {
                         return await page.evaluate(() => {
                             const selector = 'table.table.table-condensed.table-hover.table-striped';
                             const table = document.querySelector(selector);
                             if (!table) return { found: false, error: 'Table not found' };
+
+                            // 從 thead 取欄位標題
                             const thead = table.querySelector('thead');
                             let headers = [];
-                            let dataRows = [];
                             if (thead) {
                                 const headerCells = thead.querySelectorAll('tr th, tr td');
                                 headers = Array.from(headerCells).map(c => (c.textContent || '').trim());
                             }
-                            const tbody = table.querySelector('tbody');
-                            const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
-                            for (let i = 0; i < trs.length; i++) {
-                                const tr = trs[i];
-                                const ths = tr.querySelectorAll('th');
-                                const tds = tr.querySelectorAll('td');
-                                const cells = (ths.length ? ths : tds);
-                                const row = Array.from(cells).map(c => (c.textContent || '').trim().replace(/（[^）]*）|\([^)]*\)/g, '').trim());
-                                if (row.length === 0) continue;
-                                if (!thead && i === 0) { headers = row; continue; }
-                                dataRows.push(row);
-                            }
+
                             const makeKey = (h, idx) => {
                                 const s = (h || '').trim();
                                 return s ? s.replace(/\s+/g, '_') : ('column_' + idx);
@@ -318,15 +380,35 @@ class ScrapeBrowserBngDomDetail extends Command
                                 if (seen[k]) { seen[k]++; k = k + '_' + seen[k]; } else { seen[k] = 1; }
                                 keyList.push(k);
                             });
-                            const data = dataRows.map(row => {
+
+                            // 抓所有 tr，包含隱藏的（display:none 也要），找第一個 cell 含 BSCD 的行
+                            const tbody = table.querySelector('tbody');
+                            const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
+                            const bscdRows = [];
+                            for (const tr of trs) {
+                                const cells = tr.querySelectorAll('td, th');
+                                if (cells.length === 0) continue;
+                                // 取出第一格文字，去除空白後比對
+                                // cells[0] 是 toggle 按鈕（空白），cells[1] 才是文字欄
+                                const secondCell = (cells[1].textContent || '').replace(/\s+/g, '').trim();
+                                if (secondCell !== 'BSCD') continue;
+
+                                // 取每個 cell 的值，對應到 keyList
+                                const row = Array.from(cells).map(c =>
+                                    (c.textContent || '').trim().replace(/\s+/g, '')
+                                );
                                 const obj = {};
                                 keyList.forEach((k, idx) => {
-                                    const val = row[idx] !== undefined ? row[idx] : '';
-                                    obj[k] = String(val).trim().replace(/\s/g, '');
+                                    obj[k] = row[idx] !== undefined ? row[idx] : '';
                                 });
-                                return obj;
-                            });
-                            return { found: true, headers: headers, keyList: keyList, data: data };
+                                bscdRows.push(obj);
+                            }
+
+                            if (bscdRows.length === 0) {
+                                return { found: false, error: 'No BSCD rows found (toggle may not be expanded)' };
+                            }
+
+                            return { found: true, headers: headers, keyList: keyList, data: bscdRows };
                         });
                     };
 
@@ -384,6 +466,8 @@ class ScrapeBrowserBngDomDetail extends Command
                     while (true) {
                         totalPages++;
                         console.log('📄 Scraping page ' + totalPages + '...');
+                        // 先展開所有 toggle 按鈕，讓 BSCD 子行可見
+                        await expandAllToggleRows();
                         const pageResult = await scrapeCurrentPage();
 
                         if (!pageResult || !pageResult.found) {
