@@ -65,8 +65,11 @@ class ScrapeBrowserFkfDOMDetail extends Command
         $start = strtotime($date_start);
         $end = strtotime($date_end);
 
+        // 收集所有日期的 Total 行，最後合併輸出
+        $allDailyData = [];
+
         for ($current = $start; $current <= $end; $current += 86400) {
-            $currentDate = date('Ymd', $current);
+            $currentDate = date('Y-m-d', $current);
             $this->info("Processing date: {$currentDate}");
 
             // 創建 Puppeteer 腳本
@@ -77,10 +80,31 @@ class ScrapeBrowserFkfDOMDetail extends Command
 
             // 如果執行成功，處理爬取的資料
             if ($result) {
-                $this->processScrapedDataFinal($result, $currentDate);
+                $dayRows = $this->processScrapedDataFinal($result, $currentDate);
+                if (!empty($dayRows)) {
+                    foreach ($dayRows as $row) {
+                        $allDailyData[] = $row;
+                    }
+                }
             } else {
                 $this->error("Failed to process data for date: {$currentDate}");
             }
+        }
+
+        // 將所有日期結果合併輸出成一個 JSON 檔案
+        if (!empty($allDailyData)) {
+            $mergedFileName = "scraped_data_merged_" . date('Ymd_His') . ".json";
+            $mergedFilePath = storage_path("app/scraped_data/{$mergedFileName}");
+            $mergedDir = dirname($mergedFilePath);
+            if (!is_dir($mergedDir)) {
+                mkdir($mergedDir, 0755, true);
+            }
+            $mergedOutput = ['data' => $allDailyData];
+            file_put_contents($mergedFilePath, json_encode($mergedOutput, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+            $this->info("✅ Merged output saved to: {$mergedFilePath}");
+            $this->info("✅ Total rows merged: " . count($allDailyData));
+        } else {
+            $this->warn("⚠️  No data collected across all dates.");
         }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
@@ -88,28 +112,50 @@ class ScrapeBrowserFkfDOMDetail extends Command
     }
 
     /**
-     * 處理爬取的資料（詳細版本）
-     * @param mixed $data 爬取的資料
-     * @param string $date 當前處理的日期
+     * 處理單天爬取結果，提取 Total 行並回傳
+     * @param array $data runPuppeteerScript 回傳的完整資料
+     * @param string $date 當天日期（Y-m-d）
+     * @return array 當天所有 Total 行（已注入 Date 欄位）
      */
-    private function processScrapedDataFinal($data, $date)
+    private function processScrapedDataFinal($data, $date): array
     {
         $this->info('4. Processing scraped data...');
 
         // 檢查爬取是否成功
-        if (!$data['success']) {
+        if (!($data['success'] ?? false)) {
             $this->error("❌ Scraping failed: " . ($data['error'] ?? 'Unknown error'));
-            return;
+            return [];
         }
 
-        // 處理成功的資料
-        $data = $data['data'] ?? [];
-        $fileName = "scraped_data_final.json";
-        $filePath = storage_path("app/{$fileName}");
+        $dayRows = [];
+        $tables = $data['domData']['tables'] ?? [];
 
-        file_put_contents($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        foreach ($tables as $tIdx => $table) {
+            $this->info("🔍 Table[{$tIdx}] class=" . ($table['tableClass'] ?? 'null')
+                . " totalRows=" . ($table['debugTotalRows'] ?? '?')
+                . " filtered=" . ($table['rowCount'] ?? '?'));
 
-        $this->info("Final data saved to: {$filePath}");
+            // debug: 印出所有第一格，方便確認 Total 行存在
+            foreach (($table['debugAllFirstCells'] ?? []) as $i => $cell) {
+                $this->line("    [{$i}] " . mb_substr($cell, 0, 100));
+            }
+
+            foreach (($table['data'] ?? []) as $row) {
+                // 確保 Date 欄位放最前面
+                $dayRows[] = array_merge(['Date' => $date], $row);
+            }
+        }
+
+        // accountDetailResults 也可能有 Total 行（若有進入詳情頁）
+        foreach (($data['accountDetailResults'] ?? []) as $detail) {
+            foreach (($detail['tableData']['data'] ?? []) as $row) {
+                $dayRows[] = array_merge(['Date' => $date], $row);
+            }
+        }
+
+        $this->info("✅ Date {$date}: collected " . count($dayRows) . " row(s)");
+
+        return $dayRows;
     }
     
     /**
@@ -558,15 +604,27 @@ class ScrapeBrowserFkfDOMDetail extends Command
              */
             async function extractTableData(pageObject) {
                 return await pageObject.evaluate(() => {
-                    const table = document.querySelector('#simple-table') || (() => {
-                        const tables = document.querySelectorAll('table');
-                        let best = null, maxRows = 0;
-                        tables.forEach(t => {
-                            const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
-                            if (rows > maxRows) { maxRows = rows; best = t; }
-                        });
-                        return best;
-                    })();
+                    // 移除數值千分位逗號，非數值字串原樣回傳
+                    const stripThousands = (val) => {
+                        if (val === null || val === undefined) return val;
+                        const str = String(val).trim();
+                        if (/^-?[\d,]+(\.[\d]+)?$/.test(str)) return str.replace(/,/g, '');
+                        return str;
+                    };
+
+                    // 優先抓 id=simple-table，其次抓 class 含 simple-table 的，最後才挑 row 數最多的
+                    const table = document.querySelector('#simple-table')
+                        || document.querySelector('table.simple-table')
+                        || document.querySelector('[class*="simple-table"]')
+                        || (() => {
+                            const tables = document.querySelectorAll('table');
+                            let best = null, maxRows = 0;
+                            tables.forEach(t => {
+                                const rows = t.querySelectorAll('tbody tr').length || t.querySelectorAll('tr').length;
+                                if (rows > maxRows) { maxRows = rows; best = t; }
+                            });
+                            return best;
+                        })();
                     if (!table) {
                         return { found: false, error: 'No table found' };
                     }
@@ -611,12 +669,27 @@ class ScrapeBrowserFkfDOMDetail extends Command
                             const cells = Array.from(row.querySelectorAll('td'));
                             const rowData = {};
                             const firstCellVal = cells[0] ? cells[0].textContent.trim() : '';
-                            const totalMatch = firstCellVal.match(/Total[：:]|總計/);
+                            // 處理 colspan Total 行：例如 <td colspan="2">Total：989Records</td>
+                            const colspanTotalMatch = firstCellVal.match(/^(Total[：:].*)$/);
+                            if (colspanTotalMatch) {
+                                // 解析 "Total：989Records" → Total_Label + Total_Records
+                                const totalText = colspanTotalMatch[1];
+                                const recordsMatch = totalText.match(/Total[：:]\s*(\d+)\s*Records?/i);
+                                rowData.Total_Label = totalText;
+                                rowData.Total_Records = recordsMatch ? recordsMatch[1] : null;
+                                // 若有其他 td（非 colspan 情況）也一併抓取
+                                if (cells[1]) rowData.Bet = stripThousands(cells[1].textContent.trim());
+                                if (cells[2]) rowData.Total_Bet_Amount = stripThousands(cells[2].textContent.trim());
+                                if (cells[3]) rowData.Total_Win_Loss = stripThousands(cells[3].textContent.trim());
+                                return rowData;
+                            }
+                            // 處理「總計」開頭的行
+                            const totalMatch = firstCellVal.match(/^總計/);
                             if (totalMatch) {
-                                rowData.Total_Bet_Times = totalMatch[1];
-                                rowData.Bet = cells[1] ? cells[1].textContent.trim() : null;
-                                rowData.Total_Bet_Amount = cells[2] ? cells[2].textContent.trim() : null;
-                                rowData.Total_Win_Loss = cells[3] ? cells[3].textContent.trim() : null;
+                                rowData.Total_Label = firstCellVal;
+                                rowData.Bet = cells[1] ? stripThousands(cells[1].textContent.trim()) : null;
+                                rowData.Total_Bet_Amount = cells[2] ? stripThousands(cells[2].textContent.trim()) : null;
+                                rowData.Total_Win_Loss = cells[3] ? stripThousands(cells[3].textContent.trim()) : null;
                                 return rowData;
                             }
                             if (headers && headers.length > 0) {
@@ -679,10 +752,10 @@ class ScrapeBrowserFkfDOMDetail extends Command
                                             else if (cellValue && (cleanHeader === 'Bet' || cleanHeader === '注額' || cleanHeader === '下注')) {
                                                 const match = cellValue.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
                                                 if (match) {
-                                                    rowData['Bet'] = match[1].trim();
+                                                    rowData['Bet'] = stripThousands(match[1].trim());
                                                     rowData['Bet_Records'] = match[2].replace(/\D/g, '') || '';
                                                 } else {
-                                                    rowData[finalHeader] = cellValue;
+                                                    rowData[finalHeader] = stripThousands(cellValue);
                                                 }
                                             } else {
                                                 rowData[finalHeader] = cellValue;
@@ -697,6 +770,9 @@ class ScrapeBrowserFkfDOMDetail extends Command
                             return rowData;
                         })
                         .filter(rowData => {
+                            // 有 Total_Label 代表是 Total/總計 行，直接保留
+                            if (rowData.Total_Label != null) return true;
+                            // 相容舊邏輯
                             if (rowData.Total_Bet_Times != null) return true;
                             const firstValue = Object.values(rowData)[0];
                             if (!firstValue) return false;
@@ -705,6 +781,12 @@ class ScrapeBrowserFkfDOMDetail extends Command
                             return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
                         });
 
+                    // debug: 抓所有 tbody tr 的第一格文字，幫助確認 Total 行是否存在
+                    const debugAllFirstCells = rows.slice(dataStartIndex).map(row => {
+                        const cells = row.querySelectorAll('td');
+                        return cells[0] ? cells[0].textContent.trim() : '(empty)';
+                    });
+
                     return {
                         found: true,
                         tableId: table.id || null,
@@ -712,6 +794,8 @@ class ScrapeBrowserFkfDOMDetail extends Command
                         headers: headers,
                         headerCount: headers.length,
                         rowCount: dataRows.length,
+                        debugTotalRows: rows.slice(dataStartIndex).length,
+                        debugAllFirstCells: debugAllFirstCells,
                         rawRows: rows.slice(dataStartIndex)
                             .map(row => Array.from(row.querySelectorAll('td')).map(cell => cell.textContent.trim()))
                             .filter(rowArray => {
@@ -720,7 +804,7 @@ class ScrapeBrowserFkfDOMDetail extends Command
                                 if (!firstValue) return false;
                                 const valueStr = String(firstValue);
                                 const lowerValue = valueStr.toLowerCase();
-                                return firstValue === '總計' || valueStr === 'Total：' || valueStr.startsWith('Total：') || lowerValue === 'total' || lowerValue === 'current total';
+                                return firstValue === '總計' || valueStr.startsWith('Total：') || valueStr.startsWith('Total:') || lowerValue === 'total' || lowerValue === 'current total';
                             }),
                         data: dataRows
                     };
@@ -992,16 +1076,16 @@ class ScrapeBrowserFkfDOMDetail extends Command
                         }
                     }
 
-                    try {
-                        const tzSelect = await page.$('select[name="find5"]');
-                        if (tzSelect) {
-                            await page.select('select[name="find5"]', '0');
-                            console.log('✅ Timezone selected: 0');
-                            await new Promise(resolve => setTimeout(resolve, 300));
-                        }
-                    } catch (e) {
-                        console.log('⚠️  Timezone select (find5) skip: ' + e.message);
-                    }
+                    // try {
+                    //     const tzSelect = await page.$('select[name="find5"]');
+                    //     if (tzSelect) {
+                    //         await page.select('select[name="find5"]', '0');
+                    //         console.log('✅ Timezone selected: 0');
+                    //         await new Promise(resolve => setTimeout(resolve, 300));
+                    //     }
+                    // } catch (e) {
+                    //     console.log('⚠️  Timezone select (find5) skip: ' + e.message);
+                    // }
 
                     let dateRange = [];
                     try {
@@ -1056,6 +1140,19 @@ class ScrapeBrowserFkfDOMDetail extends Command
                                 dayRows = dayRows.map(row => ({ Date: day, ...row }));
                                 allCollectedTables.push({ data: dayRows, rowCount: dayRows.length });
                                 console.log('✅ ' + day + ': ' + dayRows.length + ' row(s)');
+                            }
+
+                            // === 每天查詢完後截圖 ===
+                            try {
+                                await highlightScrapedTable(page);
+                                const screenshotFilename = 'daily_screenshot_' + day + '.png';
+                                await page.screenshot({
+                                    path: screenshotFilename,
+                                    fullPage: false
+                                });
+                                console.log('📸 Screenshot saved: ' + screenshotFilename);
+                            } catch (ssErr) {
+                                console.log('⚠️  Screenshot failed for ' + day + ': ' + ssErr.message);
                             }
                         }
                         const mergedData = [];
@@ -1627,6 +1724,25 @@ class ScrapeBrowserFkfDOMDetail extends Command
             }
             copy($resultFile, $copyPath);
             $this->info("📋 Copy saved to: {$copyPath}");
+
+            // 複製每日截圖到 scraped_data 目錄
+            $screenshots = glob($workingDir . '/daily_screenshot_*.png');
+            if ($screenshots) {
+                foreach ($screenshots as $ssFile) {
+                    $ssDestPath = $copyDir . '/' . basename($ssFile);
+                    copy($ssFile, $ssDestPath);
+                    $this->info("📸 Screenshot copied: {$ssDestPath}");
+                }
+            }
+
+            // 複製主截圖（scraped_page_screenshot.png）
+            $mainScreenshot = $workingDir . '/scraped_page_screenshot.png';
+            if (file_exists($mainScreenshot)) {
+                $mainSsDest = $copyDir . '/scraped_page_screenshot_' . date('Y-m-d_H-i-s') . '.png';
+                copy($mainScreenshot, $mainSsDest);
+                $this->info("📸 Main screenshot copied: {$mainSsDest}");
+            }
+
             return $data;
         }
 
@@ -1634,4 +1750,3 @@ class ScrapeBrowserFkfDOMDetail extends Command
         return null;
     }
 }
-
