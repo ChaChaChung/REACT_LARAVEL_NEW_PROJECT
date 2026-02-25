@@ -352,7 +352,7 @@ trait HasAgentAuth
     protected function generateBngPuppeteerCookiesCode(string $pageVar = 'page'): string
     {
         $token = env('BNG_AGENT_TOKEN', '');
-        $lang = env('BNG_AGENT_LANG', 'zh-TW');
+        $lang = env('BNG_AGENT_LANG', 'en');
         $domainRaw = env('BNG_AGENT_DOMAIN', '');
 
         // BNG_AGENT_DOMAIN 可能是完整網址，取 host 作為 cookie domain

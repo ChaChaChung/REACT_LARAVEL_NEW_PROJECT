@@ -18,9 +18,9 @@ class ScrapeBrowserBngDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-bng-dom-detail {url} {date_start?} {date_end?}
+     * 執行方式：php artisan agent:scrape-bng-dom-detail {url} {date_start?} {date_end?} {account_number?}
      */
-    protected $signature = 'agent:scrape-bng-dom-detail {url} {date_start?} {date_end?}';
+    protected $signature = 'agent:scrape-bng-dom-detail {url} {date_start?} {date_end?} {account_number?}';
 
     /**
      * 命令描述
@@ -37,6 +37,7 @@ class ScrapeBrowserBngDomDetail extends Command
         $url = $this->argument('url');
         $dateStart = $this->argument('date_start');
         $dateEnd = $this->argument('date_end');
+        $accountNumber = $this->argument('account_number');
         $domain = env('BNG_AGENT_DOMAIN', '');
 
         $this->info('=== BNG Browser Login & Navigate ===');
@@ -44,6 +45,7 @@ class ScrapeBrowserBngDomDetail extends Command
         $this->info("Target URL: {$url}");
         $this->info("Date Start: " . ($dateStart ?: '—'));
         $this->info("Date End: " . ($dateEnd ?: '—'));
+        $this->info("Account Number: " . ($accountNumber ?: '-'));
         $this->info('Start time: ' . date('Y-m-d H:i:s'));
 
         if (empty($url)) {
@@ -55,7 +57,7 @@ class ScrapeBrowserBngDomDetail extends Command
             return 1;
         }
 
-        $scriptPath = $this->createPuppeteerScript($url, $domain, $dateStart, $dateEnd);
+        $scriptPath = $this->createPuppeteerScript($url, $domain, $dateStart, $dateEnd, $accountNumber);
         $result = $this->runPuppeteerScript($scriptPath);
 
         if ($result && !empty($result['success'])) {
@@ -100,7 +102,7 @@ class ScrapeBrowserBngDomDetail extends Command
     /**
      * 創建 Puppeteer 腳本：先進入 domain 設定 cookie（登入），再跳轉到 url，若有 date_start/date_end 則點開 date picker 後截圖
      */
-    private function createPuppeteerScript(string $url, string $domain, ?string $dateStart = null, ?string $dateEnd = null): string
+    private function createPuppeteerScript(string $url, string $domain, ?string $dateStart = null, ?string $dateEnd = null, ?string $accountNumber = null): string
     {
         $this->info('2. Creating browser automation script...');
 
@@ -117,6 +119,7 @@ class ScrapeBrowserBngDomDetail extends Command
         $domainJs = json_encode($domain);
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
+        $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
         $cookiesCode = $this->generateBngPuppeteerCookiesCode('page', $domainForCookies !== '' ? $domainForCookies : null);
 
         $script = <<<JS
@@ -128,6 +131,7 @@ class ScrapeBrowserBngDomDetail extends Command
             const configDomain = $domainJs;
             const dateStart = $dateStartJs;
             const dateEnd = $dateEndJs;
+            const accountNumber = $accountNumberJs;
 
             async function run() {
                 console.log('🚀 BNG: Starting login and navigate...');
@@ -189,6 +193,52 @@ class ScrapeBrowserBngDomDetail extends Command
 
                     const finalUrl = page.url();
                     console.log('✅ Reached URL:', finalUrl);
+
+                    // ── 選擇 project_uid select 的第一個可用選項 ──
+                    try {
+                        const projectSelectSelector = 'select.form-control.input-sm[name="project_uid"]';
+                        await page.waitForSelector(projectSelectSelector, { timeout: 8000 }).catch(() => null);
+                        const projectSelect = await page.$(projectSelectSelector);
+                        if (projectSelect) {
+                            // 取得第一個非 disabled 的 option value
+                            const firstOptionValue = await page.evaluate((sel) => {
+                                const select = document.querySelector(sel);
+                                if (!select) return null;
+                                const option = Array.from(select.options).find(o => !o.disabled);
+                                return option ? option.value : null;
+                            }, projectSelectSelector);
+
+                            if (firstOptionValue !== null) {
+                                await page.select(projectSelectSelector, firstOptionValue);
+                                console.log('✅ Selected project_uid option: ' + firstOptionValue);
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                            } else {
+                                console.log('⚠️  No selectable option found in project_uid select');
+                            }
+                        } else {
+                            console.log('⚠️  select[name="project_uid"] not found on page');
+                        }
+                    } catch (selectErr) {
+                        console.log('⚠️  project_uid select step: ' + selectErr.message);
+                    }
+
+                    if (accountNumber && accountNumber !== 'null') {
+                        const playerInputSelector = 'input.form-control.input-sm[name="player"]';
+                        try {
+                            console.log('🔍 Checking for player input field...');
+                            const playerInput = await page.$(playerInputSelector);
+                            if (playerInput) {
+                                console.log('📋 Player input field found. Filling in account number...');
+                                await page.type(playerInputSelector, accountNumber);
+                                console.log(`✅ Filled player input with account number: ${accountNumber}`);
+                                await new Promise(resolve => setTimeout(resolve, 1000));
+                            } else {
+                                console.log('⚠️ Player input field not found. Skipping input.');
+                            }
+                        } catch (playerInputError) {
+                            console.log('⚠️ Error during player input field handling:', playerInputError.message);
+                        }
+                    }
 
                     // 若有帶 date_start 或 date_end：點開 date picker → 在日曆上點選日期 → Apply
                     const openPickerSelector = 'input.form-control.input-sm.app-date-picker, input.app-date-picker';
@@ -354,7 +404,7 @@ class ScrapeBrowserBngDomDetail extends Command
                         return info;
                     };
 
-                    // ── 翻頁爬取：只抓第一欄為 "BSCD" 的行（含隱藏行）──
+                    // ── 翻頁爬取：抓表格所有 tr（含隱藏行）──
                     const scrapeCurrentPage = async () => {
                         return await page.evaluate(() => {
                             const selector = 'table.table.table-condensed.table-hover.table-striped';
@@ -381,34 +431,30 @@ class ScrapeBrowserBngDomDetail extends Command
                                 keyList.push(k);
                             });
 
-                            // 抓所有 tr，包含隱藏的（display:none 也要），找第一個 cell 含 BSCD 的行
+                            // 抓所有 tbody tr，包含隱藏的（display:none 也要），全部爬出
                             const tbody = table.querySelector('tbody');
                             const trs = tbody ? tbody.querySelectorAll('tr') : table.querySelectorAll('tr');
-                            const bscdRows = [];
+                            const allRows = [];
                             for (const tr of trs) {
                                 const cells = tr.querySelectorAll('td, th');
                                 if (cells.length === 0) continue;
-                                // 取出第一格文字，去除空白後比對
-                                // cells[0] 是 toggle 按鈕（空白），cells[1] 才是文字欄
-                                const secondCell = (cells[1].textContent || '').replace(/\s+/g, '').trim();
-                                if (secondCell !== 'BSCD') continue;
 
-                                // 取每個 cell 的值，對應到 keyList
+                                // 取每個 cell 的文字，對應到 keyList
                                 const row = Array.from(cells).map(c =>
-                                    (c.textContent || '').trim().replace(/\s+/g, '')
+                                    (c.textContent || '').trim().replace(/\s+/g, ' ')
                                 );
                                 const obj = {};
                                 keyList.forEach((k, idx) => {
                                     obj[k] = row[idx] !== undefined ? row[idx] : '';
                                 });
-                                bscdRows.push(obj);
+                                allRows.push(obj);
                             }
 
-                            if (bscdRows.length === 0) {
-                                return { found: false, error: 'No BSCD rows found (toggle may not be expanded)' };
+                            if (allRows.length === 0) {
+                                return { found: false, error: 'No rows found in table' };
                             }
 
-                            return { found: true, headers: headers, keyList: keyList, data: bscdRows };
+                            return { found: true, headers: headers, keyList: keyList, data: allRows };
                         });
                     };
 
