@@ -1165,4 +1165,54 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 DG Puppeteer cookies 設定程式碼片段
+     * DG_AGENT_TOKEN → cf_clearance, DG_AGENT_AUTH → JSESSIONID, DG_AGENT_LANG → language
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateDgPuppeteerCookiesCode(string $pageVar = 'page'): string
+    {
+        $token = env('DG_AGENT_TOKEN', '');
+        $auth = env('DG_AGENT_AUTH', '');
+        $lang = env('DG_AGENT_LANG', 'en');
+        $domainRaw = env('DG_AGENT_DOMAIN', '');
+
+        // 從 DG_AGENT_DOMAIN 提取 host 作為 cookie domain
+        $domain = $domainRaw;
+        if ($domainRaw && preg_match('#^https?://#i', $domainRaw)) {
+            $parsed = parse_url($domainRaw);
+            $domain = $parsed['host'] ?? $domainRaw;
+        } elseif ($domainRaw) {
+            // 若無協議，取第一個 / 前的部分作為 host
+            $domain = preg_replace('#/.*$#', '', $domainRaw);
+        }
+
+        $tokenJs = json_encode($token);
+        $authJs = json_encode($auth);
+        $langJs = json_encode($lang);
+        $domainJs = json_encode($domain);
+
+        return <<<JS
+            {
+                console.log('🔐 Setting DG authentication cookies (cf_clearance, JSESSIONID, language)...');
+                const cookies = [];
+                const fgDomain = {$domainJs};
+                const useSecure = typeof targetUrl !== 'undefined' && targetUrl.startsWith('https');
+                if (fgDomain && fgDomain !== '') {
+                    const path = '/';
+                    if ({$tokenJs}) cookies.push({ name: 'cf_clearance', value: {$tokenJs}, domain: fgDomain, path, secure: useSecure });
+                    if ({$authJs}) cookies.push({ name: 'JSESSIONID', value: {$authJs}, domain: fgDomain, path, secure: useSecure });
+                    if ({$langJs}) cookies.push({ name: 'language', value: {$langJs}, domain: fgDomain, path, secure: useSecure });
+                }
+                if (cookies.length > 0) {
+                    await {$pageVar}.setCookie(...cookies);
+                    console.log('✅ DG Cookies set:', cookies.length);
+                } else {
+                    console.log('⚠️  No DG cookies set (set DG_AGENT_TOKEN, DG_AGENT_AUTH, DG_AGENT_LANG and DG_AGENT_DOMAIN)');
+                }
+            }
+        JS;
+    }
 }
