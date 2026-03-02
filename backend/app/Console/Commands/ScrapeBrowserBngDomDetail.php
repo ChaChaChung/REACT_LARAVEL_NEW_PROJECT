@@ -25,7 +25,7 @@ class ScrapeBrowserBngDomDetail extends Command
      * 命令描述
      * @var string
      */
-    protected $description = 'BNG: Login, navigate, open date picker (optional date_start/date_end), screenshot';
+    protected $description = 'Scrape content from BNG DOM elements using browser automation with detailed information';
 
     /**
      * 執行命令的主要處理方法
