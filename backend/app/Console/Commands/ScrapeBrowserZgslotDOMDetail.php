@@ -7,8 +7,7 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * 瀏覽器 DOM 內容爬蟲命令 - ZGSLOT (手動輸入模式)
- * 此命令會打開非無頭瀏覽器，讓使用者手動輸入帳號密碼及驗證碼
+ * 瀏覽器 DOM 內容爬蟲命令
  */
 class ScrapeBrowserZgslotDOMDetail extends Command
 {

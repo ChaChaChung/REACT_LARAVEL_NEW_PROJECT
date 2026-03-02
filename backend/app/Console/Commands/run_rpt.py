@@ -3,9 +3,9 @@ from datetime import datetime, timedelta
 import time
 
 # 設定參數
-BASE_URL = "https://web.fkf88.com/report/Rpt"
-START_DATE = datetime(2026, 1, 1)
-END_DATE = datetime(2026, 2, 24)
+BASE_URL = "https://168swin2.com/report/Rpt"
+START_DATE = datetime(2026, 2, 1)
+END_DATE = datetime(2026, 2, 28)
 DELAY_SECONDS = 1  # 每次請求之間的間隔秒數
 
 def run():

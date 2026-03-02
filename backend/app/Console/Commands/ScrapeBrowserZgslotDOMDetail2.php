@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * 瀏覽器 DOM 內容爬蟲命令 - ZGSLOT
+ * 瀏覽器 DOM 內容爬蟲命令
  */
 class ScrapeBrowserZgslotDOMDetail2 extends Command
 {

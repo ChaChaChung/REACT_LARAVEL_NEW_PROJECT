@@ -8,8 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * BNG 瀏覽器登入並跳轉命令
- * 將 BNG_AGENT_TOKEN 存到 cookies 的 session、BNG_AGENT_LANG 存到 cookies 的 language，完成登入後跳轉到指定 url
+ * 瀏覽器 DOM 內容爬蟲命令
  */
 class ScrapeBrowserBngDomDetail extends Command
 {

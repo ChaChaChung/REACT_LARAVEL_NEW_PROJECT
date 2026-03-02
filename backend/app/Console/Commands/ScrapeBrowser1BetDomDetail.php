@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Storage;
 
 /**
- * 1BET 瀏覽器截圖與爬蟲命令 V2
+ * 瀏覽器內容爬蟲命令
  */
 class ScrapeBrowser1BetDomDetail extends Command
 {
