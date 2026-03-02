@@ -83,17 +83,17 @@ class ScrapeBrowserDgDomDetail extends Command
         }
         $this->info('✅ Node.js found: ' . trim($result->output()));
 
-        $puppeteerCheck = Process::run('npm list puppeteer --depth=0');
+        $puppeteerCheck = Process::run('npm list puppeteer-real-browser --depth=0');
         if ($puppeteerCheck->failed()) {
-            $this->warn('⚠️  Puppeteer not found. Installing...');
-            $install = Process::run('npm install puppeteer');
+            $this->warn('⚠️  puppeteer-real-browser not found. Installing...');
+            $install = Process::run('npm install puppeteer-real-browser');
             if ($install->failed()) {
-                $this->error('❌ Failed to install Puppeteer');
+                $this->error('❌ Failed to install puppeteer-real-browser');
                 return false;
             }
-            $this->info('✅ Puppeteer installed successfully');
+            $this->info('✅ puppeteer-real-browser installed successfully');
         } else {
-            $this->info('✅ Puppeteer found');
+            $this->info('✅ puppeteer-real-browser found');
         }
         return true;
     }
@@ -122,7 +122,7 @@ class ScrapeBrowserDgDomDetail extends Command
         $cookiesCode = $this->generateDgPuppeteerCookiesCode('page', $domainForCookies !== '' ? $domainForCookies : null);
 
         $script = <<<JS
-            const puppeteer = require('puppeteer');
+            const { connect } = require('puppeteer-real-browser');
             const fs = require('fs');
             const path = require('path');
 
@@ -134,21 +134,23 @@ class ScrapeBrowserDgDomDetail extends Command
 
             async function run() {
                 console.log('🚀 DG: Starting login and navigate...');
-                const browser = await puppeteer.launch({
-                    headless: 'new',
+
+                // puppeteer-real-browser 使用真實 Chrome，自動繞過 Cloudflare bot 驗證
+                const { browser, page } = await connect({
+                    headless: false,
                     args: [
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-dev-shm-usage',
-                        '--disable-web-security',
                     ],
-                    executablePath: process.env.CHROME_BIN || undefined
+                    turnstile: true,    // 自動處理 Cloudflare Turnstile
+                    connectOption: {},
+                    disableXvfb: false,
+                    ignoreAllFlags: false,
                 });
 
                 try {
-                    const page = await browser.newPage();
                     await page.setViewport({ width: 1920, height: 1080 });
-                    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
                     // 先進入目標 domain 任一頁，才能對該 domain 設定 cookie
                     let loginUrl;
@@ -175,10 +177,10 @@ class ScrapeBrowserDgDomDetail extends Command
 
                     await new Promise(resolve => setTimeout(resolve, 500));
 
-                    // 強制重新載入頁面，讓下次請求帶上 cookie（SPA 若只改 hash 不會向 server 重新要頁面，登入會失敗）
+                    // 強制重新載入頁面，讓下次請求帶上 cookie
                     console.log('🔄 Reloading page so request is sent with cookies...');
-                    await page.reload({ waitUntil: 'load', timeout: 30000 });
-                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+                    await new Promise(resolve => setTimeout(resolve, 3000));
 
                     // 若目標 url 有 hash，用 client 端導向到對應路由（不再次 reload）
                     try {
