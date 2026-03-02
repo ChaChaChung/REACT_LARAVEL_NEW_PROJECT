@@ -177,12 +177,12 @@ class ScrapeBrowserDgDomDetail extends Command
 
                     await new Promise(resolve => setTimeout(resolve, 500));
 
-                    // 強制重新載入頁面，讓下次請求帶上 cookie
-                    console.log('🔄 Reloading page so request is sent with cookies...');
-                    await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+                    // Cookie 設定完成後，直接跳轉到目標 URL
+                    console.log('🔄 Navigating to target URL with cookies:', targetUrl);
+                    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 3000));
 
-                    // 若目標 url 有 hash，用 client 端導向到對應路由（不再次 reload）
+                    // 若目標 url 有 hash，用 client 端導向到對應路由
                     try {
                         const u = new URL(targetUrl);
                         if (u.hash && u.hash.length > 1) {
