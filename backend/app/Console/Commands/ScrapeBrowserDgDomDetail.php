@@ -17,9 +17,9 @@ class ScrapeBrowserDgDomDetail extends Command
     /**
      * 命令簽名和參數定義
      * @var string
-     * 執行方式：php artisan agent:scrape-dg-dom-detail {url} {date_start?} {date_end?} {account_number?}
+     * 執行方式：php artisan agent:scrape-dg-dom-detail {url} {date_start?} {date_end?} {account_number?} {table_id?}
      */
-    protected $signature = 'agent:scrape-dg-dom-detail {url} {date_start?} {date_end?} {account_number?}';
+    protected $signature = 'agent:scrape-dg-dom-detail {url} {date_start?} {date_end?} {account_number?} {table_id?}';
 
     /**
      * 命令描述
@@ -38,6 +38,7 @@ class ScrapeBrowserDgDomDetail extends Command
         $dateStart = $this->argument('date_start');
         $dateEnd = $this->argument('date_end');
         $accountNumber = $this->argument('account_number');
+        $tableId = $this->argument('table_id') ?: 'memberBetdetailTable';
         $domain = env('DG_AGENT_DOMAIN', '');
 
         $this->info('=== DG Browser Login & Navigate ===');
@@ -46,6 +47,7 @@ class ScrapeBrowserDgDomDetail extends Command
         $this->info("Date Start: " . ($dateStart ?: '—'));
         $this->info("Date End: " . ($dateEnd ?: '—'));
         $this->info("Account Number: " . ($accountNumber ?: '-'));
+        $this->info("Table ID: {$tableId}");
         $this->info('Start time: ' . date('Y-m-d H:i:s'));
 
         if (empty($url)) {
@@ -57,7 +59,7 @@ class ScrapeBrowserDgDomDetail extends Command
             return 1;
         }
 
-        $scriptPath = $this->createPuppeteerScript($url, $domain, $dateStart, $dateEnd, $accountNumber);
+        $scriptPath = $this->createPuppeteerScript($url, $domain, $dateStart, $dateEnd, $accountNumber, $tableId);
         $result = $this->runPuppeteerScript($scriptPath);
 
         if ($result && !empty($result['success'])) {
@@ -102,7 +104,7 @@ class ScrapeBrowserDgDomDetail extends Command
     /**
      * 創建 Puppeteer 腳本：先進入 domain 設定 cookie（登入），再跳轉到 url，若有 date_start/date_end 則點開 date picker 後截圖
      */
-    private function createPuppeteerScript(string $url, string $domain, ?string $dateStart = null, ?string $dateEnd = null, ?string $accountNumber = null): string
+    private function createPuppeteerScript(string $url, string $domain, ?string $dateStart = null, ?string $dateEnd = null, ?string $accountNumber = null, string $tableId = 'memberBetdetailTable'): string
     {
         $this->info('2. Creating browser automation script...');
 
@@ -120,6 +122,7 @@ class ScrapeBrowserDgDomDetail extends Command
         $dateStartJs = $dateStart ? json_encode(date('Y-m-d', strtotime($dateStart))) : 'null';
         $dateEndJs = $dateEnd ? json_encode(date('Y-m-d', strtotime($dateEnd))) : 'null';
         $accountNumberJs = $accountNumber ? json_encode($accountNumber) : 'null';
+        $tableIdJs = json_encode($tableId);
         $cookiesCode = $this->generateDgPuppeteerCookiesCode('page', $domainForCookies !== '' ? $domainForCookies : null);
 
         $script = <<<JS
@@ -132,6 +135,7 @@ class ScrapeBrowserDgDomDetail extends Command
             const dateStart = $dateStartJs;
             const dateEnd = $dateEndJs;
             const accountNumber = $accountNumberJs;
+            const tableId = $tableIdJs;
 
             async function run() {
                 console.log('🚀 DG: Starting login and navigate...');
@@ -340,12 +344,33 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await searchBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
                                 await searchBtn.click();
                                 console.log('🔍 Clicked Search button');
-                                // 等待表格第一筆資料出現（最多 30 秒）
-                                console.log('⏳ Waiting for memberBetdetailTable to load...');
-                                await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 30000 })
+                                // Step1: 等待表格出現任何 tr（最多 30 秒）
+                                console.log('⏳ Waiting for ' + tableId + ' to load...');
+                                await page.waitForSelector('table#' + tableId + ' tbody tr', { timeout: 30000 })
                                     .then(() => console.log('✅ Table loaded'))
                                     .catch(() => console.log('⚠️  Table did not load within 30s, continuing anyway'));
-                                await new Promise(resolve => setTimeout(resolve, 500));
+                                // Step2: 等待列數穩定（1 秒內不再增加），確認資料完全渲染
+                                console.log('⏳ Waiting for table data to stabilize...');
+                                let prevRowCount = -1;
+                                let stableCount = 0;
+                                const maxWaitMs = 20000;
+                                const startAt = Date.now();
+                                while (Date.now() - startAt < maxWaitMs) {
+                                    const rowCount = await page.evaluate((tblId) => {
+                                        const tbody = document.querySelector('table#' + tblId + ' tbody');
+                                        return tbody ? tbody.querySelectorAll('tr').length : 0;
+                                    }, tableId);
+                                    if (rowCount === prevRowCount) {
+                                        stableCount++;
+                                        if (stableCount >= 3) break; // 連續 3 次（約 1.5 秒）相同則視為穩定
+                                    } else {
+                                        stableCount = 0;
+                                        prevRowCount = rowCount;
+                                    }
+                                    await new Promise(r => setTimeout(r, 500));
+                                }
+                                console.log('✅ Table data stabilized (' + prevRowCount + ' rows detected)');
+
                             } else {
                                 console.log('❌ Search button not found after 15s');
                             }
@@ -429,8 +454,8 @@ class ScrapeBrowserDgDomDetail extends Command
 
                     // ── 翻頁爬取：抓表格所有 tr（含隱藏行）──
                     const scrapeCurrentPage = async () => {
-                        return await page.evaluate(() => {
-                            const selector = 'table#memberBetdetailTable';
+                        return await page.evaluate((tblId) => {
+                            const selector = 'table#' + tblId;
                             const table = document.querySelector(selector);
                             if (!table) return { found: false, error: 'Table not found' };
 
@@ -478,8 +503,9 @@ class ScrapeBrowserDgDomDetail extends Command
                             }
 
                             return { found: true, headers: headers, keyList: keyList, data: allRows };
-                        });
+                        }, tableId);
                     };
+
 
                     // 取得目前 active 頁碼
                     const getActivePage = async () => {
@@ -529,7 +555,7 @@ class ScrapeBrowserDgDomDetail extends Command
                                     }
                                 }, pageNum)
                             ]);
-                            await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 10000 }).catch(() => {});
+                            await page.waitForSelector('table#' + tableId + ' tbody tr', { timeout: 10000 }).catch(() => {});
                             console.log('✅ Page ' + pageNum + ' loaded');
                             return true;
                         } catch (e) {
@@ -551,7 +577,7 @@ class ScrapeBrowserDgDomDetail extends Command
                         totalPages++;
                         console.log('📄 Scraping page ' + currentPage + ' / ' + lastPage + '...');
 
-                        await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 12000 }).catch(() => {});
+                        await page.waitForSelector('table#' + tableId + ' tbody tr', { timeout: 12000 }).catch(() => {});
 
                         await expandAllToggleRows();
                         const pageResult = await scrapeCurrentPage();
@@ -587,7 +613,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     if (tableData.found && tableData.data.length > 0) {
                         console.log('📋 Total table rows scraped: ' + tableData.rowCount + ' (across ' + totalPages + ' pages)');
                     } else if (!tableData.found) {
-                        console.log('⚠️  Table (table#memberBetdetailTable) not found');
+                        console.log('⚠️  Table (table#' + tableId + ') not found');
                     } else {
                         console.log('⚠️  Table found but no data rows');
                     }
@@ -816,6 +842,20 @@ class ScrapeBrowserDgDomDetail extends Command
             'winloss'      => round($sumWinloss, 4),
         ];
 
+        // tipsgiftDetail 專用：加總 Platform Gift/Mooncake Gift
+        $isTipsGift = str_contains($result['url'] ?? '', 'tipsgiftDetail');
+        $sumPlatformGift = 0.0;
+        if ($isTipsGift) {
+            foreach ($allData as $row) {
+                $sumPlatformGift += $toFloat(
+                    $row['Platform_Gift/Mooncake_Gift']
+                        ?? $row['Platform Gift/Mooncake Gift']
+                        ?? ''
+                );
+            }
+            $summary['platform_gift_mooncake_gift'] = round($sumPlatformGift, 4);
+        }
+
         $queryParams = $result['queryParams'] ?? array_filter([
             'date_start' => $result['date_start'] ?? $this->argument('date_start'),
             'date_end' => $result['date_end'] ?? $this->argument('date_end'),
@@ -838,13 +878,21 @@ class ScrapeBrowserDgDomDetail extends Command
         $mergedFileName = "scraped_data/dg_scraped_data_{$timestamp}.json";
         Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->info("📊 Table data saved: storage/app/{$mergedFileName} ({$totalRows} rows)");
-        $this->info(sprintf(
-            "📈 Summary — Records: %d | Total Bet: %s | Turnover: %s | Winloss: %s",
-            $totalRows,
-            number_format($sumTotalBet, 2),
-            number_format($sumTurnover, 2),
-            number_format($sumWinloss, 2)
-        ));
+        if ($isTipsGift) {
+            $this->info(sprintf(
+                "📈 Summary — Records: %d | Platform Gift/Mooncake Gift: %s",
+                $totalRows,
+                number_format($sumPlatformGift, 2)
+            ));
+        } else {
+            $this->info(sprintf(
+                "📈 Summary — Records: %d | Total Bet: %s | Turnover: %s | Winloss: %s",
+                $totalRows,
+                number_format($sumTotalBet, 2),
+                number_format($sumTurnover, 2),
+                number_format($sumWinloss, 2)
+            ));
+        }
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info('✅ DG scraping completed!');
