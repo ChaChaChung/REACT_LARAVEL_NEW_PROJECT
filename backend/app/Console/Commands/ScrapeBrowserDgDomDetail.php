@@ -33,6 +33,7 @@ class ScrapeBrowserDgDomDetail extends Command
      */
     public function handle()
     {
+        ini_set('memory_limit', '1G');
         $url = $this->argument('url');
         $dateStart = $this->argument('date_start');
         $dateEnd = $this->argument('date_end');
@@ -278,6 +279,20 @@ class ScrapeBrowserDgDomDetail extends Command
                             if (endValue) console.log('📅 Set endTimeStr:', endValue);
                             await new Promise(resolve => setTimeout(resolve, 500));
 
+                            // 設定每頁筆數為 1000（最大值），減少總頁數加快爬取
+                            try {
+                                const pageSizeSelect = await page.$('select#pageSize, select[name="pageSize"]');
+                                if (pageSizeSelect) {
+                                    await page.select('select#pageSize, select[name="pageSize"]', '1000');
+                                    console.log('📊 Set pageSize to 1000');
+                                    await new Promise(resolve => setTimeout(resolve, 300));
+                                } else {
+                                    console.log('⚠️  pageSize select not found');
+                                }
+                            } catch (e) {
+                                console.log('⚠️  pageSize step: ' + e.message);
+                            }
+
                             // 點擊 Search 按鈕
                             const searchBtn = await page.$('button[type="submit"].btn.btn-default');
                             if (searchBtn) {
@@ -453,13 +468,13 @@ class ScrapeBrowserDgDomDetail extends Command
                         });
                     };
 
-                    // 跳到指定頁
-                    // pageNow() 會觸發整頁 navigation，需用 waitForNavigation 等載入完成
+                    // 跳到指定頁並等待 active 頁碼變化（最多 12 秒）
+                    // 跳到指定頁：pageNow() 觸發整頁 navigation
+                    // 必須用 Promise.all 同時啟動 waitForNavigation + pageNow，否則 context 被銷毀
                     const goToPage = async (pageNum) => {
                         try {
-                            // 同時啟動 waitForNavigation 和 pageNow()，避免 race condition
                             await Promise.all([
-                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }),
                                 page.evaluate((n) => {
                                     if (typeof pageNow === 'function') {
                                         pageNow(String(n));
@@ -472,15 +487,15 @@ class ScrapeBrowserDgDomDetail extends Command
                                     }
                                 }, pageNum)
                             ]);
-                            // navigation 完成後再等表格出現
                             await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 10000 }).catch(() => {});
                             console.log('✅ Page ' + pageNum + ' loaded');
                             return true;
                         } catch (e) {
-                            console.log('⚠️  goToPage error: ' + e.message);
+                            console.log('⚠️  goToPage(' + pageNum + ') error: ' + e.message);
                             return false;
                         }
                     };
+
 
                     // ── 主翻頁迴圈 ──
                     let allHeaders = [];
@@ -606,7 +621,7 @@ class ScrapeBrowserDgDomDetail extends Command
     {
         $this->info('3. Running browser automation...');
         $workingDir = dirname($scriptPath);
-        $result = Process::path($workingDir)->timeout(600)->run('node ' . basename($scriptPath));
+        $result = Process::path($workingDir)->timeout(0)->run('node ' . basename($scriptPath));
 
         $this->line("");
         $this->line("📋 Browser Output:");
