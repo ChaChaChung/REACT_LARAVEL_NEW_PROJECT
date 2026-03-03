@@ -136,6 +136,22 @@ class ScrapeBrowserDgDomDetail extends Command
             async function run() {
                 console.log('🚀 DG: Starting login and navigate...');
 
+                const stepScreenshots = [];
+                const workingDirRef = { value: null };
+
+                const takeStepScreenshot = async (page, stepName) => {
+                    if (!workingDirRef.value) return;
+                    const filename = 'step_' + String(stepScreenshots.length + 1).padStart(2, '0') + '_' + stepName.replace(/[^a-zA-Z0-9_]/g, '_') + '.png';
+                    const filePath = path.join(workingDirRef.value, filename);
+                    try {
+                        await page.screenshot({ path: filePath, fullPage: false });
+                        stepScreenshots.push(filename);
+                        console.log('📸 Step screenshot: ' + filename);
+                    } catch (e) {
+                        console.log('⚠️  Step screenshot failed (' + stepName + '): ' + e.message);
+                    }
+                };
+
                 // puppeteer-real-browser 使用真實 Chrome，自動繞過 Cloudflare bot 驗證
                 const { browser, page } = await connect({
                     headless: false,
@@ -152,6 +168,8 @@ class ScrapeBrowserDgDomDetail extends Command
 
                 try {
                     await page.setViewport({ width: 1920, height: 1080 });
+
+                    workingDirRef.value = require('path').dirname(process.argv[1]);
 
                     // 先進入目標 domain 任一頁，才能對該 domain 設定 cookie
                     let loginUrl;
@@ -172,6 +190,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     console.log('🌐 Navigating to domain (for cookie context):', loginUrl);
                     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 1000));
+                    await takeStepScreenshot(page, '01_domain_loaded');
 
                     // 登入：設定 cookies（session = DG_AGENT_TOKEN, language = DG_AGENT_LANG）
                     $cookiesCode
@@ -182,6 +201,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     console.log('🔄 Navigating to target URL with cookies:', targetUrl);
                     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 3000));
+                    await takeStepScreenshot(page, '02_target_url_loaded');
 
                     // 若目標 url 有 hash，用 client 端導向到對應路由
                     try {
@@ -190,6 +210,7 @@ class ScrapeBrowserDgDomDetail extends Command
                             console.log('📍 Setting hash:', u.hash);
                             await page.evaluate((hash) => { window.location.hash = hash; }, u.hash);
                             await new Promise(resolve => setTimeout(resolve, 2000));
+                            await takeStepScreenshot(page, '03_hash_navigated');
                         }
                     } catch (e) {}
 
@@ -214,6 +235,7 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await page.select(projectSelectSelector, firstOptionValue);
                                 console.log('✅ Selected project_uid option: ' + firstOptionValue);
                                 await new Promise(resolve => setTimeout(resolve, 800));
+                                await takeStepScreenshot(page, '04_project_uid_selected');
                             } else {
                                 console.log('⚠️  No selectable option found in project_uid select');
                             }
@@ -234,6 +256,7 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await page.type(playerInputSelector, accountNumber);
                                 console.log(`✅ Filled player input with account number: ${accountNumber}`);
                                 await new Promise(resolve => setTimeout(resolve, 1000));
+                                await takeStepScreenshot(page, '05_player_input_filled');
                             } else {
                                 console.log('⚠️ Player input field not found. Skipping input.');
                             }
@@ -242,7 +265,7 @@ class ScrapeBrowserDgDomDetail extends Command
                         }
                     }
 
-                    // 若有帶 date_start 或 date_end：直接用 JS 設值到 laydate input
+                    // 若有帶 date_start 或 date_end：點擊 laydate input 並輸入日期
                     const hasDates = (dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null');
                     if (hasDates) {
                         try {
@@ -259,25 +282,52 @@ class ScrapeBrowserDgDomDetail extends Command
                             const beginValue = toLaydateFormat(dateStart, false);
                             const endValue = toLaydateFormat(dateEnd, true);
 
-                            await page.evaluate((begin, end) => {
-                                const setInputValue = (name, value) => {
-                                    if (!value) return false;
-                                    const input = document.querySelector('input[name="' + name + '"]');
-                                    if (!input) return false;
-                                    // 直接設 value，並觸發 change/input 事件讓框架感知
-                                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                                    nativeInputValueSetter.call(input, value);
-                                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                                    return true;
-                                };
-                                setInputValue('beginTimeStr', begin);
-                                setInputValue('endTimeStr', end);
-                            }, beginValue, endValue);
+                            // 輔助函式：點擊 input → 全選清除 → 輸入新值 → Tab 確認 → JS 保底
+                            const fillDateInput = async (name, value, stepPrefix) => {
+                                if (!value) return;
+                                const input = await page.$('input[name="' + name + '"]');
+                                if (!input) {
+                                    console.log('⚠️  input[name="' + name + '"] not found');
+                                    return;
+                                }
+                                // 點擊開啟 date picker
+                                await input.click();
+                                await new Promise(resolve => setTimeout(resolve, 800));
+                                await takeStepScreenshot(page, stepPrefix + '_picker_open');
 
-                            if (beginValue) console.log('📅 Set beginTimeStr:', beginValue);
-                            if (endValue) console.log('📅 Set endTimeStr:', endValue);
-                            await new Promise(resolve => setTimeout(resolve, 500));
+                                // 全選舊值後刪除
+                                await input.click({ clickCount: 3 });
+                                await new Promise(resolve => setTimeout(resolve, 200));
+                                await page.keyboard.press('Delete');
+                                await new Promise(resolve => setTimeout(resolve, 200));
+
+                                // 逐字輸入新日期值
+                                await input.type(value, { delay: 50 });
+                                console.log('📅 Typed ' + name + ':', value);
+                                await new Promise(resolve => setTimeout(resolve, 300));
+                                await takeStepScreenshot(page, stepPrefix + '_typed');
+
+                                // Tab 確認並關閉 picker
+                                await page.keyboard.press('Tab');
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                                await takeStepScreenshot(page, stepPrefix + '_confirmed');
+
+                                // JS 保底：確保 input value 與 change event 被正確設定
+                                await page.evaluate((inputName, inputValue) => {
+                                    const el = document.querySelector('input[name="' + inputName + '"]');
+                                    if (!el) return;
+                                    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                    setter.call(el, inputValue);
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                }, name, value);
+                            };
+
+                            if (beginValue) await fillDateInput('beginTimeStr', beginValue, '06a_begin_date');
+                            if (endValue) await fillDateInput('endTimeStr', endValue, '06b_end_date');
+
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            await takeStepScreenshot(page, '06_date_range_set');
 
                             // 設定每頁筆數為 1000（最大值），減少總頁數加快爬取
                             try {
@@ -297,6 +347,7 @@ class ScrapeBrowserDgDomDetail extends Command
                             const searchBtn = await page.$('button[type="submit"].btn.btn-default');
                             if (searchBtn) {
                                 await searchBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
+                                await takeStepScreenshot(page, '07_before_search_click');
                                 await searchBtn.click();
                                 console.log('🔍 Clicked Search button');
                                 // 等待表格第一筆資料出現（最多 20 秒）
@@ -305,6 +356,7 @@ class ScrapeBrowserDgDomDetail extends Command
                                     .then(() => console.log('✅ Table loaded'))
                                     .catch(() => console.log('⚠️  Table did not load within 20s, continuing anyway'));
                                 await new Promise(resolve => setTimeout(resolve, 500));
+                                await takeStepScreenshot(page, '08_table_loaded');
                             } else {
                                 console.log('⚠️  Search button not found');
                             }
@@ -513,6 +565,7 @@ class ScrapeBrowserDgDomDetail extends Command
                         await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 12000 }).catch(() => {});
 
                         await expandAllToggleRows();
+                        await takeStepScreenshot(page, 'page_' + String(currentPage).padStart(3, '0') + '_expanded');
                         const pageResult = await scrapeCurrentPage();
 
                         if (!pageResult || !pageResult.found) {
@@ -551,15 +604,18 @@ class ScrapeBrowserDgDomDetail extends Command
                         console.log('⚠️  Table found but no data rows');
                     }
 
-                    const workingDir = require('path').dirname(process.argv[1]);
+                    const workingDir = workingDirRef.value || require('path').dirname(process.argv[1]);
                     const screenshotFilename = 'dg_scraped_page.png';
                     const screenshotPath = path.join(workingDir, screenshotFilename);
                     try {
                         await page.screenshot({ path: screenshotPath, fullPage: false });
-                        console.log('📸 Screenshot saved: ' + screenshotFilename);
+                        console.log('📸 Final screenshot saved: ' + screenshotFilename);
+                        stepScreenshots.push(screenshotFilename);
                     } catch (screenshotError) {
                         console.log('⚠️  Screenshot failed: ' + screenshotError.message);
                     }
+
+                    console.log('📸 Total step screenshots: ' + stepScreenshots.length);
 
                     const resultPath = path.join(workingDir, 'scraped_result.json');
                     const pageTitle = await page.title().catch(() => ''); const pageInfo = { title: pageTitle.trim(), url: finalUrl };
@@ -568,6 +624,7 @@ class ScrapeBrowserDgDomDetail extends Command
                         success: true,
                         url: finalUrl,
                         screenshotPath: screenshotFilename,
+                        stepScreenshots: stepScreenshots,
                         date_start: dateStart || null,
                         date_end: dateEnd || null,
                         queryParams: queryParams,
@@ -652,26 +709,46 @@ class ScrapeBrowserDgDomDetail extends Command
     }
 
     /**
-     * 將截圖從 temp 移到 scraped_data 並輸出路徑（與 SwinDOMDetail 一致：時間戳 Y-m-d_H-i-s）
+     * 將所有步驟截圖從 temp 移到 scraped_data（含 stepScreenshots 陣列與最終截圖）
      */
     private function processScreenshot(array $result): void
     {
-        $screenshotPath = $result['screenshotPath'] ?? null;
-        if (!$screenshotPath) {
-            return;
-        }
-
         $tempDir = dirname(storage_path('app/temp/scraper_dg_dom.js'));
-        $src = $tempDir . '/' . $screenshotPath;
-        if (!file_exists($src)) {
-            $this->warn("⚠️  Screenshot not found: {$src}");
-            return;
-        }
-
         $timestamp = date('Y-m-d_H-i-s');
         $dstDir = storage_path('app/scraped_data');
         if (!is_dir($dstDir)) {
             mkdir($dstDir, 0755, true);
+        }
+
+        // 處理所有步驟截圖（stepScreenshots 陣列已包含最終截圖）
+        $stepScreenshots = $result['stepScreenshots'] ?? [];
+        if (!empty($stepScreenshots)) {
+            $this->info('📸 Moving ' . count($stepScreenshots) . ' step screenshot(s)...');
+            foreach ($stepScreenshots as $filename) {
+                $src = $tempDir . '/' . $filename;
+                if (!file_exists($src)) {
+                    $this->warn("⚠️  Screenshot not found: {$src}");
+                    continue;
+                }
+                $dst = "{$dstDir}/dg_{$timestamp}_{$filename}";
+                if (rename($src, $dst)) {
+                    $this->info("  📸 {$filename} → {$dst}");
+                } else {
+                    $this->warn("  ⚠️  Could not move {$filename}");
+                }
+            }
+            return;
+        }
+
+        // 向下相容：若無 stepScreenshots，只處理最終截圖
+        $screenshotPath = $result['screenshotPath'] ?? null;
+        if (!$screenshotPath) {
+            return;
+        }
+        $src = $tempDir . '/' . $screenshotPath;
+        if (!file_exists($src)) {
+            $this->warn("⚠️  Screenshot not found: {$src}");
+            return;
         }
         $dst = "{$dstDir}/dg_screenshot_{$timestamp}.png";
         if (rename($src, $dst)) {
