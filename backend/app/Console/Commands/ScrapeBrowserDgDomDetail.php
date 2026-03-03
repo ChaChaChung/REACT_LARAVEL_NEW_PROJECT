@@ -241,93 +241,58 @@ class ScrapeBrowserDgDomDetail extends Command
                         }
                     }
 
-                    // 若有帶 date_start 或 date_end：點開 date picker → 在日曆上點選日期 → Apply
-                    const openPickerSelector = 'input.form-control.input-sm.app-date-picker, input.app-date-picker';
-                    const startInputSelector = 'div.range.start .datepicker input, div.range.start input[name="_date"]';
-                    const endInputSelector = 'div.range.end .datepicker input, div.range.end input[name="_date"]';
+                    // 若有帶 date_start 或 date_end：直接用 JS 設值到 laydate input
                     const hasDates = (dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null');
                     if (hasDates) {
                         try {
-                            await page.waitForSelector(openPickerSelector, { timeout: 10000 }).catch(() => null);
-                            const openPickerInput = await page.$(openPickerSelector);
-                            if (openPickerInput) {
-                                await openPickerInput.click();
-                                console.log('📅 Opened date picker');
-                                await new Promise(resolve => setTimeout(resolve, 800));
-                            }
+                            // 等待 laydate input 出現
+                            await page.waitForSelector('input[name="beginTimeStr"], input[name="endTimeStr"]', { timeout: 10000 }).catch(() => null);
 
-                            const parseDate = (dateStr) => {
-                                const [y, m, d] = dateStr.split('-').map(Number);
-                                return { year: y, month: m, day: d };
+                            // 將 YYYY-MM-DD 轉換成 laydate 格式 YYYY/MM/DD hh:mm:ss
+                            const toLaydateFormat = (dateStr, isEnd) => {
+                                if (!dateStr || dateStr === 'null') return null;
+                                const d = dateStr.replace(/-/g, '/');
+                                return isEnd ? d + ' 23:59:59' : d + ' 00:00:00';
                             };
 
-                            // 依 td 的 debug 屬性點選日期（debug="2026-02-01T00:00:00Z"），排除 .off
-                            const clickDateByDebug = async (dateStr) => {
-                                const debugPrefix = dateStr + 'T';
-                                const clicked = await page.evaluate((prefix) => {
-                                    const calendars = document.querySelectorAll('div.calendar');
-                                    for (const cal of calendars) {
-                                        const tds = cal.querySelectorAll('tbody td:not(.off)');
-                                        for (const td of tds) {
-                                            const debug = td.getAttribute('debug');
-                                            if (debug && debug.indexOf(prefix) === 0) {
-                                                td.click();
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                    return false;
-                                }, debugPrefix);
-                                return clicked;
-                            };
+                            const beginValue = toLaydateFormat(dateStart, false);
+                            const endValue = toLaydateFormat(dateEnd, true);
 
-                            if (dateStart && dateStart !== 'null') {
-                                const startEl = await page.$(startInputSelector);
-                                if (startEl) {
-                                    await startEl.click();
-                                    await new Promise(resolve => setTimeout(resolve, 400));
-                                }
-                                const ok = await clickDateByDebug(dateStart);
-                                if (ok) console.log('📅 Clicked start date:', dateStart);
-                                else console.log('⚠️  Could not click start date (debug)');
-                                await new Promise(resolve => setTimeout(resolve, 400));
-                            }
+                            await page.evaluate((begin, end) => {
+                                const setInputValue = (name, value) => {
+                                    if (!value) return false;
+                                    const input = document.querySelector('input[name="' + name + '"]');
+                                    if (!input) return false;
+                                    // 直接設 value，並觸發 change/input 事件讓框架感知
+                                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                                    nativeInputValueSetter.call(input, value);
+                                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    return true;
+                                };
+                                setInputValue('beginTimeStr', begin);
+                                setInputValue('endTimeStr', end);
+                            }, beginValue, endValue);
 
-                            if (dateEnd && dateEnd !== 'null') {
-                                const endEl = await page.$(endInputSelector);
-                                if (endEl) {
-                                    await endEl.click();
-                                    await new Promise(resolve => setTimeout(resolve, 400));
-                                }
-                                const ok = await clickDateByDebug(dateEnd);
-                                if (ok) console.log('📅 Clicked end date:', dateEnd);
-                                else console.log('⚠️  Could not click end date (debug)');
-                                await new Promise(resolve => setTimeout(resolve, 400));
-                            }
-
-                            const applyBtn = await page.$('div.apply-btn');
-                            if (applyBtn) {
-                                await applyBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
-                                await new Promise(resolve => setTimeout(resolve, 200));
-                                await applyBtn.click();
-                                console.log('📅 Clicked Apply');
-                                await new Promise(resolve => setTimeout(resolve, 1200));
-                            } else {
-                                console.log('⚠️  Apply button (div.apply-btn) not found');
-                            }
-
-                            const submitBtn = await page.$('div.btn.btn-default.submit-btn');
-                            if (submitBtn) {
-                                await submitBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
-                                await new Promise(resolve => setTimeout(resolve, 200));
-                                await submitBtn.click();
-                                console.log('📅 Clicked 搜尋 (submit)');
-                                await new Promise(resolve => setTimeout(resolve, 1500));
-                            } else {
-                                console.log('⚠️  Submit button (div.submit-btn) not found');
-                            }
-
+                            if (beginValue) console.log('📅 Set beginTimeStr:', beginValue);
+                            if (endValue) console.log('📅 Set endTimeStr:', endValue);
                             await new Promise(resolve => setTimeout(resolve, 500));
+
+                            // 點擊 Search 按鈕
+                            const searchBtn = await page.$('button[type="submit"].btn.btn-default');
+                            if (searchBtn) {
+                                await searchBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
+                                await searchBtn.click();
+                                console.log('🔍 Clicked Search button');
+                                // 等待表格第一筆資料出現（最多 20 秒）
+                                console.log('⏳ Waiting for memberBetdetailTable to load...');
+                                await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 20000 })
+                                    .then(() => console.log('✅ Table loaded'))
+                                    .catch(() => console.log('⚠️  Table did not load within 20s, continuing anyway'));
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            } else {
+                                console.log('⚠️  Search button not found');
+                            }
                         } catch (pickerErr) {
                             console.log('⚠️  Date picker step: ' + pickerErr.message);
                         }
@@ -408,7 +373,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     // ── 翻頁爬取：抓表格所有 tr（含隱藏行）──
                     const scrapeCurrentPage = async () => {
                         return await page.evaluate(() => {
-                            const selector = 'table.table.table-condensed.table-hover.table-striped';
+                            const selector = 'table#memberBetdetailTable';
                             const table = document.querySelector(selector);
                             if (!table) return { found: false, error: 'Table not found' };
 
@@ -459,7 +424,7 @@ class ScrapeBrowserDgDomDetail extends Command
                         });
                     };
 
-                    // 取得目前 active 頁碼（用於等待換頁完成）
+                    // 取得目前 active 頁碼
                     const getActivePage = async () => {
                         return await page.evaluate(() => {
                             const el = document.querySelector('ul.pagination li.active a');
@@ -467,41 +432,54 @@ class ScrapeBrowserDgDomDetail extends Command
                         });
                     };
 
-                    // 判斷是否還有「>>」可點（li.mg-available 內含 >> 的 <a>）
-                    const hasNextPage = async () => {
+                    // 取得總頁數（從 >> 的 onclick="return pageNow('N')" 抓最後一頁）
+                    const getTotalPages = async () => {
                         return await page.evaluate(() => {
-                            const items = document.querySelectorAll('ul.pagination li.mg-available a');
-                            for (const a of items) {
-                                if (a.textContent.trim() === '>>') return true;
+                            const links = document.querySelectorAll('ul.pagination li.next a');
+                            for (const a of links) {
+                                const match = (a.getAttribute('onclick') || '').match(/pageNow\('(\d+)'\)/);
+                                if (match) {
+                                    const text = a.textContent.replace(/\s/g, '');
+                                    if (text === '>>') return parseInt(match[1], 10);
+                                }
                             }
-                            return false;
+                            const pageNums = Array.from(document.querySelectorAll('ul.pagination li a[onclick]'))
+                                .map(a => {
+                                    const m = (a.getAttribute('onclick') || '').match(/pageNow\('(\d+)'\)/);
+                                    return m ? parseInt(m[1], 10) : 0;
+                                })
+                                .filter(n => n > 0);
+                            return pageNums.length > 0 ? Math.max(...pageNums) : 1;
                         });
                     };
 
-                    // 點擊下一頁並等待 active 頁碼改變
-                    const clickNextPage = async (currentActivePage) => {
-                        const clicked = await page.evaluate(() => {
-                            const items = document.querySelectorAll('ul.pagination li.mg-available a');
-                            for (const a of items) {
-                                if (a.textContent.trim() === '>>') {
-                                    a.click();
-                                    return true;
-                                }
-                            }
+                    // 跳到指定頁
+                    // pageNow() 會觸發整頁 navigation，需用 waitForNavigation 等載入完成
+                    const goToPage = async (pageNum) => {
+                        try {
+                            // 同時啟動 waitForNavigation 和 pageNow()，避免 race condition
+                            await Promise.all([
+                                page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+                                page.evaluate((n) => {
+                                    if (typeof pageNow === 'function') {
+                                        pageNow(String(n));
+                                    } else {
+                                        const links = document.querySelectorAll('ul.pagination li a');
+                                        for (const a of links) {
+                                            const match = (a.getAttribute('onclick') || '').match(/pageNow\('(\d+)'\)/);
+                                            if (match && match[1] === String(n)) { a.click(); return; }
+                                        }
+                                    }
+                                }, pageNum)
+                            ]);
+                            // navigation 完成後再等表格出現
+                            await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 10000 }).catch(() => {});
+                            console.log('✅ Page ' + pageNum + ' loaded');
+                            return true;
+                        } catch (e) {
+                            console.log('⚠️  goToPage error: ' + e.message);
                             return false;
-                        });
-                        if (!clicked) return false;
-                        // 等待 active 頁碼變化（最多 10 秒）
-                        const deadline = Date.now() + 10000;
-                        while (Date.now() < deadline) {
-                            await new Promise(r => setTimeout(r, 500));
-                            const newPage = await getActivePage();
-                            if (newPage !== null && newPage !== currentActivePage) {
-                                return true;
-                            }
                         }
-                        console.log('⚠️  Page did not change after clicking >>');
-                        return false;
                     };
 
                     // ── 主翻頁迴圈 ──
@@ -510,15 +488,20 @@ class ScrapeBrowserDgDomDetail extends Command
                     let allData = [];
                     let totalPages = 0;
 
-                    while (true) {
+                    const lastPage = await getTotalPages();
+                    console.log('📑 Total pages detected: ' + lastPage);
+
+                    for (let currentPage = 1; currentPage <= lastPage; currentPage++) {
                         totalPages++;
-                        console.log('📄 Scraping page ' + totalPages + '...');
-                        // 先展開所有 toggle 按鈕，讓 BSCD 子行可見
+                        console.log('📄 Scraping page ' + currentPage + ' / ' + lastPage + '...');
+
+                        await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 12000 }).catch(() => {});
+
                         await expandAllToggleRows();
                         const pageResult = await scrapeCurrentPage();
 
                         if (!pageResult || !pageResult.found) {
-                            console.log('⚠️  Table not found on page ' + totalPages + ': ' + (pageResult && pageResult.error || ''));
+                            console.log('⚠️  Table not found on page ' + currentPage + ': ' + (pageResult && pageResult.error || ''));
                             break;
                         }
 
@@ -527,23 +510,19 @@ class ScrapeBrowserDgDomDetail extends Command
                             allKeyList = pageResult.keyList;
                         }
                         allData = allData.concat(pageResult.data);
-                        console.log('📋 Page ' + totalPages + ' rows: ' + pageResult.data.length + ' (total so far: ' + allData.length + ')');
+                        console.log('📋 Page ' + currentPage + ' rows: ' + pageResult.data.length + ' (total so far: ' + allData.length + ')');
 
-                        const hasNext = await hasNextPage();
-                        if (!hasNext) {
-                            console.log('✅ No more pages (>> not found). Done at page ' + totalPages);
-                            break;
+                        if (currentPage < lastPage) {
+                            const moved = await goToPage(currentPage + 1);
+                            if (!moved) {
+                                console.log('⚠️  Could not navigate to page ' + (currentPage + 1) + '. Stopping.');
+                                break;
+                            }
+                            await new Promise(r => setTimeout(r, 800));
                         }
-
-                        const currentActivePage = await getActivePage();
-                        const moved = await clickNextPage(currentActivePage);
-                        if (!moved) {
-                            console.log('⚠️  Could not navigate to next page. Stopping.');
-                            break;
-                        }
-                        // 等待表格重新渲染
-                        await new Promise(r => setTimeout(r, 800));
                     }
+
+                    console.log('✅ All pages scraped. Total pages: ' + totalPages + ', total rows: ' + allData.length);
 
                     const tableData = allHeaders.length > 0
                         ? { found: true, headers: allHeaders, keys: allKeyList, rowCount: allData.length, data: allData }
@@ -552,7 +531,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     if (tableData.found && tableData.data.length > 0) {
                         console.log('📋 Total table rows scraped: ' + tableData.rowCount + ' (across ' + totalPages + ' pages)');
                     } else if (!tableData.found) {
-                        console.log('⚠️  Table (table.table-condensed.table-hover.table-striped) not found');
+                        console.log('⚠️  Table (table#memberBetdetailTable) not found');
                     } else {
                         console.log('⚠️  Table found but no data rows');
                     }
@@ -568,7 +547,7 @@ class ScrapeBrowserDgDomDetail extends Command
                     }
 
                     const resultPath = path.join(workingDir, 'scraped_result.json');
-                    const pageInfo = { title: (await page.title()).trim(), url: finalUrl };
+                    const pageTitle = await page.title().catch(() => ''); const pageInfo = { title: pageTitle.trim(), url: finalUrl };
                     const queryParams = { date_start: dateStart || null, date_end: dateEnd || null };
                     const result = {
                         success: true,
@@ -627,7 +606,7 @@ class ScrapeBrowserDgDomDetail extends Command
     {
         $this->info('3. Running browser automation...');
         $workingDir = dirname($scriptPath);
-        $result = Process::path($workingDir)->timeout(120)->run('node ' . basename($scriptPath));
+        $result = Process::path($workingDir)->timeout(600)->run('node ' . basename($scriptPath));
 
         $this->line("");
         $this->line("📋 Browser Output:");
