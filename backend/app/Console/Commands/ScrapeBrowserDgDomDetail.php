@@ -136,21 +136,7 @@ class ScrapeBrowserDgDomDetail extends Command
             async function run() {
                 console.log('🚀 DG: Starting login and navigate...');
 
-                const stepScreenshots = [];
-                const workingDirRef = { value: null };
 
-                const takeStepScreenshot = async (page, stepName) => {
-                    if (!workingDirRef.value) return;
-                    const filename = 'step_' + String(stepScreenshots.length + 1).padStart(2, '0') + '_' + stepName.replace(/[^a-zA-Z0-9_]/g, '_') + '.png';
-                    const filePath = path.join(workingDirRef.value, filename);
-                    try {
-                        await page.screenshot({ path: filePath, fullPage: false });
-                        stepScreenshots.push(filename);
-                        console.log('📸 Step screenshot: ' + filename);
-                    } catch (e) {
-                        console.log('⚠️  Step screenshot failed (' + stepName + '): ' + e.message);
-                    }
-                };
 
                 // puppeteer-real-browser 使用真實 Chrome，自動繞過 Cloudflare bot 驗證
                 const { browser, page } = await connect({
@@ -168,8 +154,6 @@ class ScrapeBrowserDgDomDetail extends Command
 
                 try {
                     await page.setViewport({ width: 1920, height: 1080 });
-
-                    workingDirRef.value = require('path').dirname(process.argv[1]);
 
                     // 先進入目標 domain 任一頁，才能對該 domain 設定 cookie
                     let loginUrl;
@@ -190,7 +174,6 @@ class ScrapeBrowserDgDomDetail extends Command
                     console.log('🌐 Navigating to domain (for cookie context):', loginUrl);
                     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 1000));
-                    await takeStepScreenshot(page, '01_domain_loaded');
 
                     // 登入：設定 cookies（session = DG_AGENT_TOKEN, language = DG_AGENT_LANG）
                     $cookiesCode
@@ -201,7 +184,6 @@ class ScrapeBrowserDgDomDetail extends Command
                     console.log('🔄 Navigating to target URL with cookies:', targetUrl);
                     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
                     await new Promise(resolve => setTimeout(resolve, 3000));
-                    await takeStepScreenshot(page, '02_target_url_loaded');
 
                     // 若目標 url 有 hash，用 client 端導向到對應路由
                     try {
@@ -210,7 +192,6 @@ class ScrapeBrowserDgDomDetail extends Command
                             console.log('📍 Setting hash:', u.hash);
                             await page.evaluate((hash) => { window.location.hash = hash; }, u.hash);
                             await new Promise(resolve => setTimeout(resolve, 2000));
-                            await takeStepScreenshot(page, '03_hash_navigated');
                         }
                     } catch (e) {}
 
@@ -235,7 +216,6 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await page.select(projectSelectSelector, firstOptionValue);
                                 console.log('✅ Selected project_uid option: ' + firstOptionValue);
                                 await new Promise(resolve => setTimeout(resolve, 800));
-                                await takeStepScreenshot(page, '04_project_uid_selected');
                             } else {
                                 console.log('⚠️  No selectable option found in project_uid select');
                             }
@@ -256,7 +236,6 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await page.type(playerInputSelector, accountNumber);
                                 console.log(`✅ Filled player input with account number: ${accountNumber}`);
                                 await new Promise(resolve => setTimeout(resolve, 1000));
-                                await takeStepScreenshot(page, '05_player_input_filled');
                             } else {
                                 console.log('⚠️ Player input field not found. Skipping input.');
                             }
@@ -269,8 +248,18 @@ class ScrapeBrowserDgDomDetail extends Command
                     const hasDates = (dateStart && dateStart !== 'null') || (dateEnd && dateEnd !== 'null');
                     if (hasDates) {
                         try {
-                            // 等待 laydate input 出現
-                            await page.waitForSelector('input[name="beginTimeStr"], input[name="endTimeStr"]', { timeout: 10000 }).catch(() => null);
+                            // 等待表單出現（最多 30 秒，SPA 可能需要較長時間渲染）
+                            console.log('⏳ Waiting for date inputs to appear...');
+                            const dateInputFound = await page.waitForSelector(
+                                'input[name="beginTimeStr"], input[name="endTimeStr"]',
+                                { timeout: 30000 }
+                            ).then(() => true).catch(() => false);
+
+                            if (!dateInputFound) {
+                                console.log('❌ Date inputs not found after 30s. Aborting date filter.');
+                                throw new Error('Date inputs not found');
+                            }
+                            console.log('✅ Date inputs found');
 
                             // 將 YYYY-MM-DD 轉換成 laydate 格式 YYYY/MM/DD hh:mm:ss
                             const toLaydateFormat = (dateStr, isEnd) => {
@@ -283,7 +272,7 @@ class ScrapeBrowserDgDomDetail extends Command
                             const endValue = toLaydateFormat(dateEnd, true);
 
                             // 輔助函式：點擊 input → 全選清除 → 輸入新值 → Tab 確認 → JS 保底
-                            const fillDateInput = async (name, value, stepPrefix) => {
+                            const fillDateInput = async (name, value) => {
                                 if (!value) return;
                                 const input = await page.$('input[name="' + name + '"]');
                                 if (!input) {
@@ -293,7 +282,6 @@ class ScrapeBrowserDgDomDetail extends Command
                                 // 點擊開啟 date picker
                                 await input.click();
                                 await new Promise(resolve => setTimeout(resolve, 800));
-                                await takeStepScreenshot(page, stepPrefix + '_picker_open');
 
                                 // 全選舊值後刪除
                                 await input.click({ clickCount: 3 });
@@ -305,12 +293,10 @@ class ScrapeBrowserDgDomDetail extends Command
                                 await input.type(value, { delay: 50 });
                                 console.log('📅 Typed ' + name + ':', value);
                                 await new Promise(resolve => setTimeout(resolve, 300));
-                                await takeStepScreenshot(page, stepPrefix + '_typed');
 
                                 // Tab 確認並關閉 picker
                                 await page.keyboard.press('Tab');
                                 await new Promise(resolve => setTimeout(resolve, 500));
-                                await takeStepScreenshot(page, stepPrefix + '_confirmed');
 
                                 // JS 保底：確保 input value 與 change event 被正確設定
                                 await page.evaluate((inputName, inputValue) => {
@@ -323,11 +309,10 @@ class ScrapeBrowserDgDomDetail extends Command
                                 }, name, value);
                             };
 
-                            if (beginValue) await fillDateInput('beginTimeStr', beginValue, '06a_begin_date');
-                            if (endValue) await fillDateInput('endTimeStr', endValue, '06b_end_date');
+                            if (beginValue) await fillDateInput('beginTimeStr', beginValue);
+                            if (endValue) await fillDateInput('endTimeStr', endValue);
 
                             await new Promise(resolve => setTimeout(resolve, 300));
-                            await takeStepScreenshot(page, '06_date_range_set');
 
                             // 設定每頁筆數為 1000（最大值），減少總頁數加快爬取
                             try {
@@ -343,27 +328,32 @@ class ScrapeBrowserDgDomDetail extends Command
                                 console.log('⚠️  pageSize step: ' + e.message);
                             }
 
-                            // 點擊 Search 按鈕
-                            const searchBtn = await page.$('button[type="submit"].btn.btn-default');
-                            if (searchBtn) {
+                            // 等待並點擊 Search 按鈕
+                            console.log('⏳ Waiting for Search button...');
+                            const searchBtnFound = await page.waitForSelector(
+                                'button[type="submit"].btn.btn-default',
+                                { timeout: 15000 }
+                            ).then(() => true).catch(() => false);
+
+                            if (searchBtnFound) {
+                                const searchBtn = await page.$('button[type="submit"].btn.btn-default');
                                 await searchBtn.evaluate(el => el.scrollIntoView({ block: 'center' }));
-                                await takeStepScreenshot(page, '07_before_search_click');
                                 await searchBtn.click();
                                 console.log('🔍 Clicked Search button');
-                                // 等待表格第一筆資料出現（最多 20 秒）
+                                // 等待表格第一筆資料出現（最多 30 秒）
                                 console.log('⏳ Waiting for memberBetdetailTable to load...');
-                                await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 20000 })
+                                await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 30000 })
                                     .then(() => console.log('✅ Table loaded'))
-                                    .catch(() => console.log('⚠️  Table did not load within 20s, continuing anyway'));
+                                    .catch(() => console.log('⚠️  Table did not load within 30s, continuing anyway'));
                                 await new Promise(resolve => setTimeout(resolve, 500));
-                                await takeStepScreenshot(page, '08_table_loaded');
                             } else {
-                                console.log('⚠️  Search button not found');
+                                console.log('❌ Search button not found after 15s');
                             }
                         } catch (pickerErr) {
                             console.log('⚠️  Date picker step: ' + pickerErr.message);
                         }
                     }
+
 
                     // ── 多輪展開：每輪點完所有 fa-plus 後等待新增的子行出現，直到沒有 fa-plus ──
                     const expandAllToggleRows = async () => {
@@ -564,7 +554,6 @@ class ScrapeBrowserDgDomDetail extends Command
                         await page.waitForSelector('table#memberBetdetailTable tbody tr', { timeout: 12000 }).catch(() => {});
 
                         await expandAllToggleRows();
-                        await takeStepScreenshot(page, 'page_' + String(currentPage).padStart(3, '0') + '_expanded');
                         const pageResult = await scrapeCurrentPage();
 
                         if (!pageResult || !pageResult.found) {
@@ -603,27 +592,25 @@ class ScrapeBrowserDgDomDetail extends Command
                         console.log('⚠️  Table found but no data rows');
                     }
 
-                    const workingDir = workingDirRef.value || require('path').dirname(process.argv[1]);
+                    const workingDir = require('path').dirname(process.argv[1]);
+                    const resultPath = path.join(workingDir, 'scraped_result.json');
+
+                    // 截一張查詢完成後的畫面
                     const screenshotFilename = 'dg_scraped_page.png';
                     const screenshotPath = path.join(workingDir, screenshotFilename);
                     try {
                         await page.screenshot({ path: screenshotPath, fullPage: false });
-                        console.log('📸 Final screenshot saved: ' + screenshotFilename);
-                        stepScreenshots.push(screenshotFilename);
-                    } catch (screenshotError) {
-                        console.log('⚠️  Screenshot failed: ' + screenshotError.message);
+                        console.log('📸 Screenshot saved: ' + screenshotFilename);
+                    } catch (screenshotErr) {
+                        console.log('⚠️  Screenshot failed: ' + screenshotErr.message);
                     }
 
-                    console.log('📸 Total step screenshots: ' + stepScreenshots.length);
-
-                    const resultPath = path.join(workingDir, 'scraped_result.json');
                     const pageTitle = await page.title().catch(() => ''); const pageInfo = { title: pageTitle.trim(), url: finalUrl };
                     const queryParams = { date_start: dateStart || null, date_end: dateEnd || null };
                     const result = {
                         success: true,
                         url: finalUrl,
                         screenshotPath: screenshotFilename,
-                        stepScreenshots: stepScreenshots,
                         date_start: dateStart || null,
                         date_end: dateEnd || null,
                         queryParams: queryParams,
@@ -708,47 +695,25 @@ class ScrapeBrowserDgDomDetail extends Command
     }
 
     /**
-     * 將所有步驟截圖從 temp 移到 scraped_data（含 stepScreenshots 陣列與最終截圖）
+     * 將截圖從 temp 移到 scraped_data
      */
     private function processScreenshot(array $result): void
     {
-        $tempDir = dirname(storage_path('app/temp/scraper_dg_dom.js'));
-        $timestamp = date('Y-m-d_H-i-s');
-        $dstDir = storage_path('app/scraped_data');
-        if (!is_dir($dstDir)) {
-            mkdir($dstDir, 0755, true);
-        }
-
-        // 處理所有步驟截圖（stepScreenshots 陣列已包含最終截圖）
-        $stepScreenshots = $result['stepScreenshots'] ?? [];
-        if (!empty($stepScreenshots)) {
-            $this->info('📸 Moving ' . count($stepScreenshots) . ' step screenshot(s)...');
-            foreach ($stepScreenshots as $filename) {
-                $src = $tempDir . '/' . $filename;
-                if (!file_exists($src)) {
-                    $this->warn("⚠️  Screenshot not found: {$src}");
-                    continue;
-                }
-                $dst = "{$dstDir}/dg_{$timestamp}_{$filename}";
-                if (rename($src, $dst)) {
-                    $this->info("  📸 {$filename} → {$dst}");
-                } else {
-                    $this->warn("  ⚠️  Could not move {$filename}");
-                }
-            }
-            return;
-        }
-
-        // 向下相容：若無 stepScreenshots，只處理最終截圖
         $screenshotPath = $result['screenshotPath'] ?? null;
         if (!$screenshotPath) {
             return;
         }
+        $tempDir = dirname(storage_path('app/temp/scraper_dg_dom.js'));
         $src = $tempDir . '/' . $screenshotPath;
         if (!file_exists($src)) {
             $this->warn("⚠️  Screenshot not found: {$src}");
             return;
         }
+        $dstDir = storage_path('app/scraped_data');
+        if (!is_dir($dstDir)) {
+            mkdir($dstDir, 0755, true);
+        }
+        $timestamp = date('Y-m-d_H-i-s');
         $dst = "{$dstDir}/dg_screenshot_{$timestamp}.png";
         if (rename($src, $dst)) {
             $this->info("📸 Screenshot saved to: {$dst}");
@@ -809,6 +774,12 @@ class ScrapeBrowserDgDomDetail extends Command
             }, $row);
         }, $allData);
 
+        // 移除小計列與合計列
+        $allData = array_values(array_filter($allData, function ($row) {
+            $no = $row['No.'] ?? $row['No'] ?? '';
+            return $no !== 'SubTotal' && $no !== 'Total';
+        }));
+
         $totalRows = count($allData);
         $this->info('📋 Table rows: ' . $totalRows);
 
@@ -817,7 +788,7 @@ class ScrapeBrowserDgDomDetail extends Command
         $dataPreview = array_slice($allData, 0, 10);
         $previewAsRows = array_map(function ($row) use ($keys) {
             if (is_array($row) && !array_is_list($row)) {
-                return array_map(fn ($k) => $row[$k] ?? '', $keys);
+                return array_map(fn($k) => $row[$k] ?? '', $keys);
             }
             return is_array($row) ? $row : [];
         }, $dataPreview);
@@ -827,6 +798,23 @@ class ScrapeBrowserDgDomDetail extends Command
         if ($totalRows > 10) {
             $this->line('... and ' . ($totalRows - 10) . ' more rows.');
         }
+
+        // 計算 Total Bet、Turnover、Winloss 的總和
+        $sumTotalBet  = 0.0;
+        $sumTurnover  = 0.0;
+        $sumWinloss   = 0.0;
+        foreach ($allData as $row) {
+            $toFloat = fn($v) => (float) str_replace(',', '', $v ?? '0');
+            $sumTotalBet += $toFloat($row['Total_Bet'] ?? $row['Total Bet'] ?? '');
+            $sumTurnover += $toFloat($row['Turnover'] ?? '');
+            $sumWinloss  += $toFloat($row['Winloss']  ?? '');
+        }
+        $summary = [
+            'record_count' => $totalRows,
+            'total_bet'    => round($sumTotalBet, 4),
+            'turnover'     => round($sumTurnover, 4),
+            'winloss'      => round($sumWinloss, 4),
+        ];
 
         $queryParams = $result['queryParams'] ?? array_filter([
             'date_start' => $result['date_start'] ?? $this->argument('date_start'),
@@ -844,11 +832,19 @@ class ScrapeBrowserDgDomDetail extends Command
             'headerCount' => count($headers),
             'rowCount' => $totalRows,
             'data' => $allData,
+            'summary' => $summary,
         ];
 
         $mergedFileName = "scraped_data/dg_scraped_data_{$timestamp}.json";
         Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->info("📊 Table data saved: storage/app/{$mergedFileName} ({$totalRows} rows)");
+        $this->info(sprintf(
+            "📈 Summary — Records: %d | Total Bet: %s | Turnover: %s | Winloss: %s",
+            $totalRows,
+            number_format($sumTotalBet, 2),
+            number_format($sumTurnover, 2),
+            number_format($sumWinloss, 2)
+        ));
 
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info('✅ DG scraping completed!');
