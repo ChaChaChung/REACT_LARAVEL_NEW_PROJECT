@@ -548,7 +548,6 @@ class ScrapeBrowserDgDomDetail extends Command
                         }
                     };
 
-
                     // ── 主翻頁迴圈 ──
                     let allHeaders = [];
                     let allKeyList = [];
