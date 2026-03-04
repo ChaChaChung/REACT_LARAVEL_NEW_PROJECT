@@ -16,7 +16,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
     /**
      * 命令簽名和參數定義
-     * @var string
+     * @var stringScrapeBrowserSwinDOMDetail.php
      * 執行方式：php artisan agent:scrape-dom {url}
      * {url} - 要爬取的目標網址（必需參數）
      * {date_start?} - 要選擇的開始日期（可選參數）
@@ -76,7 +76,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
         return 1;
     }
-    
+
     /**
      * 檢查 Node.js 和 Puppeteer 環境
      * @return bool 返回 true 表示環境檢查通過，false 表示失敗
@@ -1548,7 +1548,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
         return $scriptPath;
     }
-    
+
     /**
      * 執行 Puppeteer 腳本
      * @param string $scriptPath Puppeteer 腳本文件路徑
@@ -1598,7 +1598,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
         $this->error("❌ No result file found at: {$resultFile}");
         return null;
     }
-    
+
     /**
      * 處理和保存爬取的資料
      * @param array $result 爬取的結果資料
@@ -1615,7 +1615,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
         // 提取 DOM 資料
         $domData = $result['domData'] ?? [];
-        
+
         // 獲取查詢參數
         $queryParams = $result['queryParams'] ?? [];
 
@@ -1626,7 +1626,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
         $allData = [];
         $totalRows = 0;
         $headers = [];
-        
+
         // 首先嘗試從 tables 中提取數據
         if (!empty($domData['tables'])) {
             foreach ($domData['tables'] as $tableIndex => $table) {
@@ -1634,7 +1634,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     // 將當前表格的所有數據添加到總數組中
                     $allData = array_merge($allData, $table['data']);
                     $totalRows += count($table['data']);
-                    
+
                     // 保存表頭（使用第一個表格的表頭）
                     if (empty($headers) && !empty($table['headers'])) {
                         $headers = $table['headers'];
@@ -1642,7 +1642,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 }
             }
         }
-        
+
         // 如果 tables 為空或沒有數據，嘗試從 pages 中提取數據
         if (empty($allData) && !empty($domData['pages'])) {
             foreach ($domData['pages'] as $page) {
@@ -1651,7 +1651,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         if (!empty($table['data'])) {
                             $allData = array_merge($allData, $table['data']);
                             $totalRows += count($table['data']);
-                            
+
                             // 保存表頭（使用第一個表格的表頭）
                             if (empty($headers) && !empty($table['headers'])) {
                                 $headers = $table['headers'];
@@ -1664,10 +1664,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
         // 初始化合併後的檔案名稱
         $mergedFileName = null;
-        
+
         // 初始化平台資料（在外層定義，確保在所有情況下都可用）
         $platformData = [];
-        
+
         // 如果有資料，保存合併後的資料
         if (!empty($allData)) {
             // 清理"代理"欄位：移除"公司主站代理線"字樣
@@ -1680,16 +1680,16 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 }
             }
             unset($row); // 解除引用
-            
+
             // 按照平台分類數資料
             // 平台欄位名稱
             $platformField = '平台';
-            
+
             // 所有資料執行迴圈
             foreach ($allData as $row) {
                 // 取出平台名稱
                 $platform = $row[$platformField] ?? 'Unknown';
-                
+
                 // 如果平台資料不存在，創建新的平台資料
                 if (!isset($platformData[$platform])) {
                     // 創建新的平台資料
@@ -1698,16 +1698,16 @@ class ScrapeBrowserSwinDOMDetail extends Command
                         'data' => []
                     ];
                 }
-                
+
                 // 將資料加入平台資料
                 $platformData[$platform]['data'][] = $row;
                 // 增加平台資料的行數
                 $platformData[$platform]['rowCount']++;
             }
-            
+
             // 按照平台名稱排序
             ksort($platformData);
-            
+
             // 創建合併後的數據結構（按平台分類）
             $mergedData = [
                 'metadata' => [
@@ -1724,12 +1724,12 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 'rowCount' => $totalRows,
                 'platforms' => $platformData
             ];
-            
+
             // 只為每個平台單獨保存檔案（不再產生合併檔案）
             foreach ($platformData as $platform => $data) {
                 // 取出平台名稱
                 $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
-                
+
                 // 創建平台專屬的資料結構
                 $platformFileData = [
                     'metadata' => [
@@ -1745,20 +1745,20 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     'rowCount' => $data['rowCount'],
                     'data' => $data['data']
                 ];
-                
+
                 // 保存平台專屬檔案
                 $platformFileName = "scraped_data/{$safePlatformName}_{$timestamp}.json";
                 Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
                 $this->info("💾 Platform file saved: {$platformFileName} ({$data['rowCount']} rows)");
             }
-            
+
             $this->info("✅ All " . count($platformData) . " platform-specific files saved!");
         }
 
         // 將截圖從臨時目錄移動到永久儲存目錄
         $screenshotSrc = storage_path('app/temp/scraped_page_screenshot.png');
         $screenshotDst = storage_path("app/scraped_data/dom_screenshot_{$timestamp}.png");
-        
+
         if (file_exists($screenshotSrc)) {
             rename($screenshotSrc, $screenshotDst);
             $this->info("📸 Screenshot saved to: {$screenshotDst}");
@@ -1766,10 +1766,10 @@ class ScrapeBrowserSwinDOMDetail extends Command
 
         // 處理帳號詳情結果（如果有的話，也按平台合併到對應的平台檔案中）
         $accountDetailResults = $result['accountDetailResults'] ?? [];
-        
+
         if (!empty($accountDetailResults)) {
             $this->info('📋 Processing account detail results: ' . count($accountDetailResults) . ' result(s)');
-            
+
             // 將帳號詳情資料按平台分類並合併到對應的平台資料中
             foreach ($accountDetailResults as $index => $detailResult) {
                 if (!isset($detailResult['success']) || !$detailResult['success']) {
@@ -1781,7 +1781,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 if (isset($detailResult['screenshot'])) {
                     $screenshotSrc = storage_path('app/temp/' . $detailResult['screenshot']);
                     $screenshotDst = storage_path("app/scraped_data/account_detail_{$timestamp}_link_" . ($index + 1) . ".png");
-                    
+
                     if (file_exists($screenshotSrc)) {
                         rename($screenshotSrc, $screenshotDst);
                         $this->info("📸 Detail screenshot saved: {$screenshotDst}");
@@ -1792,7 +1792,7 @@ class ScrapeBrowserSwinDOMDetail extends Command
                 if (isset($detailResult['tableData']) && !empty($detailResult['tableData']['data'])) {
                     $platform = $detailResult['platform'] ?? 'unknown';
                     $detailData = $detailResult['tableData']['data'] ?? [];
-                    
+
                     // 如果該平台不存在於 platformData 中，創建新的平台資料
                     if (!isset($platformData[$platform])) {
                         $platformData[$platform] = [
@@ -1800,13 +1800,13 @@ class ScrapeBrowserSwinDOMDetail extends Command
                             'data' => []
                         ];
                     }
-                    
+
                     // 將詳情資料合併進去
                     foreach ($detailData as $row) {
                         // 檢查是否已存在（使用單號或整行資料進行去重）
                         $rowKey = $row['單號'] ?? $row['Order_Number'] ?? json_encode($row);
                         $exists = false;
-                        
+
                         foreach ($platformData[$platform]['data'] as $existingRow) {
                             $existingKey = $existingRow['單號'] ?? $existingRow['Order_Number'] ?? json_encode($existingRow);
                             if ($rowKey === $existingKey) {
@@ -1814,28 +1814,28 @@ class ScrapeBrowserSwinDOMDetail extends Command
                                 break;
                             }
                         }
-                        
+
                         // 如果不存在，加入到平台資料中
                         if (!$exists) {
                             $platformData[$platform]['data'][] = $row;
                             $platformData[$platform]['rowCount']++;
                         }
                     }
-                    
+
                     $this->info("✅ Merged " . count($detailData) . " rows into platform: {$platform}");
                 }
             }
-            
+
             $this->info("✅ All account detail results merged into platform data!");
         }
-        
+
         // 保存所有平台檔案（包含主列表資料和帳號詳情資料）
         if (!empty($platformData)) {
             $this->info('💾 Saving platform files...');
-            
+
             foreach ($platformData as $platform => $data) {
                 $safePlatformName = preg_replace('/[^a-zA-Z0-9_\-\x{4e00}-\x{9fa5}]/u', '_', $platform);
-                
+
                 // 從資料中提取表頭（如果資料有的話）
                 $platformHeaders = $headers;
                 if (!empty($data['data'])) {
@@ -1843,7 +1843,27 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     $firstRow = $data['data'][0];
                     $platformHeaders = array_keys($firstRow);
                 }
-                
+
+                // 計算加總統計
+                $toFloat = fn($v) => (float) str_replace(',', '', $v ?? '0');
+                $sumBetTimes    = 0;
+                $sumBet         = 0.0;
+                $sumTotalBet    = 0.0;
+                $sumWinLoss     = 0.0;
+                foreach ($data['data'] as $row) {
+                    $sumBetTimes += (int) str_replace(',', '', $row['Total_Bet_Times'] ?? '0');
+                    $sumBet      += $toFloat($row['Bet']             ?? $row['Total_Bet_Amount'] ?? '');
+                    $sumTotalBet += $toFloat($row['Total_Bet_Amount'] ?? '');
+                    $sumWinLoss  += $toFloat($row['Total_Win_Loss']   ?? '');
+                }
+                $platformSummary = [
+                    'record_count'      => $data['rowCount'],
+                    'total_bet_times'   => $sumBetTimes,
+                    'bet'               => round($sumBet, 4),
+                    'total_bet_amount'  => round($sumTotalBet, 4),
+                    'total_win_loss'    => round($sumWinLoss, 4),
+                ];
+
                 $platformFileData = [
                     'metadata' => [
                         'timestamp' => $timestamp,
@@ -1856,21 +1876,30 @@ class ScrapeBrowserSwinDOMDetail extends Command
                     'headers' => $platformHeaders,
                     'headerCount' => count($platformHeaders),
                     'rowCount' => $data['rowCount'],
-                    'data' => $data['data']
+                    'data' => $data['data'],
+                    'summary' => $platformSummary,
                 ];
-                
+
                 $platformFileName = "scraped_data/{$safePlatformName}_{$timestamp}.json";
                 Storage::put($platformFileName, json_encode($platformFileData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
                 $this->info("💾 Platform file saved: {$platformFileName} ({$data['rowCount']} rows)");
+                $this->info(sprintf(
+                    "📈 [%s] Summary — Records: %d | Bet Times: %s | Bet: %s | Total Bet: %s | Win/Loss: %s",
+                    $platform,
+                    $data['rowCount'],
+                    number_format($sumBetTimes),
+                    number_format($sumBet, 2),
+                    number_format($sumTotalBet, 2),
+                    number_format($sumWinLoss, 2)
+                ));
             }
-            
+
             $this->info("✅ All " . count($platformData) . " platform files saved successfully!");
         } else {
             $this->warn("⚠️  No platform data to save!");
         }
-        
+
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
 }
-
