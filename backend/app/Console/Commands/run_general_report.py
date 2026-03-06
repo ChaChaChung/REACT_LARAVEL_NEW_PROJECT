@@ -1,69 +1,88 @@
+#!/usr/bin/env python3
+"""
+補單腳本：自動訪問 GeneralReport，tt=1 到 tt=1707
+"""
+
 import requests
-from datetime import datetime, timedelta
 import time
+import sys
+from datetime import datetime
 
-# 設定參數
-BASE_URL = "https://168swin2.com/report/GeneralReport"
-GM = 12
-START_TIME = datetime(2026, 2, 1, 0, 0, 0)
-END_TIME = datetime(2026, 2, 28, 23, 59, 59)
-INTERVAL = timedelta(minutes=30)
-DELAY_SECONDS = 1   # 每次請求之間的間隔秒數（避免打太快）
-RETRY = 3            # 失敗重試次數
-TIMEOUT = (10, 30)  # (connect timeout, read timeout)
+BASE_URL = "https://web.17lii.com/report/GeneralReport"
+GM = 152
+START = 1
+END = 1707
 
-def format_time(dt):
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+# 可調整設定
+DELAY_SECONDS = 0.5       # 每次請求間隔秒數（避免伺服器壓力）
+TIMEOUT = 30              # 請求超時秒數
+RETRY_TIMES = 3           # 失敗重試次數
+LOG_FILE = "run_report_log.txt"
 
-def run():
-    current = START_TIME
-    total = 0
-    success = 0
-    failed = 0
+session = requests.Session()
+# 如需登入 Cookie，請在下方填入
+# session.cookies.set("your_cookie_name", "your_cookie_value")
+# 或設定 headers
+# session.headers.update({"Authorization": "Bearer YOUR_TOKEN"})
 
-    while current <= END_TIME:
-        s = current
-        e = current + INTERVAL - timedelta(seconds=1)  # 結尾為 xx:xx:59
 
-        params = {
-            "gm": GM,
-            "s": format_time(s),
-            "e": format_time(e),
-        }
+def fetch(tt: int) -> tuple[int, str]:
+    url = f"{BASE_URL}?gm={GM}&tt={tt}"
+    for attempt in range(1, RETRY_TIMES + 1):
+        try:
+            resp = session.get(url, timeout=TIMEOUT)
+            return resp.status_code, resp.text[:100]  # 只記錄前100字
+        except requests.exceptions.RequestException as e:
+            if attempt == RETRY_TIMES:
+                return -1, str(e)
+            time.sleep(2)
+    return -1, "Unknown error"
 
-        url = f"{BASE_URL}?gm={GM}&s={format_time(s).replace(' ', '%20')}&e={format_time(e).replace(' ', '%20')}"
-        print(f"[{total+1}] 請求: {url}")
 
-        for attempt in range(1, RETRY + 1):
-            try:
-                response = requests.get(BASE_URL, params=params, timeout=TIMEOUT, stream=False)
-                status = response.status_code
-                print(f"      ✅ 狀態碼: {status} | 長度: {len(response.text)} bytes")
-                success += 1
-                break
-            except requests.exceptions.ConnectTimeout:
-                print(f"      ⚠️  第 {attempt} 次失敗: 連線逾時 (connect timeout)")
-            except requests.exceptions.ReadTimeout:
-                print(f"      ⚠️  第 {attempt} 次失敗: 讀取逾時 (read timeout)")
-            except requests.exceptions.ConnectionError as ex:
-                print(f"      ⚠️  第 {attempt} 次失敗: 連線錯誤 {ex}")
-            except Exception as ex:
-                print(f"      ⚠️  第 {attempt} 次失敗: {ex}")
+def main():
+    failed = []
+    start_time = datetime.now()
+    print(f"開始時間：{start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"執行範圍：tt={START} ~ tt={END}，共 {END - START + 1} 筆\n")
 
-            if attempt < RETRY:
-                print(f"      🔄 5 秒後重試...")
-                time.sleep(5)
+    with open(LOG_FILE, "w", encoding="utf-8") as log:
+        log.write(f"補單執行紀錄 - {start_time}\n")
+        log.write(f"URL: {BASE_URL}?gm={GM}&tt=[1~{END}]\n")
+        log.write("-" * 60 + "\n")
+
+        for tt in range(START, END + 1):
+            status, preview = fetch(tt)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+
+            if status == 200:
+                msg = f"[{timestamp}] tt={tt:>4}  ✅ 成功 (HTTP {status})"
             else:
-                print(f"      ❌ 重試 {RETRY} 次仍失敗，跳過")
-                failed += 1
+                msg = f"[{timestamp}] tt={tt:>4}  ❌ 失敗 (HTTP {status}) - {preview}"
+                failed.append(tt)
 
-        total += 1
-        current += INTERVAL
+            print(msg)
+            log.write(msg + "\n")
+            log.flush()
 
-        if current <= END_TIME:
+            # 進度顯示
+            if tt % 100 == 0:
+                elapsed = (datetime.now() - start_time).seconds
+                print(f"\n  ── 進度：{tt}/{END}，已耗時 {elapsed}s ──\n")
+
             time.sleep(DELAY_SECONDS)
 
-    print(f"\n完成！共 {total} 筆，成功 {success}，失敗 {failed}")
+    # 結尾摘要
+    end_time = datetime.now()
+    total_sec = (end_time - start_time).seconds
+    print("\n" + "=" * 50)
+    print(f"完成時間：{end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"總耗時：{total_sec} 秒")
+    print(f"成功：{(END - START + 1) - len(failed)} 筆")
+    print(f"失敗：{len(failed)} 筆")
+    if failed:
+        print(f"失敗的 tt 值：{failed}")
+    print(f"詳細紀錄：{LOG_FILE}")
+
 
 if __name__ == "__main__":
-    run()
+    main()
