@@ -70,7 +70,7 @@ class ScrapeBrowserRsgDOM extends Command
 
         return 1;
     }
-    
+
     /**
      * 檢查 Node.js 和 Puppeteer 環境
      * @return bool 返回 true 表示環境檢查通過，false 表示失敗
@@ -121,7 +121,7 @@ class ScrapeBrowserRsgDOM extends Command
      * @param string|null $dateEnd 要選擇的結束日期（可選）
      * @param string|null $accountNumber 要點擊的帳號號碼（可選）
      * @return string 返回生成的腳本文件路徑
-    */
+     */
     private function createPuppeteerScript($url, $dateStart = null, $dateEnd = null, $accountNumber = null)
     {
         $this->info('2. Creating browser automation script...');
@@ -289,9 +289,14 @@ class ScrapeBrowserRsgDOM extends Command
                                             return { clicked: false };
                                         });
                                         
+                                        // 嘗試點擊 Custom Range（如果存在），不管成不成功都繼續設定日期
                                         if (customizeClicked.clicked) {
+                                            console.log('✅ Clicked Custom Range option: ' + customizeClicked.text);
                                             // 等待自定義日期輸入框出現
-                                    await new Promise(resolve => setTimeout(resolve, 1500));
+                                            await new Promise(resolve => setTimeout(resolve, 1500));
+                                        } else {
+                                            console.log('ℹ️  No Custom Range option found, proceeding to set dates via API directly');
+                                        }
                                             
                                     // 先嘗試使用 daterangepicker API（最可靠的方法）
                                             const dateSetResult = await page.evaluate((dateStart, dateEnd) => {
@@ -480,7 +485,6 @@ class ScrapeBrowserRsgDOM extends Command
                                             
                                             // 等待日期選擇器關閉和數據載入
                                             await new Promise(resolve => setTimeout(resolve, 3000));
-                                }
                             }
                         } catch (e) {
                             console.log('⚠️  Error handling date range selection: ' + e.message);
@@ -2803,7 +2807,7 @@ class ScrapeBrowserRsgDOM extends Command
 
         return $scriptPath;
     }
-    
+
     /**
      * 執行 Puppeteer 腳本
      * @param string $scriptPath Puppeteer 腳本文件路徑
@@ -2845,7 +2849,7 @@ class ScrapeBrowserRsgDOM extends Command
         $this->error("❌ No result file found");
         return null;
     }
-    
+
     /**
      * 處理和保存爬取的資料
      * @param array $result 爬取的結果資料
@@ -2862,7 +2866,7 @@ class ScrapeBrowserRsgDOM extends Command
 
         // 提取 DOM 資料
         $domData = $result['domData'] ?? [];
-        
+
         // 獲取查詢參數（account_number 和 date）
         $queryParams = $result['queryParams'] ?? [];
 
@@ -2873,7 +2877,7 @@ class ScrapeBrowserRsgDOM extends Command
         $allData = [];
         $totalRows = 0;
         $headers = [];
-        
+
         // 首先嘗試從 tables 中提取數據
         if (!empty($domData['tables'])) {
             foreach ($domData['tables'] as $tableIndex => $table) {
@@ -2881,7 +2885,7 @@ class ScrapeBrowserRsgDOM extends Command
                     // 將當前表格的所有數據添加到總數組中
                     $allData = array_merge($allData, $table['data']);
                     $totalRows += count($table['data']);
-                    
+
                     // 保存表頭（使用第一個表格的表頭）
                     if (empty($headers) && !empty($table['headers'])) {
                         $headers = $table['headers'];
@@ -2889,7 +2893,7 @@ class ScrapeBrowserRsgDOM extends Command
                 }
             }
         }
-        
+
         // 如果 tables 為空或沒有數據，嘗試從 pages 中提取數據
         if (empty($allData) && !empty($domData['pages'])) {
             foreach ($domData['pages'] as $page) {
@@ -2898,7 +2902,7 @@ class ScrapeBrowserRsgDOM extends Command
                         if (!empty($table['data'])) {
                             $allData = array_merge($allData, $table['data']);
                             $totalRows += count($table['data']);
-                            
+
                             // 保存表頭（使用第一個表格的表頭）
                             if (empty($headers) && !empty($table['headers'])) {
                                 $headers = $table['headers'];
@@ -2908,7 +2912,7 @@ class ScrapeBrowserRsgDOM extends Command
                 }
             }
         }
-        
+
         // 如果有數據，保存合併後的數據
         if (!empty($allData)) {
             // 創建合併後的數據結構（單一 table，所有數據在一個 data 數組中）
@@ -2926,7 +2930,7 @@ class ScrapeBrowserRsgDOM extends Command
                     'data' => $allData  // 所有頁面的數據都在這裡
                 ]
             ];
-            
+
             // 保存合併後的數據到單一 JSON 文件
             $mergedFileName = "scraped_data/dom_merged_all_pages_{$timestamp}.json";
             Storage::put($mergedFileName, json_encode($mergedData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
@@ -2936,30 +2940,30 @@ class ScrapeBrowserRsgDOM extends Command
         $screenshots = [
             'step_13_final_page.png' => "step_13_final_page_{$timestamp}.png",
         ];
-        
+
         foreach ($screenshots as $srcName => $dstName) {
             $srcPath = storage_path('app/temp/' . $srcName);
             $dstPath = storage_path("app/scraped_data/{$dstName}");
-            
+
             if (file_exists($srcPath)) {
                 rename($srcPath, $dstPath);
                 $this->info("📸 Screenshot saved: {$dstName}");
             }
         }
-        
+
         // 移動所有日期連結的截圖文件（step_date_*.png）
         $tempDir = storage_path('app/temp');
         $scrapedDataDir = storage_path('app/scraped_data');
-        
+
         // 確保目標目錄存在
         if (!is_dir($scrapedDataDir)) {
             mkdir($scrapedDataDir, 0755, true);
         }
-        
+
         if (is_dir($tempDir)) {
             $dateScreenshots = glob($tempDir . '/step_date_*.png');
             $this->info("📸 Found " . count($dateScreenshots) . " date link screenshot(s)");
-            
+
             foreach ($dateScreenshots as $srcPath) {
                 $fileName = basename($srcPath);
                 // 添加時間戳到文件名
@@ -2967,7 +2971,7 @@ class ScrapeBrowserRsgDOM extends Command
                 $extension = pathinfo($fileName, PATHINFO_EXTENSION);
                 $newFileName = $nameWithoutExt . '_' . $timestamp . '.' . $extension;
                 $dstPath = $scrapedDataDir . '/' . $newFileName;
-                
+
                 if (file_exists($srcPath)) {
                     if (rename($srcPath, $dstPath)) {
                         $this->info("📸 Date link screenshot saved: {$newFileName}");
@@ -2981,12 +2985,12 @@ class ScrapeBrowserRsgDOM extends Command
         } else {
             $this->warn("⚠️  Temp directory not found: {$tempDir}");
         }
-        
+
         // 移動所有日期數據文件（date_data_*.json）
         if (is_dir($tempDir)) {
             $dateDataFiles = glob($tempDir . '/date_data_*.json');
             $this->info("📊 Found " . count($dateDataFiles) . " date data file(s)");
-            
+
             foreach ($dateDataFiles as $srcPath) {
                 $fileName = basename($srcPath);
                 // 添加時間戳到文件名
@@ -2994,55 +2998,54 @@ class ScrapeBrowserRsgDOM extends Command
                 $extension = pathinfo($fileName, PATHINFO_EXTENSION);
                 $newFileName = $nameWithoutExt . '_' . $timestamp . '.' . $extension;
                 $dstPath = $scrapedDataDir . '/' . $newFileName;
-                
-                    if (file_exists($srcPath)) {
-                        if (rename($srcPath, $dstPath)) {
-                            $this->info("📊 Date data file saved: {$newFileName}");
-                            
-                            // 讀取並顯示數據摘要
-                            try {
-                                $dateData = json_decode(file_get_contents($dstPath), true);
-                                if ($dateData) {
-                                    // 從新的數據結構中讀取信息
-                                    $metadata = $dateData['metadata'] ?? [];
-                                    $totalRows = $dateData['rowCount'] ?? 0;
-                                    $totalPages = $metadata['totalPages'] ?? 0;
-                                    $pagesScraped = $metadata['pagesScraped'] ?? 0;
-                                    $date = $metadata['date'] ?? 'N/A';
-                                    $queryParams = $metadata['queryParams'] ?? [];
-                                    
-                                    $this->info("   📅 Date: {$date}");
-                                    $this->info("   📄 Total pages: {$totalPages}");
-                                    $this->info("   ✅ Pages scraped: {$pagesScraped}");
-                                    $this->info("   📊 Total rows: {$totalRows}");
-                                    
-                                    if (!empty($queryParams)) {
-                                        $this->info("   🔍 Query params:");
-                                        if (!empty($queryParams['date_start'])) {
-                                            $this->info("      - Date start: " . $queryParams['date_start']);
-                                        }
-                                        if (!empty($queryParams['date_end'])) {
-                                            $this->info("      - Date end: " . $queryParams['date_end']);
-                                        }
-                                        if (!empty($queryParams['account_number'])) {
-                                            $this->info("      - Account number: " . $queryParams['account_number']);
-                                        }
+
+                if (file_exists($srcPath)) {
+                    if (rename($srcPath, $dstPath)) {
+                        $this->info("📊 Date data file saved: {$newFileName}");
+
+                        // 讀取並顯示數據摘要
+                        try {
+                            $dateData = json_decode(file_get_contents($dstPath), true);
+                            if ($dateData) {
+                                // 從新的數據結構中讀取信息
+                                $metadata = $dateData['metadata'] ?? [];
+                                $totalRows = $dateData['rowCount'] ?? 0;
+                                $totalPages = $metadata['totalPages'] ?? 0;
+                                $pagesScraped = $metadata['pagesScraped'] ?? 0;
+                                $date = $metadata['date'] ?? 'N/A';
+                                $queryParams = $metadata['queryParams'] ?? [];
+
+                                $this->info("   📅 Date: {$date}");
+                                $this->info("   📄 Total pages: {$totalPages}");
+                                $this->info("   ✅ Pages scraped: {$pagesScraped}");
+                                $this->info("   📊 Total rows: {$totalRows}");
+
+                                if (!empty($queryParams)) {
+                                    $this->info("   🔍 Query params:");
+                                    if (!empty($queryParams['date_start'])) {
+                                        $this->info("      - Date start: " . $queryParams['date_start']);
+                                    }
+                                    if (!empty($queryParams['date_end'])) {
+                                        $this->info("      - Date end: " . $queryParams['date_end']);
+                                    }
+                                    if (!empty($queryParams['account_number'])) {
+                                        $this->info("      - Account number: " . $queryParams['account_number']);
                                     }
                                 }
-                            } catch (\Exception $e) {
-                                $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
                             }
-                        } else {
-                            $this->warn("⚠️  Failed to move date data file: {$fileName}");
+                        } catch (\Exception $e) {
+                            $this->warn("   ⚠️  Could not read date data file: " . $e->getMessage());
                         }
                     } else {
-                        $this->warn("⚠️  Date data file not found: {$srcPath}");
+                        $this->warn("⚠️  Failed to move date data file: {$fileName}");
                     }
+                } else {
+                    $this->warn("⚠️  Date data file not found: {$srcPath}");
+                }
             }
         }
-        
+
         $this->info('End of command at: ' . date('Y-m-d H:i:s'));
         $this->info("✅ Data processing completed!");
     }
 }
-

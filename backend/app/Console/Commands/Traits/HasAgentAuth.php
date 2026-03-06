@@ -312,7 +312,7 @@ trait HasAgentAuth
         $token = env('TAG_AGENT_TOKEN', '');
         $lang = env('TAG_AGENT_LANG', 'en-us');
         $domainRaw = env('TAG_AGENT_DOMAIN', '');
-        
+
         // TAG_AGENT_DOMAIN 可能是完整網址，取 host 作為 cookie domain
         $domain = $domainRaw;
         if ($domainRaw && preg_match('#^https?://#i', $domainRaw)) {
@@ -1145,6 +1145,38 @@ trait HasAgentAuth
         $auth = env('FKF_AGENT_AUTH', '');
         $token = env('FKF_AGENT_TOKEN', '');
         $domain = env('FKF_AGENT_DOMAIN');
+
+        return <<<JS
+            // console.log('🔐 Setting authentication cookies...');
+
+            // 根據環境變數設定認證 cookies
+            // 這些 cookies 用於通過需要登入的頁面驗證
+            const cookies = [];
+            if ('$lang') cookies.push({ name: 'lang', value: '$lang', domain: '$domain' });
+            if ('$auth') cookies.push({ name: 'ci_session', value: '$auth', domain: '$domain' });
+            if ('$token') cookies.push({ name: 'login_root', value: '$token', domain: '$domain' });
+
+            // 如果有設定 cookies，則應用到頁面
+            if (cookies.length > 0) {
+                await {$pageVar}.setCookie(...cookies);
+                // console.log('✅ Cookies set:', cookies.length);
+            } else {
+                console.log('⚠️  No cookies found in environment variables');
+            }
+        JS;
+    }
+
+    /**
+     * 生成 17li Puppeteer cookies 設定程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generate17liPuppeteerCookiesCode(string $pageVar = 'page'): string
+    {
+        $lang = env('17LI_AGENT_LANG');
+        $auth = env('17LI_AGENT_AUTH', '');
+        $token = env('17LI_AGENT_TOKEN', '');
+        $domain = env('17LI_AGENT_DOMAIN');
 
         return <<<JS
             // console.log('🔐 Setting authentication cookies...');
