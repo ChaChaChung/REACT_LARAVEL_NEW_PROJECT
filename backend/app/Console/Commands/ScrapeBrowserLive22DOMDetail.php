@@ -285,9 +285,9 @@ async function scrapeDOMContent() {
                         if (trs.length > 0) {
                             const headers = [];
                             const headerCells = c.querySelectorAll('th, .vxe-header--column, .el-table__column');
-                            headerCells.forEach(cell => {
+                            headerCells.forEach((cell, i) => {
                                 const text = (cell.innerText || '').trim();
-                                if (text) headers.push(text);
+                                headers.push(text || `col_\${i}`);
                             });
 
                             const rows = [];
