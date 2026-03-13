@@ -1247,4 +1247,79 @@ trait HasAgentAuth
             }
         JS;
     }
+
+    /**
+     * 生成 MT Puppeteer 登入流程程式碼片段
+     * 使用帳號密碼填入表單後點擊登入按鈕
+     * input#name (name="ux") → 帳號
+     * input.password (name="px") → 密碼
+     * button#submit-form → 登入按鈕
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateMtPuppeteerLoginCode(string $pageVar = 'page'): string
+    {
+        $account = env('MT_AGENT_ACCOUNT', '');
+        $password = env('MT_AGENT_PASSWORD', '');
+
+        $accountJs = json_encode($account);
+        $passwordJs = json_encode($password);
+
+        return <<<JS
+            console.log('🔐 Starting MT login...');
+
+            // 等待登入表單出現
+            await {$pageVar}.waitForSelector('input#name, input[name="ux"]', { timeout: 15000 }).catch(() => {});
+
+            // 填入帳號
+            await {$pageVar}.evaluate((val) => {
+                const input = document.querySelector('input#name, input[name="ux"]');
+                if (input && val) {
+                    input.value = '';
+                    input.value = val;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }, {$accountJs});
+
+            await new Promise(r => setTimeout(r, 300));
+
+            // 填入密碼
+            await {$pageVar}.evaluate((val) => {
+                const input = document.querySelector('input[name="px"], input.password');
+                if (input && val) {
+                    input.value = '';
+                    input.value = val;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }, {$passwordJs});
+
+            await new Promise(r => setTimeout(r, 300));
+
+            // 點擊登入按鈕
+            const loginClicked = await {$pageVar}.evaluate(() => {
+                const btn = document.querySelector('button#submit-form');
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            });
+
+            if (loginClicked) {
+                console.log('✅ MT login button clicked');
+                // 等待導航完成
+                await Promise.race([
+                    {$pageVar}.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
+                    new Promise(r => setTimeout(r, 8000))
+                ]).catch(() => {});
+            } else {
+                console.log('⚠️  MT login button not found');
+            }
+
+            await new Promise(r => setTimeout(r, 2000));
+            console.log('✅ MT login completed');
+        JS;
+    }
 }

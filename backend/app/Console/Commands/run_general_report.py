@@ -8,10 +8,12 @@ import time
 import sys
 from datetime import datetime
 
-BASE_URL = "https://web.17lii.com/report/GeneralReport"
-GM = 152
+# BASE_URL = "https://web.17lii.com/report/GeneralReport"
+# BASE_URL = "https://web.foqq.tw/report/GeneralReport"
+BASE_URL = "https://web.fkf88.com/report/GeneralReport"
+GM = 142
 START = 1
-END = 1707
+END = 47
 
 # 可調整設定
 DELAY_SECONDS = 0.5       # 每次請求間隔秒數（避免伺服器壓力）
@@ -42,6 +44,7 @@ def fetch(tt: int) -> tuple[int, str]:
 def main():
     failed = []
     start_time = datetime.now()
+    print(f"{BASE_URL}?gm={GM}")
     print(f"開始時間：{start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"執行範圍：tt={START} ~ tt={END}，共 {END - START + 1} 筆\n")
 
