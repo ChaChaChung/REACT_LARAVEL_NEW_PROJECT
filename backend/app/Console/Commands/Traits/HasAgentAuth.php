@@ -1326,14 +1326,21 @@ JS;
     /**
      * 生成 Live22 Puppeteer 使用 localStorage 直接登入的程式碼片段
      * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @param string $targetUrl 目標網址（用於提取網域，若 env 未設定）
      * @return string 返回 JavaScript 程式碼片段
      */
-    protected function generateLive22PuppeteerLoginCode(string $pageVar = 'page'): string
+    protected function generateLive22PuppeteerLoginCode(string $pageVar = 'page', string $targetUrl = ''): string
     {
         $domain = env('LIVE22_AGENT_DOMAIN', '');
         $lang = env('LIVE22_AGENT_LANG', 'en');
         $auth = env('LIVE22_AGENT_AUTH', '');
         $session = env('LIVE22_AGENT_SESSION', '');
+
+        // 如果 domain 為空，從 targetUrl 提取
+        if (empty($domain) && !empty($targetUrl)) {
+            $parsedUrl = parse_url($targetUrl);
+            $domain = ($parsedUrl['scheme'] ?? 'https') . '://' . ($parsedUrl['host'] ?? '');
+        }
 
         $domainJs = json_encode($domain);
         $langJs = json_encode($lang);
@@ -1343,20 +1350,18 @@ JS;
         return <<<JS
             console.log('🔐 Setting Live22 authentication info to localStorage...');
             
-            // 導航到目標網域名稱以設置 localStorage
-            let live22TargetUrl = $domainJs;
-            if (live22TargetUrl && !live22TargetUrl.startsWith('http')) {
-                live22TargetUrl = 'https://' + live22TargetUrl;
-            }
-            
-            if (live22TargetUrl) {
-                console.log('🌐 Navigating to domain: ' + live22TargetUrl);
-                await {$pageVar}.goto(live22TargetUrl, {
+            // 確保在正確的網域下設置 localStorage
+            let live22BaseUrl = $domainJs;
+            if (live22BaseUrl) {
+                if (!live22BaseUrl.startsWith('http')) {
+                    live22BaseUrl = 'https://' + live22BaseUrl;
+                }
+                console.log('🌐 Navigating to domain for storage: ' + live22BaseUrl);
+                await {$pageVar}.goto(live22BaseUrl, {
                     waitUntil: 'domcontentloaded',
                     timeout: 60000
                 });
-                
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
             
             // 設置 localStorage
@@ -1367,6 +1372,8 @@ JS;
                     if (userDetails) localStorage.setItem('userDetails', userDetails);
                     
                     console.log('✅ Live22 localStorage items set');
+                    // 觸發 storage 事件以便應用程式偵測變更 (部分 Next.js/React App 需要)
+                    window.dispatchEvent(new Event('storage'));
                     return true;
                 } catch (e) {
                     console.error('❌ Error setting Live22 localStorage:', e.message);
@@ -1374,10 +1381,8 @@ JS;
                 }
             }, $langJs, $authJs, $sessionJs);
             
-            // 等待一下讓頁面處理 localStorage 更新
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
+            await new Promise(resolve => setTimeout(resolve, 2000));
             console.log('✅ Live22 authentication setup completed');
-        JS;
+JS;
     }
 }
