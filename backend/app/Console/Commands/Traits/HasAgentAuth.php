@@ -36,7 +36,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -66,7 +66,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -98,7 +98,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -126,7 +126,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -239,7 +239,7 @@ trait HasAgentAuth
             
             // 額外等待確保頁面完全載入
             await new Promise(resolve => setTimeout(resolve, 2000));
-        JS;
+JS;
     }
 
     /**
@@ -269,7 +269,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -299,7 +299,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -341,7 +341,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies set (set TAG_AGENT_TOKEN and TAG_AGENT_DOMAIN or use URL with host)');
             }
-        JS;
+JS;
     }
 
     /**
@@ -383,7 +383,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No BNG cookies set (set BNG_AGENT_TOKEN, BNG_AGENT_LANG and BNG_AGENT_DOMAIN or pass url with same domain)');
             }
-        JS;
+JS;
     }
 
     /**
@@ -433,7 +433,7 @@ trait HasAgentAuth
                     console.log('⚠️  No FG cookies set (set FG_AGENT_TOKEN, FG_AGENT_AUTH, FG_AGENT_LANG and FG_AGENT_DOMAIN)');
                 }
             }
-        JS;
+JS;
     }
 
     /**
@@ -472,7 +472,7 @@ trait HasAgentAuth
                     console.warn('⚠️  localStorage set:', e.message);
                 }
             }, { token: {$tokenJs}, auth: {$authJs}, lang: {$langJs} });
-        JS;
+JS;
     }
 
     /**
@@ -535,7 +535,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  Domain not configured, skipping cookie setup');
             }
-        JS;
+JS;
     }
 
     /**
@@ -558,7 +558,7 @@ trait HasAgentAuth
             return <<<JS
                 console.error('❌ Invalid loginInfo JSON format');
                 throw new Error('Invalid loginInfo JSON format');
-            JS;
+JS;
         }
 
         // 將 lang 存到 key=languageFamily 的資料中
@@ -647,7 +647,7 @@ trait HasAgentAuth
             }
             
             console.log('✅ Login process skipped using loginInfo');
-        JS;
+JS;
     }
 
     /**
@@ -738,7 +738,7 @@ trait HasAgentAuth
             });
             
             console.log('✅ WOW login process completed using sessionStorage and cookies');
-        JS;
+JS;
     }
 
     /**
@@ -1007,7 +1007,7 @@ trait HasAgentAuth
             }
             
             console.log('✅ 1BET login completed');
-        JS;
+JS;
     }
 
     /**
@@ -1099,7 +1099,7 @@ trait HasAgentAuth
             });
             
             console.log('✅ OMG login process completed. Success: ' + localStorageSet);
-        JS;
+JS;
     }
 
     /**
@@ -1131,7 +1131,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -1163,7 +1163,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -1195,7 +1195,7 @@ trait HasAgentAuth
             } else {
                 console.log('⚠️  No cookies found in environment variables');
             }
-        JS;
+JS;
     }
 
     /**
@@ -1245,7 +1245,7 @@ trait HasAgentAuth
                     console.log('⚠️  No DG cookies set (set DG_AGENT_TOKEN, DG_AGENT_AUTH, DG_AGENT_LANG and DG_AGENT_DOMAIN)');
                 }
             }
-        JS;
+JS;
     }
 
     /**
@@ -1320,6 +1320,64 @@ trait HasAgentAuth
 
             await new Promise(r => setTimeout(r, 2000));
             console.log('✅ MT login completed');
+JS;
+    }
+
+    /**
+     * 生成 Live22 Puppeteer 使用 localStorage 直接登入的程式碼片段
+     * @param string $pageVar 頁面變數名稱（預設為 'page'）
+     * @return string 返回 JavaScript 程式碼片段
+     */
+    protected function generateLive22PuppeteerLoginCode(string $pageVar = 'page'): string
+    {
+        $domain = env('LIVE22_AGENT_DOMAIN', '');
+        $lang = env('LIVE22_AGENT_LANG', 'en');
+        $auth = env('LIVE22_AGENT_AUTH', '');
+        $session = env('LIVE22_AGENT_SESSION', '');
+
+        $domainJs = json_encode($domain);
+        $langJs = json_encode($lang);
+        $authJs = json_encode($auth);
+        $sessionJs = json_encode($session);
+
+        return <<<JS
+            console.log('🔐 Setting Live22 authentication info to localStorage...');
+            
+            // 導航到目標網域名稱以設置 localStorage
+            let live22TargetUrl = $domainJs;
+            if (live22TargetUrl && !live22TargetUrl.startsWith('http')) {
+                live22TargetUrl = 'https://' + live22TargetUrl;
+            }
+            
+            if (live22TargetUrl) {
+                console.log('🌐 Navigating to domain: ' + live22TargetUrl);
+                await {$pageVar}.goto(live22TargetUrl, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 60000
+                });
+                
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            // 設置 localStorage
+            await {$pageVar}.evaluate((lang, user, userDetails) => {
+                try {
+                    if (lang) localStorage.setItem('languageKey', lang);
+                    if (user) localStorage.setItem('user', user);
+                    if (userDetails) localStorage.setItem('userDetails', userDetails);
+                    
+                    console.log('✅ Live22 localStorage items set');
+                    return true;
+                } catch (e) {
+                    console.error('❌ Error setting Live22 localStorage:', e.message);
+                    return false;
+                }
+            }, $langJs, $authJs, $sessionJs);
+            
+            // 等待一下讓頁面處理 localStorage 更新
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            console.log('✅ Live22 authentication setup completed');
         JS;
     }
 }
