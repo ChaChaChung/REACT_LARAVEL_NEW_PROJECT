@@ -320,7 +320,8 @@ class ScrapeBrowserBngDomDetail extends Command
                                 await new Promise(resolve => setTimeout(resolve, 200));
                                 await submitBtn.click();
                                 console.log('📅 Clicked 搜尋 (submit)');
-                                await new Promise(resolve => setTimeout(resolve, 1500));
+                                // [MOD] 增加等待時間，確保表格資料載入完成
+                                await new Promise(resolve => setTimeout(resolve, 3500));
                             } else {
                                 console.log('⚠️  Submit button (div.submit-btn) not found');
                             }
@@ -333,32 +334,62 @@ class ScrapeBrowserBngDomDetail extends Command
 
                     // ── 多輪展開：每輪點完所有 fa-plus 後等待新增的子行出現，直到沒有 fa-plus ──
                     const expandAllToggleRows = async () => {
+                        console.log('🔽 Starting robust multi-phase expansion...');
                         let totalClicked = 0;
-                        let round = 0;
-                        while (true) {
-                            round++;
-                            const count = await page.evaluate(() => {
-                                return document.querySelectorAll('div.btn.btn-xs.app-toggle-btn i.fa-plus').length;
+                        
+                        // 定義一個單次掃描並點擊所有 plus 的函數
+                        const clickAllCurrentPlus = async () => {
+                            let clickedInThisScan = 0;
+                            // 滾動到頂部開始
+                            await page.evaluate(() => window.scrollTo(0, 0));
+                            
+                            while (true) {
+                                // 每次只找一個，確保 DOM 更新後位置正確
+                                const target = await page.evaluate(() => {
+                                    const btn = Array.from(document.querySelectorAll('div.btn.btn-xs.app-toggle-btn'))
+                                        .find(b => b.querySelector('i.fa-plus'));
+                                    if (btn) {
+                                        // 標記為已處理，避免同一掃描重複點擊（如果圖示更換慢）
+                                        const icon = btn.querySelector('i.fa-plus');
+                                        icon.classList.remove('fa-plus');
+                                        icon.classList.add('fa-processing-clicked'); 
+                                        btn.scrollIntoView({ block: 'center' });
+                                        btn.click();
+                                        return true;
+                                    }
+                                    return false;
+                                });
+                                
+                                if (!target) break;
+                                clickedInThisScan++;
+                                totalClicked++;
+                                await new Promise(r => setTimeout(r, 300));
+                                
+                                // 每 10 次點擊做一次大動作滾動，觸發 lazy load
+                                if (clickedInThisScan % 10 === 0) {
+                                    await page.evaluate(() => window.scrollBy(0, 1000));
+                                    await new Promise(r => setTimeout(r, 500));
+                                }
+                            }
+                            return clickedInThisScan;
+                        };
+
+                        // 執行多輪，因為展開第一層會出現第二層的 plus
+                        for (let round = 1; round <= 3; round++) {
+                            console.log('🔽 Round ' + round + ' expansion scan...');
+                            const count = await clickAllCurrentPlus();
+                            console.log('🔽 Round ' + round + ' clicked ' + count + ' toggles.');
+                            
+                            // 滾動到底部確保底部內容也載入
+                            await page.evaluate(() => {
+                                window.scrollTo(0, document.body.scrollHeight);
                             });
-                            if (count === 0) {
-                                console.log('🔽 No more toggles to expand (total clicked: ' + totalClicked + ', rounds: ' + (round - 1) + ')');
-                                break;
-                            }
-                            console.log('🔽 Round ' + round + ': found ' + count + ' toggle(s), clicking one by one...');
-                            // 逐一點擊，每次等待 DOM 更新
-                            for (let i = 0; i < count; i++) {
-                                await page.evaluate((idx) => {
-                                    const btns = Array.from(document.querySelectorAll('div.btn.btn-xs.app-toggle-btn'))
-                                        .filter(btn => btn.querySelector('i.fa-plus'));
-                                    if (btns[idx]) btns[idx].click();
-                                }, i);
-                                await new Promise(r => setTimeout(r, 100));
-                            }
-                            totalClicked += count;
-                            // 等待子行 DOM 渲染完成，再進行下一輪
-                            await new Promise(r => setTimeout(r, 800));
-                            console.log('🔽 Round ' + round + ' done, checking for more...');
+                            await new Promise(r => setTimeout(r, 1000));
+                            
+                            if (count === 0 && round > 1) break;
                         }
+                        
+                        console.log('🔽 Expansion complete. Total toggles clicked: ' + totalClicked);
                         return totalClicked;
                     };
 
@@ -738,7 +769,38 @@ class ScrapeBrowserBngDomDetail extends Command
         }, $allData);
 
         $totalRows = count($allData);
-        $this->info('📋 Table rows: ' . $totalRows);
+
+        // [MOD] 處理資料合併：將 BSCD 行的日期替換為最後出現的日期字串，並只保留這些行
+        $mergedData = [];
+        $lastDate = '';
+        foreach ($allData as $row) {
+            $dateVal = $row['日期'] ?? '';
+            // 若包含 YYYY-MM-DD 格式，更新最後日期
+            if (preg_match('/\d{4}-\d{2}-\d{2}/', $dateVal)) {
+                $lastDate = $dateVal;
+            }
+
+            if ($dateVal === 'BSCD') {
+                $row['日期'] = $lastDate;
+                $mergedData[] = $row;
+            }
+        }
+        $allData = $mergedData;
+        $totalRows = count($allData);
+
+        // 🟢 [MOD] 加總功能：交易、投注、總收益
+        $sumTransaction = 0;
+        $sumBet = 0;
+        $sumWinloss = 0;
+        foreach ($allData as $row) {
+            // 移除可能存在的空格再轉 float
+            $sumTransaction += (float) str_replace([' ', ','], '', $row['交易'] ?? 0);
+            $sumBet += (float) str_replace([' ', ','], '', $row['投注'] ?? 0);
+            $sumWinloss += (float) str_replace([' ', ','], '', $row['總收益'] ?? 0);
+        }
+
+        $this->info("📋 Table rows (merged BSCD with date): {$totalRows}");
+        $this->info("💰 Summary -> Total Transactions: " . number_format($sumTransaction, 0) . ", Total Bet: " . number_format($sumBet, 2) . ", Total Revenue: " . number_format($sumWinloss, 2));
 
         // Console 預覽：data 為 key-value 陣列，依 keys 順序轉成表格列
         $headerRow = $headers;
@@ -767,10 +829,20 @@ class ScrapeBrowserBngDomDetail extends Command
                 'queryParams' => $queryParams,
                 'totalPages' => $domData['totalPages'] ?? 1,
                 'totalRows' => $totalRows,
+                'summary' => [
+                    'total_transaction' => round($sumTransaction, 2),
+                    'total_bet' => round($sumBet, 2),
+                    'total_winloss' => round($sumWinloss, 2),
+                ],
             ],
             'headers' => $headers,
             'headerCount' => count($headers),
             'rowCount' => $totalRows,
+            'summary' => [
+                'total_transaction' => round($sumTransaction, 2),
+                'total_bet' => round($sumBet, 2),
+                'total_winloss' => round($sumWinloss, 2),
+            ],
             'data' => $allData,
         ];
 
