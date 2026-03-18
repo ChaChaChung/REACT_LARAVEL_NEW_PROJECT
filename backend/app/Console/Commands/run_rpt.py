@@ -4,15 +4,17 @@ import time
 
 # 設定參數
 # BASE_URL = "https://web.17lii.com/report/Rpt"
-BASE_URL = "https://web.foqq.tw/report/GeneralReport"
-# BASE_URL = "https://web.fkf88.com/report/GeneralReport"
-START_DATE = datetime(2026, 2, 1)
-END_DATE = datetime(2026, 3, 11)
+# BASE_URL = "https://web.foqq.tw/report/GeneralReport"
+BASE_URL = "https://web.fkf88.com/report/GeneralReport"
+# BASE_URL = "https://tnze888.com/report/GeneralReport"
+# BASE_URL = "https://168swin2.com/report/GeneralReport"
+START_DATE = datetime(2026, 3, 17)
+END_DATE = datetime(2026, 3, 18)
 DELAY_SECONDS = 1  # 每次請求之間的間隔秒數
 
 def run():
     current = START_DATE
-    total = 0
+    total = 0 
     success = 0
     failed = 0
 

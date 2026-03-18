@@ -11,9 +11,11 @@ from datetime import datetime
 # BASE_URL = "https://web.17lii.com/report/GeneralReport"
 # BASE_URL = "https://web.foqq.tw/report/GeneralReport"
 BASE_URL = "https://web.fkf88.com/report/GeneralReport"
-GM = 142
+# BASE_URL = "https://tnze888.com/report/GeneralReport"
+# BASE_URL = "https://168swin2.com/report/GeneralReport"
+GM = 152
 START = 1
-END = 47
+END = 30
 
 # 可調整設定
 DELAY_SECONDS = 0.5       # 每次請求間隔秒數（避免伺服器壓力）
