@@ -3,11 +3,15 @@ from datetime import datetime, timedelta
 import time
 
 # 設定參數
+BASE_URL = "https://web.17lii.com/report/GeneralReport"
+# BASE_URL = "https://web.foqq.tw/report/GeneralReport"
+# BASE_URL = "https://web.fkf88.com/report/GeneralReport"
+# BASE_URL = "https://tnze888.com/report/GeneralReport"
 # BASE_URL = "https://168swin2.com/report/GeneralReport"
-BASE_URL = "https://web.fkf88.com/report/GeneralReport"
-GM = 142
-START_TIME = datetime(2026, 2, 1, 0, 0, 0)
-END_TIME = datetime(2026, 3, 11, 23, 59, 59)
+
+GM = 166
+START_TIME = datetime(2026, 3, 5, 0, 0, 0)
+END_TIME = datetime(2026, 3, 19, 13, 0, 0)
 INTERVAL = timedelta(minutes=20)
 DELAY_SECONDS = 1   # 每次請求之間的間隔秒數（避免打太快）
 RETRY = 3            # 失敗重試次數
