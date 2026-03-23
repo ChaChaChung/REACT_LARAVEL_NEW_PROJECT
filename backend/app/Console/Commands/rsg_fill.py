@@ -20,16 +20,21 @@ class RsgCompleteRunner:
         self.base_root = '/Users/chacha/Downloads/RSG'
         self.site_path = os.path.join(self.base_root, self.site)
         
-        # 1. FTP 設定
-        self.host = os.getenv(f"FTP_{self.site}_HOST")
-        self.user = os.getenv(f"FTP_{self.site}_USER")
-        self.password = os.getenv(f"FTP_{self.site}_PASS")
+        # 1. FTP 下載設定
+        self.ftp_host = os.getenv(f"FTP_{self.site}_HOST")
+        self.ftp_user = os.getenv(f"FTP_{self.site}_USER")
+        self.ftp_pass = os.getenv(f"FTP_{self.site}_PASS")
 
-        # 2. 補單網址設定：根據 SITE 取得對應的 BASE_URL 並加上路徑
+        # 2. 補單網址設定
         base_url = os.getenv(f"{self.site}_BASE_URL")
         self.report_url = f"{base_url.rstrip('/')}/report/GeneralReport" if base_url else None
         
-        # 3. 補單參數
+        # 3. 遠端 SSH/SCP 設定 (動態從 env 抓取 IP)
+        remote_ip = os.getenv(f"{self.site}_IP")
+        self.remote_user_host = f"terry@{remote_ip}" if remote_ip else None
+        self.remote_upload_path = "/var/tmp/upload"
+
+        # 4. 補單控制
         self.gm = 152
         self.max_workers = 20
         self.lock = threading.Lock()
@@ -42,8 +47,8 @@ class RsgCompleteRunner:
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
 
         try:
-            ftp = FTP(self.host)
-            ftp.login(self.user, self.password)
+            ftp = FTP(self.ftp_host)
+            ftp.login(self.ftp_user, self.ftp_pass)
             ftp.set_pasv(True)
             
             root_folders = [f for f in ftp.nlst() if f not in ['report_daily', '.', '..']]
@@ -63,32 +68,27 @@ class RsgCompleteRunner:
                         os.makedirs(local_dir, exist_ok=True)
                         
                         total_files = len(files)
-                        print(f"\n📂 進入目錄: {remote_dir} (共 {total_files} 個檔案)")
-
+                        print(f"\n📂 下載目錄: {remote_dir}")
                         for idx, f_name in enumerate(files, 1):
-                            local_file_path = os.path.join(local_dir, f_name)
-                            with open(local_file_path, 'wb') as f:
+                            with open(os.path.join(local_dir, f_name), 'wb') as f:
                                 ftp.retrbinary(f"RETR {f_name}", f.write)
-                            
-                            # 顯示下載進度
                             percent = (idx / total_files) * 100
-                            print(f"\r   🚀 下載進度: [{idx}/{total_files}] {percent:.1f}% - {f_name}", end="")
-                        print() 
+                            print(f"\r   🚀 進度: [{idx}/{total_files}] {percent:.1f}% - {f_name}", end="")
+                        print()
                     except: continue
                 curr += timedelta(days=1)
             ftp.quit()
         except Exception as e:
-            print(f"\n❌ FTP 錯誤: {e}")
+            print(f"\n❌ FTP 下載錯誤: {e}")
 
-    def process_and_count_files(self):
-        """處理資料並統計生成的 JSON 檔案數量"""
+    def process_data(self):
+        """處理 CSV 並轉換 JSON"""
         csv_dir = os.path.join(self.site_path, 'csv_data')
         json_dir = os.path.join(self.site_path, 'json_data')
         
-        if os.path.exists(csv_dir): shutil.rmtree(csv_dir)
-        if os.path.exists(json_dir): shutil.rmtree(json_dir)
-        os.makedirs(csv_dir, exist_ok=True)
-        os.makedirs(json_dir, exist_ok=True)
+        for d in [csv_dir, json_dir]:
+            if os.path.exists(d): shutil.rmtree(d)
+            os.makedirs(d)
 
         print(f"\n--- 階段 1: 提取 CSV ---")
         for root, _, files in os.walk(self.site_path):
@@ -98,10 +98,9 @@ class RsgCompleteRunner:
                 if file.lower().endswith('.zip'):
                     self._extract_zip(os.path.join(root, file), date_label, csv_dir)
 
-        print(f"--- 階段 2: 轉換 JSON (每 1000 筆分塊) ---")
+        print(f"--- 階段 2: 轉換 JSON ---")
         csv_files = [f for f in os.listdir(csv_dir) if f.endswith('.csv')]
-        data_pool = []
-        file_count = 1
+        data_pool, file_count = [], 1
         for f_name in csv_files:
             try:
                 df = pd.read_csv(os.path.join(csv_dir, f_name))
@@ -111,13 +110,10 @@ class RsgCompleteRunner:
                     data_pool = data_pool[1000:]; file_count += 1
             except: continue
         if data_pool: self._save_json(data_pool, file_count, json_dir)
-
-        # --- 核心修改：計算 JSON 檔案數量 ---
-        json_files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
-        total_json_files = len(json_files)
         
-        print(f"📊 檢查結果：最終產出 {total_json_files} 個 JSON 檔案")
-        return total_json_files
+        json_files = [f for f in os.listdir(json_dir) if f.endswith('.json')]
+        print(f"📊 轉換完畢：共產出 {len(json_files)} 個 JSON 檔案")
+        return len(json_files)
 
     def _extract_zip(self, zip_path, date_label, output_dir):
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,53 +129,68 @@ class RsgCompleteRunner:
         with open(os.path.join(path, f"combined_part_{i}.json"), 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
 
-    # --- 補單 API ---
-    def get_session(self):
-        if not hasattr(self.thread_local, "session"):
-            self.thread_local.session = requests.Session()
-        return self.thread_local.session
+    def sync_to_remote(self):
+        """透過 SSH 清空遠端並 SCP 上傳"""
+        if not self.remote_user_host:
+            print(f"\n⚠️ 跳過同步：找不到 {self.site}_IP 環境變數")
+            return
 
-    def run_report(self, end_count):
+        local_json_dir = os.path.join(self.site_path, 'json_data')
+        
+        print(f"\n🌐 準備同步至遠端 {self.remote_user_host}...")
+        
+        # 1. 透過 SSH 清空遠端目錄
+        print(f"🗑️ 清空遠端目錄: {self.remote_upload_path}")
+        ssh_cmd = f'ssh {self.remote_user_host} "rm -rf {self.remote_upload_path}/*"'
+        os.system(ssh_cmd)
+        
+        # 2. 透過 SCP 上傳本地所有 JSON
+        print(f"📤 執行 SCP 批次上傳...")
+        scp_cmd = f'scp {local_json_dir}/*.json {self.remote_user_host}:{self.remote_upload_path}'
+        exit_code = os.system(scp_cmd)
+        
+        if exit_code == 0:
+            print("✅ 遠端同步完成")
+        else:
+            print("❌ 遠端同步失敗，請檢查網路連線或 SSH 權限")
+
+    def run_report(self, file_count):
         """根據 JSON 檔案數量執行補單"""
-        if not self.report_url:
-            print(f"❌ 錯誤：未設定 {self.site}_BASE_URL，無法補單。"); return
-        if end_count == 0:
-            print("❌ JSON 檔案數量為 0，取消補單。"); return
+        if not self.report_url or file_count == 0:
+            print("❌ 無法補單：網址未設定或無檔案"); return
 
-        print(f"\n🚀 啟動 API 補單：{self.report_url}")
-        print(f"🚀 目標範圍：tt=1 ~ tt={end_count} (對應 {end_count} 個 JSON 檔案)")
+        print(f"\n🚀 啟動補單：{self.report_url}")
+        print(f"🚀 範圍：tt=1 ~ tt={file_count}")
         
         success, fail = 0, 0
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            tasks = {executor.submit(self._fetch, tt): tt for tt in range(1, end_count + 1)}
+            tasks = {executor.submit(self._fetch, tt): tt for tt in range(1, file_count + 1)}
             for i, future in enumerate(as_completed(tasks), 1):
-                tt, status = future.result()
+                _, status = future.result()
                 with self.lock:
                     if status == 200: success += 1
                     else: fail += 1
-                if i % 5 == 0 or i == end_count:
-                    print(f"\r   📡 補單進度: {i}/{end_count} [✅:{success} ❌:{fail}]", end="")
-        print(f"\n\n🏁 所有任務執行完畢！")
+                print(f"\r   📡 補單進度: {i}/{file_count} [✅:{success} ❌:{fail}]", end="")
+        print(f"\n\n🏁 流程結束！")
 
     def _fetch(self, tt):
-        session = self.get_session()
+        if not hasattr(self.thread_local, "session"): self.thread_local.session = requests.Session()
         try:
-            resp = session.get(self.report_url, params={"gm": self.gm, "tt": tt}, timeout=30)
+            resp = self.thread_local.session.get(self.report_url, params={"gm": self.gm, "tt": tt}, timeout=30)
             return tt, resp.status_code
         except: return tt, 999
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) < 3:
-        print("用法: python3 rsg_complete_runner.py {SITE} {START_DATE} {END_DATE?}")
+    if len(sys.argv) < 2:
+        print("用法: python3 script.py {SITE} {START_DATE} {END_DATE?}")
     else:
         site_name = sys.argv[1].upper()
-        s_date, e_date = sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else None)
+        s_date = sys.argv[2] if len(sys.argv) > 2 else datetime.now().strftime('%Y-%m-%d')
+        e_date = sys.argv[3] if len(sys.argv) > 3 else None
         
         runner = RsgCompleteRunner(site_name)
-        # 1. 下載
         runner.download_ftp(s_date, e_date)
-        # 2. 處理並取得 JSON 檔案數量
-        file_count = runner.process_and_count_files()
-        # 3. 執行補單 (tt 從 1 到 檔案數量)
-        runner.run_report(file_count)
+        json_files_num = runner.process_data() # 1. 取得 JSON 檔案數量
+        runner.sync_to_remote()                # 2. 同步至對應 IP 機器
+        runner.run_report(json_files_num)      # 3. 補單 (END = 檔案數量)
