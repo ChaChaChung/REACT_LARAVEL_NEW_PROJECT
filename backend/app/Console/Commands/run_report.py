@@ -14,7 +14,7 @@ BASE_URL = "https://168swin2.com/report/GeneralReport"
 
 GM = 152
 START = 1
-END = 552
+END = 912
 
 # 可調整設定
 MAX_WORKERS = 20          # 並發執行緒數（可依伺服器承受能力調整，建議 10~30）

@@ -9,8 +9,8 @@ import time
 # BASE_URL = "https://tnze888.com/report/Rpt"
 BASE_URL = "https://168swin2.com/report/Rpt"
 
-START_DATE = datetime(2026, 3, 19)
-END_DATE = datetime(2026, 3, 19)
+START_DATE = datetime(2026, 3, 21)
+END_DATE = datetime(2026, 3, 22)
 DELAY_SECONDS = 1  # 每次請求之間的間隔秒數
 
 def run():
