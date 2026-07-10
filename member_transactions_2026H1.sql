@@ -118,7 +118,9 @@ SELECT
         ELSE t.coin
     END                 AS coin_name,
     COUNT(*)            AS tx_count,
-    SUM(t.`value`)      AS amount_sum
+    SUM(t.`value`)      AS amount_sum,
+    MIN(t.created_at)   AS first_time,
+    MAX(t.created_at)   AS last_time
 FROM transactions t
 JOIN user u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
