@@ -30,7 +30,7 @@ SELECT
     t.trade_id                 AS trade_id,
     t.created_at               AS created_at
 FROM transactions t
-JOIN users u ON u.id = t.user_id
+JOIN user u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
   AND t.created_at <  '2026-08-01 00:00:00'
 ORDER BY u.line_display_name, t.created_at;
@@ -44,7 +44,7 @@ SELECT
     COUNT(*)                   AS tx_count,
     SUM(t.`value`)             AS amount_sum
 FROM transactions t
-JOIN users u ON u.id = t.user_id
+JOIN user u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
   AND t.created_at <  '2026-08-01 00:00:00'
 GROUP BY u.line_display_name, t.coin
@@ -60,7 +60,7 @@ SELECT
     COUNT(*)                          AS tx_count,
     SUM(t.`value`)                    AS amount_sum
 FROM transactions t
-JOIN users u ON u.id = t.user_id
+JOIN user u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
   AND t.created_at <  '2026-08-01 00:00:00'
 GROUP BY u.line_display_name, ym, t.coin
