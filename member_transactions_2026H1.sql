@@ -1,48 +1,61 @@
 -- ============================================================
 -- 會員交易紀錄報表 — 2026 年 1~7 月
--- Transactions 對應 users.line_display_name
+-- transactions 對應 users.line_display_name
 -- ============================================================
--- 用法（在遠端伺服器上，MySQL 跑在 Docker 內）：
+-- 用法（遠端伺服器，MySQL 跑在 Docker 內）：
 --   docker exec -i <mysql容器名> mysql -udocker2 -p'HLzjO86mLUxBBW0' l12v3 < member_transactions_2026H1.sql
--- 或進到容器裡：
---   docker exec -it <mysql容器名> mysql -udocker2 -p'HLzjO86mLUxBBW0' l12v3
---   然後貼上下面的 SQL
+-- 注意：before / after / value 是 MySQL 保留字，必須加反引號 ``。
 -- ============================================================
 
--- STEP 1) 先確認兩張表實際欄位（若欄位名和下方查詢不同，把這段輸出貼回給我）
-SHOW COLUMNS FROM transactions;
-SHOW COLUMNS FROM users;
-
--- ============================================================
--- STEP 2) 報表主查詢
---   假設： transactions.user_id  ->  users.id
---          時間欄位為 created_at
---   時間範圍：2026-01-01 00:00:00 ~ 2026-07-31 23:59:59
--- ============================================================
+-- ------------------------------------------------------------
+-- 1) 明細：每一筆交易，對應會員 LINE 顯示名稱
+--    時間範圍 2026-01-01 00:00:00 ~ 2026-07-31 23:59:59
+-- ------------------------------------------------------------
 SELECT
-    u.line_display_name                         AS 會員,
-    t.id                                         AS 交易ID,
-    t.user_id                                    AS 會員ID,
-    t.amount                                     AS 金額,          -- 若無此欄位請改成實際欄位
-    t.type                                       AS 類型,          -- 若無此欄位可移除
-    t.status                                     AS 狀態,          -- 若無此欄位可移除
-    t.created_at                                 AS 交易時間
+    u.line_display_name        AS 會員,
+    t.id                       AS 交易ID,
+    t.user_id                  AS 會員ID,
+    t.coin                     AS 幣別,
+    t.tran_type                AS 交易類型,
+    t.balance_type             AS 帳戶類型,
+    t.`value`                  AS 變動金額,
+    t.`before`                 AS 變動前餘額,
+    t.`after`                  AS 變動後餘額,
+    t.trade_id                 AS 交易單號,
+    t.created_at               AS 交易時間
 FROM transactions t
 JOIN users u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
   AND t.created_at <  '2026-08-01 00:00:00'
 ORDER BY u.line_display_name, t.created_at;
 
--- ============================================================
--- STEP 3)（選用）每位會員彙總：筆數與金額合計
--- ============================================================
+-- ------------------------------------------------------------
+-- 2) 彙總：每位會員 × 幣別，交易筆數與變動金額合計
+-- ------------------------------------------------------------
 SELECT
-    u.line_display_name                          AS 會員,
-    COUNT(*)                                      AS 交易筆數,
-    SUM(t.amount)                                 AS 金額合計
+    u.line_display_name        AS 會員,
+    t.coin                     AS 幣別,
+    COUNT(*)                   AS 交易筆數,
+    SUM(t.`value`)             AS 變動金額合計
 FROM transactions t
 JOIN users u ON u.id = t.user_id
 WHERE t.created_at >= '2026-01-01 00:00:00'
   AND t.created_at <  '2026-08-01 00:00:00'
-GROUP BY u.line_display_name
-ORDER BY 金額合計 DESC;
+GROUP BY u.line_display_name, t.coin
+ORDER BY 會員, 幣別;
+
+-- ------------------------------------------------------------
+-- 3) 彙總：每位會員 × 月份 × 幣別，觀察 1~7 月各月走勢
+-- ------------------------------------------------------------
+SELECT
+    u.line_display_name              AS 會員,
+    DATE_FORMAT(t.created_at,'%Y-%m') AS 月份,
+    t.coin                           AS 幣別,
+    COUNT(*)                         AS 交易筆數,
+    SUM(t.`value`)                   AS 變動金額合計
+FROM transactions t
+JOIN users u ON u.id = t.user_id
+WHERE t.created_at >= '2026-01-01 00:00:00'
+  AND t.created_at <  '2026-08-01 00:00:00'
+GROUP BY u.line_display_name, 月份, t.coin
+ORDER BY 會員, 月份, 幣別;
